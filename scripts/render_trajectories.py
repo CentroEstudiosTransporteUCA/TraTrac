@@ -183,11 +183,15 @@ def main() -> int:
 				color = _color_for(vid)
 				fx, fy = v["front"]
 				rx, ry = v["rear"]
-				# SSAM (y-up, grid units) -> image (y-down, pixels).
-				fx_px = round(fx * scale)
-				fy_px = round(trj_height - fy * scale)
-				rx_px = round(rx * scale)
-				ry_px = round(trj_height - ry * scale)
+				# The exporter writes file coords as (centroid_world / scale), so
+				# the stored values are pixel grid units regardless of `scale`.
+				# `trj_height` is DIMENSIONS.MaxY in the same grid units (pixels).
+				# Y-flip back into image-space (y grows down) is a straight
+				# pixel-domain subtraction — no scale multiplication.
+				fx_px = round(fx)
+				fy_px = round(trj_height - fy)
+				rx_px = round(rx)
+				ry_px = round(trj_height - ry)
 
 				cv2.line(frame, (rx_px, ry_px), (fx_px, fy_px), color, 2)
 				cv2.circle(frame, (fx_px, fy_px), 5, color, -1)

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import math
 
+import pytest
+
 from tratrac.domain.geometry import Dimensions, Heading, Point2D, Vector2D
 from tratrac.domain.vehicle import VehicleState
 
@@ -45,6 +47,52 @@ class TestBumpers:
 		assert math.isclose(state.front_bumper.y, 201.0)
 		assert math.isclose(state.rear_bumper.x, 99.0)
 		assert math.isclose(state.rear_bumper.y, 199.0)
+
+
+class TestLinkAndLaneIds:
+	def test_link_and_lane_default_to_zero(self) -> None:
+		state = _state()
+		assert state.link_id == 0
+		assert state.lane_id == 0
+
+	def test_link_id_negative_raises(self) -> None:
+		with pytest.raises(ValueError, match="link_id"):
+			VehicleState(
+				vehicle_id=1,
+				timestamp_seconds=0.0,
+				centroid=Point2D(0.0, 0.0),
+				heading=Heading(1.0, 0.0),
+				dimensions=Dimensions(length=4.0, width=2.0),
+				velocity=Vector2D(0.0, 0.0),
+				acceleration=Vector2D(0.0, 0.0),
+				link_id=-1,
+			)
+
+	def test_lane_id_above_255_raises(self) -> None:
+		with pytest.raises(ValueError, match="lane_id"):
+			VehicleState(
+				vehicle_id=1,
+				timestamp_seconds=0.0,
+				centroid=Point2D(0.0, 0.0),
+				heading=Heading(1.0, 0.0),
+				dimensions=Dimensions(length=4.0, width=2.0),
+				velocity=Vector2D(0.0, 0.0),
+				acceleration=Vector2D(0.0, 0.0),
+				lane_id=256,
+			)
+
+	def test_lane_id_negative_raises(self) -> None:
+		with pytest.raises(ValueError, match="lane_id"):
+			VehicleState(
+				vehicle_id=1,
+				timestamp_seconds=0.0,
+				centroid=Point2D(0.0, 0.0),
+				heading=Heading(1.0, 0.0),
+				dimensions=Dimensions(length=4.0, width=2.0),
+				velocity=Vector2D(0.0, 0.0),
+				acceleration=Vector2D(0.0, 0.0),
+				lane_id=-1,
+			)
 
 
 class TestKinematics:

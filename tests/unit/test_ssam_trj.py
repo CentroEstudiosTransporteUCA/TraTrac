@@ -158,6 +158,53 @@ class TestVehicleRecord:
 		assert math.isclose(fx, 204.0)
 		assert math.isclose(length, 4.0)
 
+	def test_y_flip_consistent_at_non_unit_scale(self, tmp_path: Path) -> None:
+		# Regression: an earlier version of the exporter computed y-flip as
+		# (image_height_px - centroid_world) / scale, which only works at scale=1.
+		# Verify that when state is in metres and scale is m/px, the SSAM reader
+		# (file_value *Scale) recovers the right Cartesian metres-y.
+		path = tmp_path / "x.trj"
+		meta = VideoMetadata(width=200, height=200, fps=10.0, total_frames=1)
+		# 200 px tall image *0.5 m/px = 100 m tall observation area.
+		# Place a centroid at 30 m from the top of the image (image-space y).
+		state = _vehicle(centroid=Point2D(50.0, 30.0), heading=Heading(1.0, 0.0), length=4.0)
+		with SsamTrjExporter(path, meta, scale=0.5) as exporter:
+			exporter.emit_frame(timestamp_seconds=0.0, states=[state])
+		data = path.read_bytes()
+
+		offset = _HEADER_SIZE + _TIMESTEP_SIZE
+		rec = struct.unpack("<BiiBffffffff", data[offset : offset + _VEHICLE_SIZE])
+		_, _, _, _, _fx, fy, _rx, _ry, *_rest = rec
+
+		# Expected reader recovery: real_y_metres = file_y *Scale = (100 - 30) = 70 m.
+		assert math.isclose(fy * 0.5, 70.0)
+
+
+class TestLinkAndLaneIds:
+	def test_link_and_lane_ids_written_to_vehicle_record(self, tmp_path: Path) -> None:
+		path = tmp_path / "x.trj"
+		meta = VideoMetadata(width=200, height=200, fps=10.0, total_frames=1)
+		state = VehicleState(
+			vehicle_id=42,
+			timestamp_seconds=0.0,
+			centroid=Point2D(100.0, 100.0),
+			heading=Heading(1.0, 0.0),
+			dimensions=Dimensions(length=4.0, width=2.0),
+			velocity=Vector2D(0.0, 0.0),
+			acceleration=Vector2D(0.0, 0.0),
+			link_id=104,
+			lane_id=2,
+		)
+		with SsamTrjExporter(path, meta) as exporter:
+			exporter.emit_frame(timestamp_seconds=0.0, states=[state])
+		data = path.read_bytes()
+
+		offset = _HEADER_SIZE + _TIMESTEP_SIZE
+		rec = struct.unpack("<BiiBffffffff", data[offset : offset + _VEHICLE_SIZE])
+		_record_type, _vid, link_id, lane_id, *_rest = rec
+		assert link_id == 104
+		assert lane_id == 2
+
 
 class TestFileLayout:
 	def test_two_frames_three_vehicles_total_size(self, tmp_path: Path) -> None:

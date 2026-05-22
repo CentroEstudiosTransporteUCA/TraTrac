@@ -4,16 +4,17 @@ Turns a stream of per-frame ``TrackedDetection``s into ``VehicleState``s by
 tracking each track's recent centroids and deriving velocity, acceleration,
 and heading from that history.
 
-MVP1 approximations (see vault/05_mvp1.md):
-
 * Heading is a motion-magnitude-weighted EMA of the velocity direction. Fast
   motion fully trusts the velocity vector; slow motion blends toward the
   cached heading so detector-bbox jitter on stationary vehicles doesn't make
   the orientation arrow spin.
 * When a track has never moved meaningfully, heading falls back to the bbox
   major-axis direction.
-* Length / width = bbox major / minor axes (pixels, treated as meters for the
-  SSAM Scale=1.0 convention until MVP2 lands homography).
+* Unit-aware via the ``meters_per_pixel`` constructor argument (default
+  ``1.0`` reproduces MVP1 pixel-as-meter behaviour). When a real GSD is
+  supplied (MVP1.75+, see ``vault/05_5_mvp1_75.md``), all metric quantities
+  the estimator publishes — centroid, length, width, velocity, acceleration —
+  are in metres / m·s⁻¹ / m·s⁻².
 """
 
 from __future__ import annotations
@@ -44,16 +45,29 @@ class _TrackHistory:
 class OrientationEstimator:
 	"""Builds ``VehicleState``s from per-frame ``TrackedDetection``s."""
 
-	def __init__(self, *, smoothing_window: int = 5) -> None:
+	def __init__(
+		self,
+		*,
+		smoothing_window: int = 5,
+		meters_per_pixel: float = 1.0,
+	) -> None:
 		if smoothing_window < 2:
 			raise ValueError(f"smoothing_window must be >= 2, got {smoothing_window}.")
+		if meters_per_pixel <= 0:
+			raise ValueError(f"meters_per_pixel must be positive, got {meters_per_pixel}.")
 		self._window = smoothing_window
+		self._scale = meters_per_pixel
 		self._history: dict[int, _TrackHistory] = {}
 
 	def estimate(self, tracked: TrackedDetection, timestamp_seconds: float) -> VehicleState:
 		track_id = tracked.track_id
 		bbox = tracked.detection.bbox
-		centroid = bbox.center
+		# Convert pixel-space measurements to world units (metres if scale is a
+		# real GSD, "pixel-metres" if scale is 1.0). Doing this once at the
+		# boundary means velocity and acceleration fall out in the right units
+		# automatically.
+		scale = self._scale
+		centroid_world = Point2D(bbox.center.x * scale, bbox.center.y * scale)
 
 		history = self._history.get(track_id)
 		if history is None:
@@ -62,7 +76,7 @@ class OrientationEstimator:
 				timestamps=deque(maxlen=self._window),
 			)
 			self._history[track_id] = history
-		history.centroids.append(centroid)
+		history.centroids.append(centroid_world)
 		history.timestamps.append(timestamp_seconds)
 
 		velocity = self._compute_velocity(history)
@@ -73,11 +87,11 @@ class OrientationEstimator:
 		return VehicleState(
 			vehicle_id=track_id,
 			timestamp_seconds=timestamp_seconds,
-			centroid=centroid,
+			centroid=centroid_world,
 			heading=heading,
 			dimensions=Dimensions(
-				length=bbox.major_axis_length,
-				width=bbox.minor_axis_length,
+				length=bbox.major_axis_length * scale,
+				width=bbox.minor_axis_length * scale,
 			),
 			velocity=velocity,
 			acceleration=acceleration,
@@ -108,9 +122,7 @@ class OrientationEstimator:
 		return Vector2D((current.dx - prior.dx) / dt, (current.dy - prior.dy) / dt)
 
 	@staticmethod
-	def _compute_heading(
-		velocity: Vector2D, bbox: BoundingBox, history: _TrackHistory
-	) -> Heading:
+	def _compute_heading(velocity: Vector2D, bbox: BoundingBox, history: _TrackHistory) -> Heading:
 		speed = velocity.magnitude
 
 		# True zero (or numerical noise): no info in velocity at all.

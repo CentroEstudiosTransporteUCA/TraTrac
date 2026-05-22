@@ -84,7 +84,7 @@ Onion layers under `src/tratrac/`:
 - **Dual export.** Two exporter ports — SSAM (`.trj`) plus a richer internal format that arrives with segmentation in MVP4.
 - **Every MVP emits valid SSAM from MVP1.** MVPs differ in trajectory *quality*, not whether trajectories exist.
 
-The full design rationale lives in `vault/00_system_overview.md` through `vault/12_final_architecture.md`. The SSAM `.trj` byte-level spec is in `vault/04_ssam_format.md`, derived from the two PDFs alongside it.
+The full design rationale lives in `vault/00_system_overview.md` through `vault/13_road_topology.md`. The SSAM `.trj` byte-level spec is in `vault/04_ssam_format.md`, derived from the two PDFs alongside it. Where SSAM's `Link ID` and `Lane ID` come from at each MVP is in `vault/13_road_topology.md`.
 
 ## Development
 
@@ -112,11 +112,12 @@ All checked-in code passes ruff + strict mypy. Indentation is tabs.
 | --- | --- |
 | 1 (this) | YOLOv8-VisDrone (emergency override) + BoT-SORT, EMA orientation, image-space SSAM `.trj` |
 | 1.5 | Fine-tune RT-DETR on VisDrone / UAVDT, restore RT-DETR as default, drop ultralytics |
-| 2 | SuperPoint + LightGlue stabilization, single-homography world projection |
-| 3 | Multi-homography + polygon-based plane assignment (bridges / overpasses) |
+| **1.75** | **Metric sizes and speeds from drone metadata.** GSD calibration from sensor + focal + altitude; populates `DIMENSIONS.Scale` and writes `Length` / `Width` / `Speed` / `Acceleration` in real units. No homography needed for hovering, nadir drone footage. See `vault/05_5_mvp1_75.md`. |
+| 2 | SuperPoint + LightGlue stabilization, single-homography world projection (handles moving drones, non-nadir gimbals, fixed cameras without telemetry) |
+| 3 | Multi-homography + polygon-based plane assignment (bridges / overpasses) + Link ID assignment from hand-drawn polygons (see `vault/13_road_topology.md`) |
 | 4 | SAM2 segmentation, mask-based orientation, dual export |
 | 5 | FastReID + embedding memory for long-term identity persistence |
-| 6 | Lane-graph topology constraints |
+| 6 | Lane-graph topology constraints + Lane ID assignment from hand-drawn lane polygons |
 | 7 | Apache Parquet storage, FiftyOne visualization, async / Docker deployment |
 
 ## License
