@@ -88,19 +88,22 @@ class SsamTrjExporter:
 	def _write_vehicle_record(self, state: VehicleState) -> None:
 		front = state.front_bumper
 		rear = state.rear_bumper
-		# Y-flip image -> SSAM Cartesian; then divide by scale to get grid units.
-		image_height = self._metadata.height
 		scale = self._scale
+		# image_height comes in as pixels; convert to world units (matches the
+		# units of state.{centroid, dimensions, ...}) so the y-flip subtraction
+		# stays unit-consistent. Then divide by scale to get back to the grid
+		# coordinates SSAM stores.
+		image_height_world = self._metadata.height * scale
 		self._require_file().write(
 			_VEHICLE_STRUCT.pack(
 				_VEHICLE_RECORD_TYPE,
 				state.vehicle_id,
-				0,  # Link ID — MVP1 has no road network.
-				0,  # Lane ID — MVP1 has no lane assignment.
+				state.link_id,
+				state.lane_id,
 				front.x / scale,
-				(image_height - front.y) / scale,
+				(image_height_world - front.y) / scale,
 				rear.x / scale,
-				(image_height - rear.y) / scale,
+				(image_height_world - rear.y) / scale,
 				state.dimensions.length,
 				state.dimensions.width,
 				state.speed,

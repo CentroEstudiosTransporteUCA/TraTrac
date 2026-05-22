@@ -15,6 +15,11 @@ class VehicleState:
 	Per vault/01_architecture_principles.md this is the canonical internal type.
 	MVP1 carries only the fields required for SSAM v1.04 export; later MVPs add
 	segmentation polygons, ReID embeddings, plane metadata, and uncertainty.
+
+	``link_id`` and ``lane_id`` default to 0 (the SSAM "unknown" sentinel). The
+	application layer populates them when a road graph is available — see
+	``vault/13_road_topology.md`` for sourcing strategy per MVP. ``lane_id`` is
+	a Byte in the SSAM record, so its range is validated here.
 	"""
 
 	vehicle_id: int
@@ -24,6 +29,14 @@ class VehicleState:
 	dimensions: Dimensions
 	velocity: Vector2D
 	acceleration: Vector2D
+	link_id: int = 0
+	lane_id: int = 0
+
+	def __post_init__(self) -> None:
+		if self.link_id < 0:
+			raise ValueError(f"link_id must be non-negative, got {self.link_id}.")
+		if not 0 <= self.lane_id <= 255:
+			raise ValueError(f"lane_id must be in [0, 255] (SSAM Byte field), got {self.lane_id}.")
 
 	@property
 	def speed(self) -> float:

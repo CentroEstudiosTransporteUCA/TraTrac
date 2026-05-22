@@ -64,8 +64,9 @@ All commands run from the repo root. `uv` manages the venv (`.venv/`) and resolv
 - `02_coordinate_systems.md` — image-space vs world-space, multi-homography rationale.
 - `03_tech_stack.md` — ideal final stack and the *why* behind each choice (and what was rejected).
 - `04_ssam_format.md` — SSAM `.trj` shape and MVP1 orientation approximation.
-- `05_mvp1.md` … `11_mvp7.md` — staged MVPs; each adds one capability.
+- `05_mvp1.md` … `11_mvp7.md` — staged MVPs; each adds one capability. `05_5_mvp1_75.md` slots between MVP1 and MVP2 for the drone-metadata calibration shortcut.
 - `12_final_architecture.md` — end-state pipeline diagram.
+- `13_road_topology.md` — how SSAM `Link ID` / `Lane ID` get sourced across MVPs.
 
 If the vault and any future code disagree, surface the conflict and ask which is authoritative before editing.
 
@@ -91,11 +92,12 @@ Work is staged so each MVP delivers an end-to-end runnable system that improves 
 | --- | --- |
 | 1 | RT-DETR + BoT-SORT, approximate orientation, image-space SSAM `.trj`. **Shipped with a temporary YOLOv8-VisDrone detector adapter** (see `vault/05_mvp1.md`) because COCO-RT-DETR doesn't see aerial cars and fine-tuning was out of timebox. |
 | 1.5 | Fine-tune RT-DETR on VisDrone/UAVDT; remove the YOLOv8 adapter, restore RT-DETR as default. |
-| 2 | SuperPoint+LightGlue stabilization, single-homography world projection |
-| 3 | Multi-homography + polygon-based plane assignment |
+| 1.75 | **Metric sizes and speeds from drone metadata.** GSD calibration from sensor + focal + altitude; `Length` / `Width` / `Speed` / `Acceleration` in real metres / m·s⁻¹ / m·s⁻²; `DIMENSIONS.Scale` populated. No homography. See `vault/05_5_mvp1_75.md`. |
+| 2 | SuperPoint+LightGlue stabilization, single-homography world projection (handles moving drones, non-nadir gimbals, fixed cameras without telemetry) |
+| 3 | Multi-homography + polygon-based plane assignment + **Link ID assignment from hand-drawn polygons** (see `vault/13_road_topology.md`) |
 | 4 | SAM2 segmentation, mask-based orientation, dual export begins |
 | 5 | FastReID + embedding memory for long-term identity persistence |
-| 6 | Lane-graph topology constraints |
+| 6 | Lane-graph topology constraints + **Lane ID assignment from hand-drawn lane polygons** |
 | 7 | Apache Parquet storage, FiftyOne visualization, async/Docker deployment |
 
 When proposing changes, identify which MVP the work belongs to and avoid pulling capabilities forward without justification.
