@@ -27,6 +27,7 @@ from tratrac.domain.ports import (
 )
 from tratrac.infrastructure.detection.rt_detr import RtDetrDetector
 from tratrac.infrastructure.detection.yolov8_visdrone import YoloV8VisDroneDetector
+from tratrac.infrastructure.export.decimating import DecimatingTrajectoryExporter
 from tratrac.infrastructure.export.ssam_trj import SsamTrjExporter
 from tratrac.infrastructure.progress.console import ConsoleProgressReporter
 from tratrac.infrastructure.timing.csv import CsvTimingSink
@@ -134,6 +135,14 @@ def process(
 			help="End of the analysis window (inclusive) as a timecode. Default: video end.",
 		),
 	] = None,
+	timestep_precision: Annotated[
+		float | None,
+		typer.Option(
+			"--timestep-precision",
+			help="Minimum seconds between exported TIMESTEP records (thins the .trj). "
+			"Detection and tracking still run on every frame. Default: every frame.",
+		),
+	] = None,
 ) -> None:
 	"""Process a video into an SSAM .trj trajectory file."""
 	# --- Fail-fast input validation. Everything here is checkable without the
@@ -147,6 +156,7 @@ def process(
 		raise typer.BadParameter("--end must be after --start.")
 	_validate_device(device)
 	_validate_drone_model(drone_model)
+	_validate_timestep_precision(timestep_precision)
 	if meters_per_pixel <= 0.0 and not drone_model:
 		raise _no_calibration_error()
 	if timing_csv is not None and out.resolve() == timing_csv.resolve():
@@ -172,6 +182,14 @@ def process(
 		det: Detector = _build_detector(detector, checkpoint=checkpoint, device=device, conf=conf)
 		tracker: Tracker = BoxmotBotSortTracker(source.metadata)
 		exporter: TrajectoryExporter = SsamTrjExporter(out, source.metadata, scale=scale)
+		if timestep_precision is not None:
+			# Decimate the TIMESTEP stream. Sits inside TimedExporter (below) so the
+			# EXPORT step still records once per processed frame (see vault/15).
+			exporter = DecimatingTrajectoryExporter(
+				exporter,
+				min_interval_seconds=timestep_precision,
+				fps=source.metadata.fps,
+			)
 		orientation: OrientationEstimator = EmaOrientationEstimator(meters_per_pixel=scale)
 		with _timing_sink(timing_csv) as sink:
 			if sink is not None:
@@ -208,6 +226,30 @@ def _validate_drone_model(drone_model: str) -> None:
 	if drone_model and drone_model.lower() not in known_models():
 		known = ", ".join(known_models())
 		raise typer.BadParameter(f"Unknown drone model {drone_model!r}. Known: {known}.")
+
+
+# Above this, exported timesteps get too sparse for SSAM conflict analysis
+# (vault/04: sub-second, ~0.1s, is the practical minimum). Still valid, so warn.
+_COARSE_TIMESTEP_WARNING_SECONDS = 0.5
+
+
+def _validate_timestep_precision(seconds: float | None) -> None:
+	"""Reject a non-positive interval; warn when it is too coarse for SSAM.
+
+	A coarse interval still yields a syntactically valid .trj, so this warns
+	rather than errors. See vault/04_ssam_format.md and vault/18_timestep_precision.md.
+	"""
+	if seconds is None:
+		return
+	if seconds <= 0.0:
+		raise typer.BadParameter("--timestep-precision must be greater than zero.")
+	if seconds > _COARSE_TIMESTEP_WARNING_SECONDS:
+		typer.echo(
+			f"WARNING: --timestep-precision {seconds}s is coarse; SSAM conflict analysis "
+			"wants sub-second timesteps (~0.1s). The .trj stays valid but may be too "
+			"sparse for surrogate-safety metrics.",
+			err=True,
+		)
 
 
 @contextmanager
