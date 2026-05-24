@@ -4,7 +4,11 @@
 Standalone — only stdlib + cv2 + numpy. Reads the binary .trj directly (see
 vault/04_ssam_format.md for the spec), maps each TIMESTEP to the corresponding
 frame index, and draws front/rear bumpers, orientation lines, vehicle IDs,
-and short trails coloured deterministically per track.
+and per-track trajectory trails coloured deterministically per track.
+
+By default each trail accumulates the vehicle's whole path and is drawn until
+the vehicle disappears (drops the moment the track is no longer detected). Pass
+--trail N to cap it to a rolling window of N frames instead.
 
 Usage:
 	uv run python scripts/render_trajectories.py VIDEO TRJ [--out OUT]
@@ -117,7 +121,13 @@ def main() -> int:
 	)
 	parser.add_argument("--start", type=float, default=0.0, help="Start time in seconds.")
 	parser.add_argument("--end", type=float, default=None, help="End time in seconds.")
-	parser.add_argument("--trail", type=int, default=30, help="Trail length in frames.")
+	parser.add_argument(
+		"--trail",
+		type=int,
+		default=0,
+		help="Rolling trail length in frames. 0 (default) draws the whole trajectory "
+		"until the vehicle disappears.",
+	)
 	args = parser.parse_args()
 
 	if not args.video.exists():
@@ -164,8 +174,10 @@ def main() -> int:
 	fourcc = cv2.VideoWriter.fourcc(*"mp4v")
 	writer = cv2.VideoWriter(str(out_path), fourcc, fps, (width, height))
 
-	trail_len = args.trail
-	trails: dict[int, deque[tuple[int, int]]] = defaultdict(lambda: deque(maxlen=trail_len))
+	# trail=0 -> unbounded: the deque accumulates the vehicle's full path so far.
+	# A positive value caps it to a rolling window of that many frames.
+	trail_maxlen = args.trail if args.trail > 0 else None
+	trails: dict[int, deque[tuple[int, int]]] = defaultdict(lambda: deque(maxlen=trail_maxlen))
 
 	cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
 	rendered = 0
