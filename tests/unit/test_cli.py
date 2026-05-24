@@ -42,6 +42,7 @@ class TestPrepareOutputPath:
 	) -> None:
 		target = tmp_path / "exists.trj"
 		target.write_text("old")
+		monkeypatch.setattr(cli, "_is_interactive", lambda: True)
 		monkeypatch.setattr(typer, "confirm", lambda *a, **k: True)
 		_prepare_output_path(target)  # confirmed -> no abort
 
@@ -54,8 +55,37 @@ class TestPrepareOutputPath:
 		def _decline(*args: object, **kwargs: object) -> bool:
 			raise typer.Abort
 
+		monkeypatch.setattr(cli, "_is_interactive", lambda: True)
 		monkeypatch.setattr(typer, "confirm", _decline)
 		with pytest.raises(typer.Abort):
+			_prepare_output_path(target)
+
+	def test_force_overwrites_without_prompting(
+		self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+	) -> None:
+		target = tmp_path / "exists.trj"
+		target.write_text("old")
+
+		def _boom(*args: object, **kwargs: object) -> bool:
+			raise AssertionError("--force must not prompt")
+
+		# Even with a TTY, --force skips the prompt entirely.
+		monkeypatch.setattr(cli, "_is_interactive", lambda: True)
+		monkeypatch.setattr(typer, "confirm", _boom)
+		_prepare_output_path(target, force=True)  # must not raise
+
+	def test_errors_non_interactively_when_file_exists(
+		self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+	) -> None:
+		target = tmp_path / "exists.trj"
+		target.write_text("old")
+
+		def _boom(*args: object, **kwargs: object) -> bool:
+			raise AssertionError("must not prompt when stdin is not a TTY")
+
+		monkeypatch.setattr(cli, "_is_interactive", lambda: False)
+		monkeypatch.setattr(typer, "confirm", _boom)
+		with pytest.raises(typer.BadParameter, match="--force"):
 			_prepare_output_path(target)
 
 
