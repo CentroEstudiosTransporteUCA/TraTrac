@@ -20,33 +20,53 @@ from tratrac.infrastructure.progress.console import ConsoleProgressReporter
 class TestFrameProcessed:
 	def test_fraction_and_percent(self) -> None:
 		event = FrameProcessed(
-			frame_index=49, total_frames=100, timestamp_seconds=1.0, active_tracks=3
+			frame_index=49, frames_done=50, total_frames=100, timestamp_seconds=1.0, active_tracks=3
 		)
 		assert math.isclose(event.fraction, 0.5)
 		assert math.isclose(event.percent, 50.0)
 
+	def test_fraction_uses_frames_done_not_absolute_index(self) -> None:
+		# Regression: with an analysis window the index is absolute (e.g. 10659)
+		# while the total is the windowed count, so the index must not drive it.
+		event = FrameProcessed(
+			frame_index=10659,
+			frames_done=1,
+			total_frames=1300,
+			timestamp_seconds=355.0,
+			active_tracks=4,
+		)
+		assert math.isclose(event.fraction, 1 / 1300)
+
 	def test_last_frame_reads_complete(self) -> None:
 		event = FrameProcessed(
-			frame_index=99, total_frames=100, timestamp_seconds=1.0, active_tracks=0
+			frame_index=99,
+			frames_done=100,
+			total_frames=100,
+			timestamp_seconds=1.0,
+			active_tracks=0,
 		)
 		assert math.isclose(event.fraction, 1.0)
 
 	def test_unknown_total_yields_zero_fraction(self) -> None:
 		event = FrameProcessed(
-			frame_index=10, total_frames=0, timestamp_seconds=1.0, active_tracks=0
+			frame_index=10, frames_done=11, total_frames=0, timestamp_seconds=1.0, active_tracks=0
 		)
 		assert event.fraction == 0.0
 
 	def test_negative_total_yields_zero_fraction(self) -> None:
 		# OpenCV's frame count can come back as -1 for some containers/streams.
 		event = FrameProcessed(
-			frame_index=10, total_frames=-1, timestamp_seconds=1.0, active_tracks=0
+			frame_index=10, frames_done=11, total_frames=-1, timestamp_seconds=1.0, active_tracks=0
 		)
 		assert event.fraction == 0.0
 
 	def test_fraction_clamped_to_one_when_count_under_reports(self) -> None:
 		event = FrameProcessed(
-			frame_index=150, total_frames=100, timestamp_seconds=1.0, active_tracks=0
+			frame_index=150,
+			frames_done=150,
+			total_frames=100,
+			timestamp_seconds=1.0,
+			active_tracks=0,
 		)
 		assert event.fraction == 1.0
 
@@ -57,7 +77,9 @@ class TestNullProgressReporter:
 		# None of these should raise or produce output.
 		reporter.receive(ProcessingFinished(frames_processed=1))
 		reporter.receive(
-			FrameProcessed(frame_index=0, total_frames=1, timestamp_seconds=0.0, active_tracks=0)
+			FrameProcessed(
+				frame_index=0, frames_done=1, total_frames=1, timestamp_seconds=0.0, active_tracks=0
+			)
 		)
 
 
@@ -89,18 +111,36 @@ class TestConsoleProgressReporter:
 		reporter = ConsoleProgressReporter(stream=buf, min_interval_seconds=1_000.0)
 
 		reporter.receive(
-			FrameProcessed(frame_index=0, total_frames=10, timestamp_seconds=0.0, active_tracks=1)
+			FrameProcessed(
+				frame_index=0,
+				frames_done=1,
+				total_frames=10,
+				timestamp_seconds=0.0,
+				active_tracks=1,
+			)
 		)
 		after_first = buf.getvalue()
 		assert after_first != ""  # first frame always draws (last_draw == -inf)
 
 		reporter.receive(
-			FrameProcessed(frame_index=1, total_frames=10, timestamp_seconds=0.1, active_tracks=1)
+			FrameProcessed(
+				frame_index=1,
+				frames_done=2,
+				total_frames=10,
+				timestamp_seconds=0.1,
+				active_tracks=1,
+			)
 		)
 		assert buf.getvalue() == after_first  # within the throttle window: no redraw
 
 		reporter.receive(
-			FrameProcessed(frame_index=9, total_frames=10, timestamp_seconds=0.9, active_tracks=0)
+			FrameProcessed(
+				frame_index=9,
+				frames_done=10,
+				total_frames=10,
+				timestamp_seconds=0.9,
+				active_tracks=0,
+			)
 		)
 		assert buf.getvalue() != after_first  # final frame (fraction == 1.0) forces a draw
 		assert "100.0%" in buf.getvalue()

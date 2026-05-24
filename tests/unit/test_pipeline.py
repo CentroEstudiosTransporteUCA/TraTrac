@@ -180,6 +180,7 @@ class TestProgressEmission:
 		assert isinstance(reporter.events[0], ProcessingStarted)
 		frame_events = [e for e in reporter.events if isinstance(e, FrameProcessed)]
 		assert [e.frame_index for e in frame_events] == [0, 1]
+		assert [e.frames_done for e in frame_events] == [1, 2]  # 1-based progress count
 
 		finished = reporter.events[-1]
 		assert isinstance(finished, ProcessingFinished)

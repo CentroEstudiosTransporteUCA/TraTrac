@@ -35,14 +35,16 @@ describes *what happened*, never *how to render it*:
 | Event | When | Carries |
 | --- | --- | --- |
 | `ProcessingStarted` | before the first frame | `VideoMetadata` |
-| `FrameProcessed` | after each frame is exported | frame index, total, timestamp, active tracks; behaviour: `fraction`, `percent` |
+| `FrameProcessed` | after each frame is exported | absolute frame index, frames done (this run), windowed total, timestamp, active tracks; behaviour: `fraction`, `percent` |
 | `ProcessingFinished` | after the last frame | frames processed |
 | `ProcessingFailed` | a frame raised (error re-raises after) | frame index, error message |
 
-`FrameProcessed.fraction` returns `0.0` when the total is unknown
-(`total_frames <= 0`, which OpenCV can report) and clamps to `1.0` when the
-reported count under-counts. Rendering and throttling are the reporter's
-concern, not the event's.
+`FrameProcessed.fraction` is `frames_done / total_frames` (not the absolute
+`frame_index`): with an analysis window (`vault/17_time_window.md`) the index is
+the real frame number, which would mismatch the windowed total. It returns
+`0.0` when the total is unknown (`total_frames <= 0`, which OpenCV can report)
+and clamps to `1.0` when the reported count under-counts. Rendering and
+throttling are the reporter's concern, not the event's.
 
 ---
 
