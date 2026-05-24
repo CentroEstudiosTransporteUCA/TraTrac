@@ -20,6 +20,7 @@ and heading from that history.
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from tratrac.domain.detection import TrackedDetection
@@ -42,8 +43,12 @@ class _TrackHistory:
 	last_good_heading: Heading | None = None
 
 
-class OrientationEstimator:
-	"""Builds ``VehicleState``s from per-frame ``TrackedDetection``s."""
+class EmaOrientationEstimator:
+	"""Builds ``VehicleState``s from per-frame ``TrackedDetection``s.
+
+	Implements the ``OrientationEstimator`` port: ``estimate`` takes a frame's
+	whole batch of tracked detections so orientation is a uniform pipeline step.
+	"""
 
 	def __init__(
 		self,
@@ -59,7 +64,13 @@ class OrientationEstimator:
 		self._scale = meters_per_pixel
 		self._history: dict[int, _TrackHistory] = {}
 
-	def estimate(self, tracked: TrackedDetection, timestamp_seconds: float) -> VehicleState:
+	def estimate(
+		self, tracked: Sequence[TrackedDetection], timestamp_seconds: float
+	) -> list[VehicleState]:
+		"""Estimate a vehicle state for every tracked detection in the frame."""
+		return [self._estimate_one(t, timestamp_seconds) for t in tracked]
+
+	def _estimate_one(self, tracked: TrackedDetection, timestamp_seconds: float) -> VehicleState:
 		track_id = tracked.track_id
 		bbox = tracked.detection.bbox
 		# Convert pixel-space measurements to world units (metres if scale is a

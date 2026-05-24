@@ -16,7 +16,7 @@ import cv2
 import numpy as np
 import pytest
 
-from tratrac.application.orientation import OrientationEstimator
+from tratrac.application.orientation import EmaOrientationEstimator
 from tratrac.application.pipeline import TrajectoryPipeline
 from tratrac.infrastructure.detection.rt_detr import RtDetrDetector
 from tratrac.infrastructure.export.ssam_trj import SsamTrjExporter
@@ -64,7 +64,7 @@ def test_pipeline_produces_parseable_trj(synthetic_video: Path, tmp_path: Path) 
 			detector=detector,
 			tracker=tracker,
 			exporter=exporter,
-			orientation=OrientationEstimator(),
+			orientation=EmaOrientationEstimator(),
 		)
 		n_frames = pipeline.run()
 
