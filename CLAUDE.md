@@ -11,8 +11,8 @@ MVP1 landed. The repo contains:
 - `src/tratrac/` — the implementation, organized in onion layers:
   - `domain/` — pure value objects (geometry, frame, detection, vehicle, progress events, step-timing records) and Protocol ports (`VideoSource`, `Detector`, `Tracker`, `OrientationEstimator`, `TrajectoryExporter`, `ProgressReporter`, `TimingSink`).
   - `application/` — `EmaOrientationEstimator` (batch `OrientationEstimator` port impl: per-track kinematics with EMA-smoothed heading), `TrajectoryPipeline` (per-frame orchestrator that emits a progress event stream), and `NullProgressReporter` (silent default).
-  - `infrastructure/` — adapters: `video/opencv.py` (+ `video/window.py`, the pure `FrameWindow` seconds→frame-range math for `--start`/`--end` trimming, see `vault/17_time_window.md`), `detection/rt_detr.py` (HF transformers), `detection/yolov8_visdrone.py` (**MVP1 emergency default**, see `vault/05_mvp1.md`), `tracking/boxmot_bot_sort.py`, `export/ssam_trj.py` (binary v1.04 writer), `progress/console.py` (throttled stderr progress reporter), `timing/decorators.py` (per-port `Timed*` step-timing decorators) + `timing/csv.py` (wide-row CSV timing sink).
-  - `cli.py` — Typer CLI entry point with `--detector {yolov8_visdrone,rt_detr}`, `--timing-csv PATH` (opt-in per-frame step timings), and `--start`/`--end` timecode flags (analysis-window trimming) flags. Requires explicit GSD calibration (errors without `--meters-per-pixel` or `--drone-model`). Installed script: `tratrac`.
+  - `infrastructure/` — adapters: `video/opencv.py` (+ `video/window.py`, the pure `FrameWindow` seconds→frame-range math for `--start`/`--end` trimming, see `vault/17_time_window.md`), `detection/rt_detr.py` (HF transformers), `detection/yolov8_visdrone.py` (**MVP1 emergency default**, see `vault/05_mvp1.md`), `tracking/boxmot_bot_sort.py`, `export/ssam_trj.py` (binary v1.04 writer), `progress/console.py` (throttled stderr progress reporter), `timing/decorators.py` (per-port `Timed*` step-timing decorators) + `timing/csv.py` (wide-row CSV timing sink), `export/decimating.py` (`TrajectoryExporter` decorator thinning the TIMESTEP stream for `--timestep-precision`, see `vault/18_timestep_precision.md`).
+  - `cli.py` — Typer CLI entry point with `--detector {yolov8_visdrone,rt_detr}`, `--timing-csv PATH` (opt-in per-frame step timings), `--start`/`--end` timecode flags (analysis-window trimming), and `--timestep-precision SECONDS` (minimum seconds between exported TIMESTEPs, see `vault/18_timestep_precision.md`) flags. Requires explicit GSD calibration (errors without `--meters-per-pixel` or `--drone-model`). Installed script: `tratrac`.
 - `tests/` — `unit/` (44 tests, fully isolated from heavy deps) and `integration/` (1 e2e smoke test, marked `@pytest.mark.slow` because it downloads the detector checkpoint on first run).
 - `scripts/` — standalone diagnostic tools (pure stdlib + cv2 where possible, do **not** depend on the package internals so they work even when something is broken):
   - `dump_trj.py` — human-readable dump of a binary `.trj` (FORMAT/DIMENSIONS/TIMESTEP/VEHICLE records with totals).
@@ -36,7 +36,7 @@ All commands run from the repo root. `uv` manages the venv (`.venv/`) and resolv
 | Run all tests | `uv run pytest` |
 | Run only unit tests (fast) | `uv run pytest tests/unit` |
 | Run only the slow e2e test | `uv run pytest -m slow` |
-| Run the CLI | `uv run tratrac VIDEO --out PATH (--meters-per-pixel M \| --drone-model KEY) [--detector yolov8_visdrone\|rt_detr] [--conf 0.25] [--start MM:SS] [--end MM:SS]` |
+| Run the CLI | `uv run tratrac VIDEO --out PATH (--meters-per-pixel M \| --drone-model KEY) [--detector yolov8_visdrone\|rt_detr] [--conf 0.25] [--start MM:SS] [--end MM:SS] [--timestep-precision SECONDS]` |
 | Dump a `.trj` | `uv run python scripts/dump_trj.py PATH [--summary] [--max-frames N]` |
 | Probe the detector on a frame | `uv run python scripts/probe_detector.py VIDEO --frame N` |
 | Overlay trajectories on the video | `uv run python scripts/render_trajectories.py VIDEO TRJ --out OUT.mp4` |
@@ -73,6 +73,7 @@ All commands run from the repo root. `uv` manages the venv (`.venv/`) and resolv
 - `15_step_timing.md` — the homogeneous-port migration (batch `OrientationEstimator`), the `Timed*` decorators, and the `TimingSink` port (CSV now, telemetry later).
 - `16_trj_validation.md` — the semantic e2e `.trj` validator: the three checks (continuity, orientation smoothness, kinematic plausibility), why no-ground-truth bounds what can be validated, and why a kinematic *consistency* check was rejected as tautological.
 - `17_time_window.md` — `--start`/`--end` analysis-window trimming: why it lives in the video adapter (seek), the pure `FrameWindow` math, and why trimmed clips keep absolute TIMESTEPs.
+- `18_timestep_precision.md` — `--timestep-precision` output decimation: why it samples the export (not the processing) via a `TrajectoryExporter` decorator, the anchored emission-grid math, and the SSAM coarseness caveat.
 
 If the vault and any future code disagree, surface the conflict and ask which is authoritative before editing.
 

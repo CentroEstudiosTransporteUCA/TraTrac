@@ -16,6 +16,7 @@ from tratrac.cli import (
 	_resolve_scale,
 	_validate_device,
 	_validate_drone_model,
+	_validate_timestep_precision,
 	app,
 )
 from tratrac.domain.frame import VideoMetadata
@@ -219,3 +220,26 @@ class TestProcessOutputPathSanitization:
 			["process", str(video), "--out", str(a_dir), "--meters-per-pixel", "0.1"],
 		)
 		assert result.exit_code == 2
+
+
+class TestValidateTimestepPrecision:
+	def test_none_is_accepted(self) -> None:
+		_validate_timestep_precision(None)  # no decimation requested; must not raise
+
+	def test_positive_sub_second_is_accepted_silently(
+		self, capsys: pytest.CaptureFixture[str]
+	) -> None:
+		_validate_timestep_precision(0.1)
+		assert capsys.readouterr().err == ""
+
+	def test_zero_is_rejected(self) -> None:
+		with pytest.raises(typer.BadParameter):
+			_validate_timestep_precision(0.0)
+
+	def test_negative_is_rejected(self) -> None:
+		with pytest.raises(typer.BadParameter):
+			_validate_timestep_precision(-0.5)
+
+	def test_coarse_value_warns_but_is_accepted(self, capsys: pytest.CaptureFixture[str]) -> None:
+		_validate_timestep_precision(1.0)  # valid, just too coarse for SSAM
+		assert "coarse" in capsys.readouterr().err
