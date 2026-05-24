@@ -71,6 +71,7 @@ class TrajectoryPipeline:
 				self._reporter.receive(
 					FrameProcessed(
 						frame_index=frame.index,
+						frames_done=count,
 						total_frames=total,
 						timestamp_seconds=timestamp,
 						active_tracks=len(states),

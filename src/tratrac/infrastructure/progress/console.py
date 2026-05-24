@@ -64,7 +64,7 @@ class ConsoleProgressReporter:
 			return
 		self._last_draw = now
 		self._write(
-			f"\r{event.percent:5.1f}% | frame {event.frame_index + 1}/{event.total_frames} "
+			f"\r{event.percent:5.1f}% | frame {event.frames_done}/{event.total_frames} "
 			f"| t={event.timestamp_seconds:7.1f}s | {event.active_tracks} tracked"
 		)
 		self._line_open = True

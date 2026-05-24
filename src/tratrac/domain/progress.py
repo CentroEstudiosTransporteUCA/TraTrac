@@ -34,19 +34,25 @@ class ProcessingStarted(ProgressEvent):
 class FrameProcessed(ProgressEvent):
 	"""Emitted after each frame has been processed and exported."""
 
-	frame_index: int  # zero-based index of the frame just processed
-	total_frames: int  # as reported by the source; may be 0 if unknown
+	frame_index: int  # absolute zero-based frame number in the source video (provenance)
+	frames_done: int  # count of frames processed so far this run (1-based)
+	total_frames: int  # frames this run will process (windowed); may be 0 if unknown
 	timestamp_seconds: float
 	active_tracks: int
 
 	@property
 	def fraction(self) -> float:
-		"""Completed fraction in [0, 1]; ``0.0`` when the total is unknown."""
+		"""Completed fraction in [0, 1]; ``0.0`` when the total is unknown.
+
+		Uses ``frames_done`` (count processed this run), not ``frame_index``: with
+		an analysis window the index is absolute (e.g. 10659) while the total is
+		the windowed count, so the index is the wrong numerator.
+		"""
 		if self.total_frames <= 0:
 			return 0.0
-		# frame_index is zero-based, so +1 makes the last frame read as 1.0.
-		# Clamp: OpenCV's frame count can under-report, yielding index >= total.
-		return min(1.0, (self.frame_index + 1) / self.total_frames)
+		# frames_done is 1-based (the frame just finished), so the last frame reads 1.0.
+		# Clamp: OpenCV's frame count can under-report, yielding more frames than total.
+		return min(1.0, self.frames_done / self.total_frames)
 
 	@property
 	def percent(self) -> float:
