@@ -67,6 +67,14 @@ def process(
 		Path, typer.Argument(exists=True, dir_okay=False, readable=True, help="Input video.")
 	],
 	out: Annotated[Path, typer.Option("--out", "-o", dir_okay=False, help="Output .trj path.")],
+	force: Annotated[
+		bool,
+		typer.Option(
+			"--force",
+			"-f",
+			help="Overwrite existing output files without prompting (for non-interactive runs).",
+		),
+	] = False,
 	detector: Annotated[
 		DetectorChoice,
 		typer.Option("--detector", help="Which detector adapter to use."),
@@ -162,9 +170,9 @@ def process(
 	if timing_csv is not None and out.resolve() == timing_csv.resolve():
 		raise typer.BadParameter("--timing-csv must differ from --out.")
 	# Confirm/prepare outputs (create parents, confirm overwrite) before opening.
-	_prepare_output_path(out)
+	_prepare_output_path(out, force=force)
 	if timing_csv is not None:
-		_prepare_output_path(timing_csv)
+		_prepare_output_path(timing_csv, force=force)
 	with _open_video(video, start_seconds=start_seconds, end_seconds=end_seconds) as source:
 		try:
 			scale = _resolve_scale(
@@ -381,14 +389,32 @@ def _build_detector(
 	raise ValueError(f"Unknown detector choice: {choice}")
 
 
-def _prepare_output_path(path: Path) -> None:
+def _is_interactive() -> bool:
+	"""Whether stdin can answer a prompt. False under pipes/redirects/CI.
+
+	Wrapped (not inlined) so it is a single monkeypatch point in tests and the one
+	place the CLI's interactivity assumption is named.
+	"""
+	return sys.stdin.isatty()
+
+
+def _prepare_output_path(path: Path, *, force: bool = False) -> None:
 	"""Make ``path`` writable: confirm overwrite if it exists, then create parents.
 
 	The writers open with ``"w"``/``"wb"`` and would raise if the parent directory
 	is missing. Overwrite confirmation is an interactive (CLI) concern, so it lives
 	here rather than in the writers.
+
+	``--force`` skips the prompt outright. Otherwise, when the file exists and stdin
+	is not a TTY (a non-interactive run), there is no way to answer the prompt, so we
+	fail with an actionable error instead of letting ``click`` abort on EOF.
 	"""
-	if path.exists():
+	if path.exists() and not force:
+		if not _is_interactive():
+			raise typer.BadParameter(
+				f"{path} already exists and stdin is not a TTY to confirm overwrite. "
+				"Re-run with --force to overwrite."
+			)
 		typer.confirm(f"{path} already exists. Overwrite?", abort=True)
 	path.parent.mkdir(parents=True, exist_ok=True)
 
