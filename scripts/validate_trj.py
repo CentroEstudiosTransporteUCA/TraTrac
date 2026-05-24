@@ -58,7 +58,7 @@ _TIMESTEP = 2
 _VEHICLE = 3
 
 # --- Default thresholds -----------------------------------------------------
-_DEFAULT_BOUNDARY_MARGIN = 30.0  # slack added to half the vehicle's major axis
+_DEFAULT_BOUNDARY_MARGIN = 100.0  # slack added to half the vehicle's major axis
 _DEFAULT_MAX_HEADING_STEP_DEG = 20.0  # heading change above this = a sudden switch
 
 # Physical plausibility ceilings for a road vehicle, in DIMENSIONS.Units. The
