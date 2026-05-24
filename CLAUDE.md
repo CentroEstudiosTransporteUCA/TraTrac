@@ -9,15 +9,16 @@ MVP1 landed. The repo contains:
 - `vault/` — authoritative design documents (system overview, architecture principles, coordinate systems, tech stack, MVP roadmap, SSAM format spec). The two SSAM PDFs (v1.04 + v3.0) live here as the ground truth for the binary format.
 - `pyproject.toml`, `uv.lock`, `.python-version` (3.12) — uv-managed project.
 - `src/tratrac/` — the implementation, organized in onion layers:
-  - `domain/` — pure value objects (geometry, frame, detection, vehicle) and Protocol ports (`VideoSource`, `Detector`, `Tracker`, `TrajectoryExporter`).
-  - `application/` — `OrientationEstimator` (per-track kinematics with EMA-smoothed heading) and `TrajectoryPipeline` (per-frame orchestrator).
-  - `infrastructure/` — adapters: `video/opencv.py`, `detection/rt_detr.py` (HF transformers), `detection/yolov8_visdrone.py` (**MVP1 emergency default**, see `vault/05_mvp1.md`), `tracking/boxmot_bot_sort.py`, `export/ssam_trj.py` (binary v1.04 writer).
-  - `cli.py` — Typer CLI entry point with `--detector {yolov8_visdrone,rt_detr}` flag. Installed script: `tratrac`.
+  - `domain/` — pure value objects (geometry, frame, detection, vehicle, progress events, step-timing records) and Protocol ports (`VideoSource`, `Detector`, `Tracker`, `OrientationEstimator`, `TrajectoryExporter`, `ProgressReporter`, `TimingSink`).
+  - `application/` — `EmaOrientationEstimator` (batch `OrientationEstimator` port impl: per-track kinematics with EMA-smoothed heading), `TrajectoryPipeline` (per-frame orchestrator that emits a progress event stream), and `NullProgressReporter` (silent default).
+  - `infrastructure/` — adapters: `video/opencv.py` (+ `video/window.py`, the pure `FrameWindow` seconds→frame-range math for `--start`/`--end` trimming, see `vault/17_time_window.md`), `detection/rt_detr.py` (HF transformers), `detection/yolov8_visdrone.py` (**MVP1 emergency default**, see `vault/05_mvp1.md`), `tracking/boxmot_bot_sort.py`, `export/ssam_trj.py` (binary v1.04 writer), `progress/console.py` (throttled stderr progress reporter), `timing/decorators.py` (per-port `Timed*` step-timing decorators) + `timing/csv.py` (wide-row CSV timing sink).
+  - `cli.py` — Typer CLI entry point with `--detector {yolov8_visdrone,rt_detr}`, `--timing-csv PATH` (opt-in per-frame step timings), and `--start`/`--end` timecode flags (analysis-window trimming) flags. Requires explicit GSD calibration (errors without `--meters-per-pixel` or `--drone-model`). Installed script: `tratrac`.
 - `tests/` — `unit/` (44 tests, fully isolated from heavy deps) and `integration/` (1 e2e smoke test, marked `@pytest.mark.slow` because it downloads the detector checkpoint on first run).
 - `scripts/` — standalone diagnostic tools (pure stdlib + cv2 where possible, do **not** depend on the package internals so they work even when something is broken):
   - `dump_trj.py` — human-readable dump of a binary `.trj` (FORMAT/DIMENSIONS/TIMESTEP/VEHICLE records with totals).
   - `probe_detector.py` — runs a detector with all filters off on a single chosen video frame, prints every detection by class+score and writes an annotated PNG. Use this to diagnose why detection looks bad before changing anything.
   - `render_trajectories.py` — overlays a `.trj` on its source video, drawing bumpers + IDs + trails colored per track.
+  - `validate_trj.py` — semantic e2e validator for a `.trj` (see `vault/16_trj_validation.md`): reports per-check compliance (continuity — no interior appear/disappear; orientation smoothness — no sudden front/rear switches; speed/accel physical plausibility against unit-aware bounds). Pure stdlib. `--violations-csv PATH` writes every non-compliant instance with its frame/timestamp/vehicle-id/reason and image-space position to locate it in the video; `--fail-under PCT` is a CI gate.
 
 ## Commands
 
@@ -35,10 +36,11 @@ All commands run from the repo root. `uv` manages the venv (`.venv/`) and resolv
 | Run all tests | `uv run pytest` |
 | Run only unit tests (fast) | `uv run pytest tests/unit` |
 | Run only the slow e2e test | `uv run pytest -m slow` |
-| Run the CLI | `uv run tratrac VIDEO --out PATH [--detector yolov8_visdrone\|rt_detr] [--conf 0.25]` |
+| Run the CLI | `uv run tratrac VIDEO --out PATH (--meters-per-pixel M \| --drone-model KEY) [--detector yolov8_visdrone\|rt_detr] [--conf 0.25] [--start MM:SS] [--end MM:SS]` |
 | Dump a `.trj` | `uv run python scripts/dump_trj.py PATH [--summary] [--max-frames N]` |
 | Probe the detector on a frame | `uv run python scripts/probe_detector.py VIDEO --frame N` |
 | Overlay trajectories on the video | `uv run python scripts/render_trajectories.py VIDEO TRJ --out OUT.mp4` |
+| Semantically validate a `.trj` (e2e) | `uv run python scripts/validate_trj.py PATH [--violations-csv OUT.csv] [--fail-under PCT]` |
 
 ## Dependency Notes
 
@@ -67,6 +69,10 @@ All commands run from the repo root. `uv` manages the venv (`.venv/`) and resolv
 - `05_mvp1.md` … `11_mvp7.md` — staged MVPs; each adds one capability. `05_5_mvp1_75.md` slots between MVP1 and MVP2 for the drone-metadata calibration shortcut.
 - `12_final_architecture.md` — end-state pipeline diagram.
 - `13_road_topology.md` — how SSAM `Link ID` / `Lane ID` get sourced across MVPs.
+- `14_progress_reporting.md` — the `ProgressReporter` output port and the `ProgressEvent` family (console now, any UI client later).
+- `15_step_timing.md` — the homogeneous-port migration (batch `OrientationEstimator`), the `Timed*` decorators, and the `TimingSink` port (CSV now, telemetry later).
+- `16_trj_validation.md` — the semantic e2e `.trj` validator: the three checks (continuity, orientation smoothness, kinematic plausibility), why no-ground-truth bounds what can be validated, and why a kinematic *consistency* check was rejected as tautological.
+- `17_time_window.md` — `--start`/`--end` analysis-window trimming: why it lives in the video adapter (seek), the pure `FrameWindow` math, and why trimmed clips keep absolute TIMESTEPs.
 
 If the vault and any future code disagree, surface the conflict and ask which is authoritative before editing.
 

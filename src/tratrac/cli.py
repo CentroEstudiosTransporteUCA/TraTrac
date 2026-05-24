@@ -2,23 +2,40 @@
 
 from __future__ import annotations
 
+import re
 import sys
+from collections.abc import Iterator
+from contextlib import ExitStack, contextmanager
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated
 
 import typer
 
-from tratrac.application.orientation import OrientationEstimator
+from tratrac.application.orientation import EmaOrientationEstimator
 from tratrac.application.pipeline import TrajectoryPipeline
-from tratrac.calibration.drone_specs import lookup
+from tratrac.calibration.drone_specs import known_models, lookup
 from tratrac.calibration.gsd import ground_sample_distance
 from tratrac.calibration.srt_parser import mean_altitude
 from tratrac.domain.frame import VideoMetadata
-from tratrac.domain.ports import Detector
+from tratrac.domain.ports import (
+	Detector,
+	OrientationEstimator,
+	TimingSink,
+	Tracker,
+	TrajectoryExporter,
+)
 from tratrac.infrastructure.detection.rt_detr import RtDetrDetector
 from tratrac.infrastructure.detection.yolov8_visdrone import YoloV8VisDroneDetector
 from tratrac.infrastructure.export.ssam_trj import SsamTrjExporter
+from tratrac.infrastructure.progress.console import ConsoleProgressReporter
+from tratrac.infrastructure.timing.csv import CsvTimingSink
+from tratrac.infrastructure.timing.decorators import (
+	TimedDetector,
+	TimedExporter,
+	TimedOrientation,
+	TimedTracker,
+)
 from tratrac.infrastructure.tracking.boxmot_bot_sort import BoxmotBotSortTracker
 from tratrac.infrastructure.video.opencv import OpenCvVideoSource
 
@@ -48,7 +65,7 @@ def process(
 	video: Annotated[
 		Path, typer.Argument(exists=True, dir_okay=False, readable=True, help="Input video.")
 	],
-	out: Annotated[Path, typer.Option("--out", "-o", help="Output .trj path.")],
+	out: Annotated[Path, typer.Option("--out", "-o", dir_okay=False, help="Output .trj path.")],
 	detector: Annotated[
 		DetectorChoice,
 		typer.Option("--detector", help="Which detector adapter to use."),
@@ -94,31 +111,122 @@ def process(
 			help="Path to DJI .SRT sidecar with per-frame altitude (default: <video>.SRT next to the video).",
 		),
 	] = None,
+	timing_csv: Annotated[
+		Path | None,
+		typer.Option(
+			"--timing-csv",
+			dir_okay=False,
+			help="Write per-frame pipeline step timings to this CSV path (profiling; off by default).",
+		),
+	] = None,
+	start: Annotated[
+		str | None,
+		typer.Option(
+			"--start",
+			help="Start of the analysis window as a timecode (HH:MM:SS(.ms), MM:SS, or SS). "
+			"Default: video start.",
+		),
+	] = None,
+	end: Annotated[
+		str | None,
+		typer.Option(
+			"--end",
+			help="End of the analysis window (inclusive) as a timecode. Default: video end.",
+		),
+	] = None,
 ) -> None:
 	"""Process a video into an SSAM .trj trajectory file."""
-	with OpenCvVideoSource(video) as source:
-		scale = _resolve_scale(
-			video_path=video,
-			metadata=source.metadata,
-			meters_per_pixel=meters_per_pixel,
-			drone_model=drone_model,
-			altitude_m=altitude_m,
-			srt_path=srt,
-		)
+	# --- Fail-fast input validation. Everything here is checkable without the
+	# video, so reject bad input before the overwrite prompt and the costly
+	# video open + detector load. ---
+	start_seconds = _parse_timecode(start) if start is not None else None
+	end_seconds = _parse_timecode(end) if end is not None else None
+	if end_seconds is not None and end_seconds <= 0:
+		raise typer.BadParameter("--end must be greater than zero.")
+	if start_seconds is not None and end_seconds is not None and end_seconds <= start_seconds:
+		raise typer.BadParameter("--end must be after --start.")
+	_validate_device(device)
+	_validate_drone_model(drone_model)
+	if meters_per_pixel <= 0.0 and not drone_model:
+		raise _no_calibration_error()
+	if timing_csv is not None and out.resolve() == timing_csv.resolve():
+		raise typer.BadParameter("--timing-csv must differ from --out.")
+	# Confirm/prepare outputs (create parents, confirm overwrite) before opening.
+	_prepare_output_path(out)
+	if timing_csv is not None:
+		_prepare_output_path(timing_csv)
+	with _open_video(video, start_seconds=start_seconds, end_seconds=end_seconds) as source:
+		try:
+			scale = _resolve_scale(
+				video_path=video,
+				metadata=source.metadata,
+				meters_per_pixel=meters_per_pixel,
+				drone_model=drone_model,
+				altitude_m=altitude_m,
+				srt_path=srt,
+			)
+		except ValueError as exc:
+			# A non-positive altitude (e.g. an SRT with no usable values) surfaces
+			# from the calibration chain as a domain ValueError; report it cleanly.
+			raise typer.BadParameter(str(exc)) from exc
 		det: Detector = _build_detector(detector, checkpoint=checkpoint, device=device, conf=conf)
-		tracker = BoxmotBotSortTracker(source.metadata)
-		exporter = SsamTrjExporter(out, source.metadata, scale=scale)
-		orientation = OrientationEstimator(meters_per_pixel=scale)
-		pipeline = TrajectoryPipeline(
-			video=source,
-			detector=det,
-			tracker=tracker,
-			exporter=exporter,
-			orientation=orientation,
-		)
-		n_frames = pipeline.run()
+		tracker: Tracker = BoxmotBotSortTracker(source.metadata)
+		exporter: TrajectoryExporter = SsamTrjExporter(out, source.metadata, scale=scale)
+		orientation: OrientationEstimator = EmaOrientationEstimator(meters_per_pixel=scale)
+		with _timing_sink(timing_csv) as sink:
+			if sink is not None:
+				det = TimedDetector(det, sink)
+				tracker = TimedTracker(tracker, sink)
+				orientation = TimedOrientation(orientation, sink)
+				exporter = TimedExporter(exporter, sink)
+			pipeline = TrajectoryPipeline(
+				video=source,
+				detector=det,
+				tracker=tracker,
+				exporter=exporter,
+				orientation=orientation,
+				reporter=ConsoleProgressReporter(),
+			)
+			n_frames = pipeline.run()
 
 	typer.echo(f"Processed {n_frames} frames -> {out} (scale={scale} m/px)")
+
+
+_DEVICE_RE = re.compile(r"cpu|mps|cuda(:\d+)?")
+
+
+def _validate_device(device: str) -> None:
+	"""Reject device strings torch won't accept. Heuristic: cpu / mps / cuda[:N]."""
+	if _DEVICE_RE.fullmatch(device) is None:
+		raise typer.BadParameter(
+			f"Unsupported --device {device!r}; expected cpu, mps, or cuda[:N] (e.g. cuda:0)."
+		)
+
+
+def _validate_drone_model(drone_model: str) -> None:
+	"""Reject an unknown --drone-model up front, before the video opens."""
+	if drone_model and drone_model.lower() not in known_models():
+		known = ", ".join(known_models())
+		raise typer.BadParameter(f"Unknown drone model {drone_model!r}. Known: {known}.")
+
+
+@contextmanager
+def _open_video(
+	video: Path, *, start_seconds: float | None, end_seconds: float | None
+) -> Iterator[OpenCvVideoSource]:
+	"""Open the (optionally windowed) video source.
+
+	Translates range ``ValueError``s raised while opening — e.g. a --start past
+	the video's end — into a clean ``typer.BadParameter``. Exceptions from the
+	processing body pass through untouched.
+	"""
+	with ExitStack() as stack:
+		try:
+			source = OpenCvVideoSource(video, start_seconds=start_seconds, end_seconds=end_seconds)
+			stack.enter_context(source)
+		except ValueError as exc:
+			raise typer.BadParameter(str(exc)) from exc
+		yield source
 
 
 def _resolve_scale(
@@ -134,7 +242,15 @@ def _resolve_scale(
 
 	1. Explicit `--meters-per-pixel` value
 	2. `--drone-model` + (`--altitude` or DJI .SRT sidecar)
-	3. Fall back to 1.0 with a stderr warning
+
+	Errors out if neither is supplied. An uncalibrated run would emit physically
+	meaningless metric quantities (pixels pretended to be metres), so the CLI
+	refuses rather than silently produce them. The scale=1.0 pixel fallback
+	remains available in the library (``EmaOrientationEstimator`` /
+	``SsamTrjExporter`` defaults) for callers that knowingly want it.
+
+	``process`` rejects the no-calibration case up front; the guard here keeps
+	this helper correct on its own (and shares the same error message).
 	"""
 	if meters_per_pixel > 0.0:
 		return meters_per_pixel
@@ -149,13 +265,41 @@ def _resolve_scale(
 			image_width_pixels=metadata.width,
 		)
 
+	raise _no_calibration_error()
+
+
+def _parse_timecode(value: str) -> float:
+	"""Parse a timecode into seconds.
+
+	Accepts ``SS(.ms)``, ``MM:SS(.ms)``, or ``HH:MM:SS(.ms)`` (e.g. ``12.5``,
+	``1:30``, ``0:01:05.250``). Components must be non-negative. Raises
+	``typer.BadParameter`` on malformed input so the CLI reports it cleanly.
+	"""
+	parts = value.strip().split(":")
+	if len(parts) > 3:
+		raise typer.BadParameter(f"Timecode has too many ':'-separated parts: {value!r}.")
+	try:
+		seconds = float(parts[-1])
+		minutes = float(parts[-2]) if len(parts) >= 2 else 0.0
+		hours = float(parts[-3]) if len(parts) == 3 else 0.0
+	except ValueError:
+		raise typer.BadParameter(
+			f"Invalid timecode {value!r}; expected SS(.ms), MM:SS, or HH:MM:SS."
+		) from None
+	if seconds < 0 or minutes < 0 or hours < 0:
+		raise typer.BadParameter(f"Timecode components must be non-negative: {value!r}.")
+	return hours * 3600.0 + minutes * 60.0 + seconds
+
+
+def _no_calibration_error() -> typer.Exit:
+	"""Emit the no-calibration error and return the exception for the caller to raise."""
 	typer.echo(
-		"WARNING: no calibration supplied (--meters-per-pixel or --drone-model + altitude). "
-		"Falling back to scale=1.0 — output .trj will be syntactically valid SSAM but "
-		"physically meaningless (MVP1 behaviour).",
+		"ERROR: no calibration supplied. Pass --meters-per-pixel, or --drone-model "
+		"with --altitude or a DJI .SRT sidecar. Without a real GSD the exported .trj "
+		"would carry physically meaningless metric values.",
 		err=True,
 	)
-	return 1.0
+	return typer.Exit(code=2)
 
 
 def _altitude_from_srt(video_path: Path, srt_path: Path | None) -> float:
@@ -193,6 +337,28 @@ def _build_detector(
 			score_threshold=conf,
 		)
 	raise ValueError(f"Unknown detector choice: {choice}")
+
+
+def _prepare_output_path(path: Path) -> None:
+	"""Make ``path`` writable: confirm overwrite if it exists, then create parents.
+
+	The writers open with ``"w"``/``"wb"`` and would raise if the parent directory
+	is missing. Overwrite confirmation is an interactive (CLI) concern, so it lives
+	here rather than in the writers.
+	"""
+	if path.exists():
+		typer.confirm(f"{path} already exists. Overwrite?", abort=True)
+	path.parent.mkdir(parents=True, exist_ok=True)
+
+
+@contextmanager
+def _timing_sink(path: Path | None) -> Iterator[TimingSink | None]:
+	"""Yield a CSV timing sink when a path is given, else ``None`` (timing off)."""
+	if path is None:
+		yield None
+		return
+	with CsvTimingSink(path) as sink:
+		yield sink
 
 
 if __name__ == "__main__":
