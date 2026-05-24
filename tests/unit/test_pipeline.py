@@ -6,12 +6,20 @@ from collections.abc import Iterator, Sequence
 from types import TracebackType
 
 import numpy as np
+import pytest
 
-from tratrac.application.orientation import OrientationEstimator
+from tratrac.application.orientation import EmaOrientationEstimator
 from tratrac.application.pipeline import TrajectoryPipeline
 from tratrac.domain.detection import Detection, TrackedDetection, VehicleClass
 from tratrac.domain.frame import Frame, VideoMetadata
 from tratrac.domain.geometry import BoundingBox
+from tratrac.domain.progress import (
+	FrameProcessed,
+	ProcessingFailed,
+	ProcessingFinished,
+	ProcessingStarted,
+	ProgressEvent,
+)
 from tratrac.domain.vehicle import VehicleState
 
 
@@ -79,6 +87,14 @@ class _CapturingExporter:
 		self.closed = True
 
 
+class _RecordingReporter:
+	def __init__(self) -> None:
+		self.events: list[ProgressEvent] = []
+
+	def receive(self, event: ProgressEvent) -> None:
+		self.events.append(event)
+
+
 def _bbox(x: float) -> BoundingBox:
 	return BoundingBox(x=x, y=10.0, width=4.0, height=2.0)
 
@@ -95,7 +111,7 @@ class TestPipeline:
 			detector=_FixedDetector([[_det(0.0)], [_det(1.0)], [_det(2.0)]]),
 			tracker=_IdentityTracker(),
 			exporter=exporter,
-			orientation=OrientationEstimator(),
+			orientation=EmaOrientationEstimator(),
 		)
 		processed = pipeline.run()
 
@@ -113,7 +129,7 @@ class TestPipeline:
 			detector=_FixedDetector([[]]),
 			tracker=_IdentityTracker(),
 			exporter=exporter,
-			orientation=OrientationEstimator(),
+			orientation=EmaOrientationEstimator(),
 		)
 		pipeline.run()
 		assert exporter.opened
@@ -126,7 +142,7 @@ class TestPipeline:
 			detector=_FixedDetector([[], []]),
 			tracker=_IdentityTracker(),
 			exporter=exporter,
-			orientation=OrientationEstimator(),
+			orientation=EmaOrientationEstimator(),
 		)
 		pipeline.run()
 		assert all(states == [] for _, states in exporter.emitted)
@@ -139,10 +155,50 @@ class TestPipeline:
 			detector=_FixedDetector([[_det(0.0)], [_det(30.0)], [_det(60.0)]]),
 			tracker=_IdentityTracker(),
 			exporter=exporter,
-			orientation=OrientationEstimator(),
+			orientation=EmaOrientationEstimator(),
 		)
 		pipeline.run()
 		# Final frame's state should have eastward heading.
 		final_state = exporter.emitted[-1][1][0]
 		assert final_state.heading.dx > 0.9
 		assert final_state.speed > 0.0
+
+
+class TestProgressEmission:
+	def test_emits_started_frames_finished_in_order(self) -> None:
+		reporter = _RecordingReporter()
+		pipeline = TrajectoryPipeline(
+			video=_FakeVideoSource(n_frames=2, fps=30.0),
+			detector=_FixedDetector([[_det(0.0)], [_det(1.0)]]),
+			tracker=_IdentityTracker(),
+			exporter=_CapturingExporter(),
+			orientation=EmaOrientationEstimator(),
+			reporter=reporter,
+		)
+		pipeline.run()
+
+		assert isinstance(reporter.events[0], ProcessingStarted)
+		frame_events = [e for e in reporter.events if isinstance(e, FrameProcessed)]
+		assert [e.frame_index for e in frame_events] == [0, 1]
+
+		finished = reporter.events[-1]
+		assert isinstance(finished, ProcessingFinished)
+		assert finished.frames_processed == 2
+
+	def test_emits_failed_then_reraises_on_frame_error(self) -> None:
+		class _BoomDetector:
+			def detect(self, frame: Frame) -> list[Detection]:
+				raise RuntimeError(f"boom at {frame.index}")
+
+		reporter = _RecordingReporter()
+		pipeline = TrajectoryPipeline(
+			video=_FakeVideoSource(n_frames=1),
+			detector=_BoomDetector(),
+			tracker=_IdentityTracker(),
+			exporter=_CapturingExporter(),
+			orientation=EmaOrientationEstimator(),
+			reporter=reporter,
+		)
+		with pytest.raises(RuntimeError, match="boom"):
+			pipeline.run()
+		assert any(isinstance(e, ProcessingFailed) for e in reporter.events)
