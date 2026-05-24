@@ -12,7 +12,7 @@ the vehicle disappears (drops the moment the track is no longer detected). Pass
 
 Usage:
 	uv run python scripts/render_trajectories.py VIDEO TRJ [--out OUT]
-		[--start SEC] [--end SEC] [--trail FRAMES]
+		[--start HH:MM:SS] [--end HH:MM:SS] [--trail FRAMES]
 
 Performance note: 1920x1080 @ 30fps is roughly 50-150 frames/s on CPU with
 the default codec. A 15-minute video usually renders in 3-10 min.
@@ -36,6 +36,29 @@ def _color_for(vehicle_id: int) -> tuple[int, int, int]:
 	hue = (vehicle_id * 0.618033988749895) % 1.0
 	r, g, b = colorsys.hsv_to_rgb(hue, 0.85, 0.95)
 	return (int(b * 255), int(g * 255), int(r * 255))
+
+
+def _parse_timecode(value: str) -> float:
+	"""Parse an HH:MM:SS timecode into seconds (mirrors the tratrac CLI).
+
+	Accepts ``HH:MM:SS(.ms)`` and the shorter ``MM:SS(.ms)`` / ``SS(.ms)`` forms
+	(e.g. ``00:01:30``, ``1:30``, ``12.5``). Raises ``argparse.ArgumentTypeError``
+	on malformed input so argparse reports it cleanly.
+	"""
+	parts = value.strip().split(":")
+	if len(parts) > 3:
+		raise argparse.ArgumentTypeError(f"Timecode has too many ':'-separated parts: {value!r}.")
+	try:
+		seconds = float(parts[-1])
+		minutes = float(parts[-2]) if len(parts) >= 2 else 0.0
+		hours = float(parts[-3]) if len(parts) == 3 else 0.0
+	except ValueError:
+		raise argparse.ArgumentTypeError(
+			f"Invalid timecode {value!r}; expected HH:MM:SS, MM:SS, or SS."
+		) from None
+	if seconds < 0 or minutes < 0 or hours < 0:
+		raise argparse.ArgumentTypeError(f"Timecode components must be non-negative: {value!r}.")
+	return hours * 3600.0 + minutes * 60.0 + seconds
 
 
 def parse_trj(
@@ -119,8 +142,18 @@ def main() -> int:
 		default=None,
 		help="Output .mp4 (default: <video>_with_trajectories.mp4 next to video).",
 	)
-	parser.add_argument("--start", type=float, default=0.0, help="Start time in seconds.")
-	parser.add_argument("--end", type=float, default=None, help="End time in seconds.")
+	parser.add_argument(
+		"--start",
+		type=_parse_timecode,
+		default=0.0,
+		help="Start time as a timecode (HH:MM:SS, MM:SS, or SS). Default: video start.",
+	)
+	parser.add_argument(
+		"--end",
+		type=_parse_timecode,
+		default=None,
+		help="End time as a timecode (HH:MM:SS, MM:SS, or SS). Default: video end.",
+	)
 	parser.add_argument(
 		"--trail",
 		type=int,
@@ -230,7 +263,7 @@ def main() -> int:
 					continue
 				color = _color_for(vid)
 				for i in range(1, len(points)):
-					cv2.line(frame, points[i - 1], points[i], color, 1)
+					cv2.line(frame, points[i - 1], points[i], color, 3)
 
 			writer.write(frame)
 			rendered += 1
