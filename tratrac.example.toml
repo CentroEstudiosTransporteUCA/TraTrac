@@ -1,0 +1,49 @@
+# TraTrac persisted run config — copy to a real file and edit, then run:
+#   uv run tratrac --config my_run.toml
+#
+# This file is a documentation TEMPLATE; it is not auto-loaded. A run is fully
+# described by this config: there are NO built-in defaults, so EVERY key below
+# is required. Each value may be overridden on the command line by its flag
+# (e.g. --conf 0.4). A "disabled" feature is still an explicit value, never a
+# missing key: timing_csv = "" (off), force = false, start/end = "" (whole clip),
+# timestep_precision = 0.0 (every frame). See vault/19_config_file.md.
+
+[input]
+# The processed video. Overridden by the positional argument: `tratrac VIDEO`.
+video = "clips/highway_run3.mp4"
+
+[detector]
+name = "yolov8_visdrone"          # yolov8_visdrone | rt_detr
+checkpoint = "Mahadih534/YoloV8-VisDrone"   # HF repo id (rt_detr e.g. PekingU/rtdetr_r18vd)
+conf = 0.25                       # detection confidence threshold, [0, 1]
+filename = "visDrone.pt"          # weights file in the repo; required (unused by rt_detr)
+
+[runtime]
+device = "cpu"                    # cpu | mps | cuda | cuda:0
+
+[calibration]
+# Exactly ONE method. Specifying both is an error.
+# (A) direct ground-sample distance:
+meters_per_pixel = 0.05
+# (B) drone geometry — comment out (A) and use:
+# drone_model = "mavic_3"         # see calibration/drone_specs registry
+# altitude_m  = 80.0              # metres AGL ... OR provide an SRT instead:
+# srt = "clips/highway_run3.SRT"  # DJI sidecar with per-frame altitude
+
+[tracker]
+det_thresh = 0.1                  # BoT-SORT detection threshold (kept below detector.conf)
+
+[orientation]
+smoothing_window = 5              # EMA heading window, >= 2
+
+[export]
+out = "out/highway_run3.trj"      # output .trj path (overridden by --out)
+timestep_precision = 0.0          # min seconds between exported TIMESTEPs; 0 = every frame
+
+[window]
+start = ""                        # "" = clip start; else HH:MM:SS(.ms) / MM:SS / SS
+end = ""                          # "" = clip end
+
+[run]
+force = false                     # true = overwrite existing outputs without prompting
+timing_csv = ""                   # "" = profiling off; else a CSV path for per-frame timings

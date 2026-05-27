@@ -57,14 +57,14 @@ def test_pipeline_produces_parseable_trj(synthetic_video: Path, tmp_path: Path) 
 		detector = RtDetrDetector(
 			checkpoint="PekingU/rtdetr_r18vd", device="cpu", score_threshold=0.5
 		)
-		tracker = BoxmotBotSortTracker(source.metadata)
-		exporter = SsamTrjExporter(out, source.metadata)
+		tracker = BoxmotBotSortTracker(source.metadata, det_thresh=0.1)
+		exporter = SsamTrjExporter(out, source.metadata, scale=1.0)
 		pipeline = TrajectoryPipeline(
 			video=source,
 			detector=detector,
 			tracker=tracker,
 			exporter=exporter,
-			orientation=EmaOrientationEstimator(),
+			orientation=EmaOrientationEstimator(smoothing_window=5, meters_per_pixel=1.0),
 		)
 		n_frames = pipeline.run()
 

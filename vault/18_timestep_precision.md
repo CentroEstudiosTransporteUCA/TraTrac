@@ -83,5 +83,7 @@ PET) degrade. Validity is structural; usefulness is the operator's call.
 
 - `infrastructure/export/decimating.py` — `DecimatingTrajectoryExporter` (the
   decorator + grid math).
-- `cli.py` — `--timestep-precision`, `_validate_timestep_precision` (reject ≤ 0,
-  warn when coarse), and the wrapping wired inside the timing decorator.
+- `application/config.py` — validates `export.timestep_precision` (reject < 0;
+  `0` = every frame) as part of `RunConfig.resolve` (see `vault/19_config_file.md`).
+- `cli.py` — the `--timestep-precision` flag, the coarse-value warning (> 0.5 s),
+  and the wrapping wired inside the timing decorator.

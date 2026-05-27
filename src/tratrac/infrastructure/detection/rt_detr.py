@@ -1,8 +1,8 @@
 """HuggingFace transformers RT-DETR detector adapter.
 
-Defaults to ``PekingU/rtdetr_r18vd`` — smaller checkpoint, tractable on CPU for
-MVP1 dev. Swap to ``PekingU/rtdetr_r50vd_coco_o365`` for stronger detections
-once a GPU is available.
+The ``checkpoint`` is a required constructor argument (no default). For MVP1 dev
+``PekingU/rtdetr_r18vd`` is a small checkpoint tractable on CPU; swap to
+``PekingU/rtdetr_r50vd_coco_o365`` for stronger detections once a GPU is available.
 """
 
 from __future__ import annotations
@@ -31,9 +31,9 @@ class RtDetrDetector:
 
 	def __init__(
 		self,
-		checkpoint: str = "PekingU/rtdetr_r18vd",
-		device: str = "cpu",
-		score_threshold: float = 0.25,
+		checkpoint: str,
+		device: str,
+		score_threshold: float,
 	) -> None:
 		if not 0.0 <= score_threshold <= 1.0:
 			raise ValueError(f"score_threshold must be in [0, 1], got {score_threshold}.")

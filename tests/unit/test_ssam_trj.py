@@ -47,7 +47,7 @@ class TestHeader:
 	def test_format_record_is_v1_04_little_endian(self, tmp_path: Path) -> None:
 		path = tmp_path / "x.trj"
 		meta = VideoMetadata(width=100, height=200, fps=30.0, total_frames=1)
-		with SsamTrjExporter(path, meta):
+		with SsamTrjExporter(path, meta, scale=1.0):
 			pass
 		data = path.read_bytes()
 
@@ -59,7 +59,7 @@ class TestHeader:
 	def test_dimensions_record_carries_image_bounds_and_metric_units(self, tmp_path: Path) -> None:
 		path = tmp_path / "x.trj"
 		meta = VideoMetadata(width=1920, height=1080, fps=30.0, total_frames=1)
-		with SsamTrjExporter(path, meta):
+		with SsamTrjExporter(path, meta, scale=1.0):
 			pass
 		data = path.read_bytes()
 
@@ -75,7 +75,7 @@ class TestTimestep:
 	def test_emit_frame_writes_timestep_record(self, tmp_path: Path) -> None:
 		path = tmp_path / "x.trj"
 		meta = VideoMetadata(width=100, height=200, fps=30.0, total_frames=1)
-		with SsamTrjExporter(path, meta) as exporter:
+		with SsamTrjExporter(path, meta, scale=1.0) as exporter:
 			exporter.emit_frame(timestamp_seconds=2.5, states=[])
 		data = path.read_bytes()
 
@@ -97,7 +97,7 @@ class TestVehicleRecord:
 			velocity=Vector2D(3.0, 0.0),
 			acceleration=Vector2D(0.5, 0.0),
 		)
-		with SsamTrjExporter(path, meta) as exporter:
+		with SsamTrjExporter(path, meta, scale=1.0) as exporter:
 			exporter.emit_frame(timestamp_seconds=0.0, states=[state])
 		data = path.read_bytes()
 
@@ -125,7 +125,7 @@ class TestVehicleRecord:
 		meta = VideoMetadata(width=1000, height=500, fps=10.0, total_frames=1)
 		# Heading "up the screen" in image space (y decreasing) -> y increasing in SSAM.
 		state = _vehicle(centroid=Point2D(100.0, 200.0), heading=Heading(0.0, -1.0), length=10.0)
-		with SsamTrjExporter(path, meta) as exporter:
+		with SsamTrjExporter(path, meta, scale=1.0) as exporter:
 			exporter.emit_frame(timestamp_seconds=0.0, states=[state])
 		data = path.read_bytes()
 
@@ -195,7 +195,7 @@ class TestLinkAndLaneIds:
 			link_id=104,
 			lane_id=2,
 		)
-		with SsamTrjExporter(path, meta) as exporter:
+		with SsamTrjExporter(path, meta, scale=1.0) as exporter:
 			exporter.emit_frame(timestamp_seconds=0.0, states=[state])
 		data = path.read_bytes()
 
@@ -212,7 +212,7 @@ class TestFileLayout:
 		meta = VideoMetadata(width=100, height=100, fps=30.0, total_frames=2)
 		v1 = _vehicle(vehicle_id=1, centroid=Point2D(20.0, 30.0))
 		v2 = _vehicle(vehicle_id=2, centroid=Point2D(40.0, 60.0))
-		with SsamTrjExporter(path, meta) as exporter:
+		with SsamTrjExporter(path, meta, scale=1.0) as exporter:
 			exporter.emit_frame(0.0, [v1, v2])
 			exporter.emit_frame(1.0 / 30.0, [v1])
 
@@ -223,7 +223,7 @@ class TestFileLayout:
 		path = tmp_path / "x.trj"
 		meta = VideoMetadata(width=100, height=100, fps=10.0, total_frames=1)
 		v = _vehicle()
-		with SsamTrjExporter(path, meta) as exporter:
+		with SsamTrjExporter(path, meta, scale=1.0) as exporter:
 			exporter.emit_frame(0.0, [v])
 		data = path.read_bytes()
 

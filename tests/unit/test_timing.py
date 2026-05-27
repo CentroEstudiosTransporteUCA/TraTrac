@@ -216,7 +216,9 @@ class TestDecoratedPipeline:
 				detector=TimedDetector(_ConstDetector([_det()]), sink),
 				tracker=TimedTracker(_PerDetectionTracker(), sink),
 				exporter=TimedExporter(_RecordingExporter(), sink),
-				orientation=TimedOrientation(EmaOrientationEstimator(), sink),
+				orientation=TimedOrientation(
+					EmaOrientationEstimator(smoothing_window=5, meters_per_pixel=1.0), sink
+				),
 			)
 			assert pipeline.run() == 3
 		data = path.read_text().splitlines()[1:]
