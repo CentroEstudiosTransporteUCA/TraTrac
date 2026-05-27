@@ -28,7 +28,7 @@ _VEHICLE_CLASS_TO_COCO_ID: dict[VehicleClass, int] = {
 class BoxmotBotSortTracker:
 	"""Wraps ``boxmot.trackers.BotSort`` behind the ``Tracker`` port."""
 
-	def __init__(self, metadata: VideoMetadata, *, det_thresh: float = 0.1) -> None:
+	def __init__(self, metadata: VideoMetadata, *, det_thresh: float) -> None:
 		# det_thresh below the detector's threshold so the detector is the sole
 		# gatekeeper. Aerial-domain detections often peak in the 0.25-0.4 range,
 		# and BotSort's stock 0.3 would suppress legitimate low-confidence cars.

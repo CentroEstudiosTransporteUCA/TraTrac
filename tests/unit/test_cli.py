@@ -1,4 +1,6 @@
-"""Tests for CLI output-path preparation."""
+"""Tests for CLI wiring: output-path preparation, video opening, and the
+config-resolution guards. The resolution logic itself is covered by
+``test_config.py``; here we test only the CLI's use of it."""
 
 from __future__ import annotations
 
@@ -9,17 +11,7 @@ import typer
 from typer.testing import CliRunner
 
 from tratrac import cli
-from tratrac.cli import (
-	_open_video,
-	_parse_timecode,
-	_prepare_output_path,
-	_resolve_scale,
-	_validate_device,
-	_validate_drone_model,
-	_validate_timestep_precision,
-	app,
-)
-from tratrac.domain.frame import VideoMetadata
+from tratrac.cli import _open_video, _prepare_output_path, app
 
 
 class TestPrepareOutputPath:
@@ -89,89 +81,80 @@ class TestPrepareOutputPath:
 			_prepare_output_path(target)
 
 
-_METADATA = VideoMetadata(width=1920, height=1080, fps=30.0, total_frames=100)
+def _video(tmp_path: Path) -> Path:
+	video = tmp_path / "v.mp4"
+	video.write_bytes(b"\x00")
+	return video
 
 
-class TestResolveScale:
-	def test_returns_explicit_meters_per_pixel(self, tmp_path: Path) -> None:
-		scale = _resolve_scale(
-			video_path=tmp_path / "v.mp4",
-			metadata=_METADATA,
-			meters_per_pixel=0.05,
-			drone_model="",
-			altitude_m=0.0,
-			srt_path=None,
-		)
-		assert scale == 0.05
+def _full_config(tmp_path: Path, *, video: Path) -> Path:
+	"""Write a complete, valid persisted run config to ``tmp_path``."""
+	config = tmp_path / "run.toml"
+	config.write_text(
+		"[input]\n"
+		f'video = "{video}"\n'
+		"[detector]\n"
+		'name = "yolov8_visdrone"\n'
+		'checkpoint = "repo/model"\n'
+		"conf = 0.25\n"
+		'filename = "model.pt"\n'
+		"[runtime]\n"
+		'device = "cpu"\n'
+		"[calibration]\n"
+		"meters_per_pixel = 0.1\n"
+		"[tracker]\n"
+		"det_thresh = 0.1\n"
+		"[orientation]\n"
+		"smoothing_window = 5\n"
+		"[export]\n"
+		f'out = "{tmp_path / "out.trj"}"\n'
+		"timestep_precision = 0.0\n"
+		"[window]\n"
+		'start = ""\n'
+		'end = ""\n'
+		"[run]\n"
+		"force = false\n"
+		'timing_csv = ""\n'
+	)
+	return config
 
-	def test_errors_when_no_calibration_supplied(self, tmp_path: Path) -> None:
-		with pytest.raises(typer.Exit) as excinfo:
-			_resolve_scale(
-				video_path=tmp_path / "v.mp4",
-				metadata=_METADATA,
-				meters_per_pixel=0.0,
-				drone_model="",
-				altitude_m=0.0,
-				srt_path=None,
-			)
-		assert excinfo.value.exit_code == 2
 
-
-class TestProcessCalibrationGuard:
-	def test_aborts_before_touching_outputs_when_uncalibrated(self, tmp_path: Path) -> None:
-		# A pre-existing output would make the old flow prompt to overwrite first;
-		# the calibration guard must fire before that and leave the file untouched.
-		video = tmp_path / "v.mp4"
-		video.write_bytes(b"\x00")  # exists, to clear typer's Argument(exists=True)
+class TestProcessConfigGuard:
+	def test_aborts_before_touching_outputs_when_underspecified(self, tmp_path: Path) -> None:
+		# Resolution fails (no config, no calibration/detector flags) before the
+		# overwrite step, so a pre-existing output is left untouched.
+		video = _video(tmp_path)
 		out = tmp_path / "out.trj"
 		out.write_text("old")
-		result = CliRunner().invoke(app, ["process", str(video), "--out", str(out)], input="")
+		result = CliRunner().invoke(app, [str(video), "--out", str(out)], input="")
 		assert result.exit_code == 2
 		assert out.read_text() == "old"
 
-
-class TestParseTimecode:
-	@pytest.mark.parametrize(
-		("value", "expected"),
-		[
-			("12.5", 12.5),
-			("0", 0.0),
-			("1:30", 90.0),
-			("0:01:05.25", 65.25),
-			("1:00:00", 3600.0),
-		],
-	)
-	def test_parses_supported_formats(self, value: str, expected: float) -> None:
-		assert _parse_timecode(value) == pytest.approx(expected)
-
-	@pytest.mark.parametrize("value", ["1:2:3:4", "abc", "1:xx", "-5", "1:-3"])
-	def test_rejects_malformed_input(self, value: str) -> None:
-		with pytest.raises(typer.BadParameter):
-			_parse_timecode(value)
+	def test_reports_every_missing_key_at_once(self) -> None:
+		result = CliRunner().invoke(app, [], input="")
+		assert result.exit_code == 2
+		assert "input.video is missing" in result.output
+		assert "runtime.device is missing" in result.output
 
 
-class TestValidateDevice:
-	@pytest.mark.parametrize("device", ["cpu", "mps", "cuda", "cuda:0", "cuda:1"])
-	def test_accepts_supported_devices(self, device: str) -> None:
-		_validate_device(device)  # must not raise
+class TestProcessOutputPathSanitization:
+	def test_rejects_identical_out_and_timing_csv(self, tmp_path: Path) -> None:
+		video = _video(tmp_path)
+		config = _full_config(tmp_path, video=video)
+		shared = tmp_path / "same.trj"
+		result = CliRunner().invoke(
+			app,
+			["--config", str(config), "--out", str(shared), "--timing-csv", str(shared)],
+		)
+		assert result.exit_code == 2
 
-	@pytest.mark.parametrize("device", ["gpu", "cuda:", "CPU", "", "cuda:x"])
-	def test_rejects_unsupported_devices(self, device: str) -> None:
-		with pytest.raises(typer.BadParameter):
-			_validate_device(device)
-
-
-class TestValidateDroneModel:
-	def test_empty_is_a_noop(self) -> None:
-		_validate_drone_model("")  # must not raise
-
-	@pytest.mark.parametrize("model", ["mavic_3", "MAVIC_3"])
-	def test_accepts_known_model_case_insensitively(self, model: str) -> None:
-		_validate_drone_model(model)  # must not raise
-
-	def test_rejects_unknown_model(self) -> None:
-		with pytest.raises(typer.BadParameter, match="Unknown drone model"):
-			_validate_drone_model("definitely_not_a_drone")
+	def test_rejects_directory_as_output(self, tmp_path: Path) -> None:
+		# Typer's dir_okay=False on --out rejects a directory at parse time.
+		video = _video(tmp_path)
+		a_dir = tmp_path / "outdir"
+		a_dir.mkdir()
+		result = CliRunner().invoke(app, [str(video), "--out", str(a_dir)])
+		assert result.exit_code == 2
 
 
 class TestOpenVideo:
@@ -215,61 +198,3 @@ class TestOpenVideo:
 		with _open_video(tmp_path / "v.mp4", start_seconds=None, end_seconds=None) as source:
 			events.append(type(source).__name__)
 		assert events == ["enter", "_Fake", "exit"]
-
-
-class TestProcessOutputPathSanitization:
-	def _video(self, tmp_path: Path) -> Path:
-		video = tmp_path / "v.mp4"
-		video.write_bytes(b"\x00")
-		return video
-
-	def test_rejects_identical_out_and_timing_csv(self, tmp_path: Path) -> None:
-		video = self._video(tmp_path)
-		shared = tmp_path / "same.trj"
-		result = CliRunner().invoke(
-			app,
-			[
-				"process",
-				str(video),
-				"--out",
-				str(shared),
-				"--timing-csv",
-				str(shared),
-				"--meters-per-pixel",
-				"0.1",
-			],
-		)
-		assert result.exit_code == 2
-
-	def test_rejects_directory_as_output(self, tmp_path: Path) -> None:
-		video = self._video(tmp_path)
-		a_dir = tmp_path / "outdir"
-		a_dir.mkdir()
-		result = CliRunner().invoke(
-			app,
-			["process", str(video), "--out", str(a_dir), "--meters-per-pixel", "0.1"],
-		)
-		assert result.exit_code == 2
-
-
-class TestValidateTimestepPrecision:
-	def test_none_is_accepted(self) -> None:
-		_validate_timestep_precision(None)  # no decimation requested; must not raise
-
-	def test_positive_sub_second_is_accepted_silently(
-		self, capsys: pytest.CaptureFixture[str]
-	) -> None:
-		_validate_timestep_precision(0.1)
-		assert capsys.readouterr().err == ""
-
-	def test_zero_is_rejected(self) -> None:
-		with pytest.raises(typer.BadParameter):
-			_validate_timestep_precision(0.0)
-
-	def test_negative_is_rejected(self) -> None:
-		with pytest.raises(typer.BadParameter):
-			_validate_timestep_precision(-0.5)
-
-	def test_coarse_value_warns_but_is_accepted(self, capsys: pytest.CaptureFixture[str]) -> None:
-		_validate_timestep_precision(1.0)  # valid, just too coarse for SSAM
-		assert "coarse" in capsys.readouterr().err

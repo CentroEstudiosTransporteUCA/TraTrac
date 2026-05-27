@@ -10,11 +10,11 @@ and heading from that history.
   the orientation arrow spin.
 * When a track has never moved meaningfully, heading falls back to the bbox
   major-axis direction.
-* Unit-aware via the ``meters_per_pixel`` constructor argument (default
-  ``1.0`` reproduces MVP1 pixel-as-meter behaviour). When a real GSD is
-  supplied (MVP1.75+, see ``vault/05_5_mvp1_75.md``), all metric quantities
-  the estimator publishes — centroid, length, width, velocity, acceleration —
-  are in metres / m·s⁻¹ / m·s⁻².
+* Unit-aware via the required ``meters_per_pixel`` constructor argument. Passing
+  ``1.0`` reproduces MVP1 pixel-as-metre behaviour; a real GSD (MVP1.75+, see
+  ``vault/05_5_mvp1_75.md``) makes every metric quantity the estimator publishes
+  — centroid, length, width, velocity, acceleration — metres / m·s⁻¹ / m·s⁻².
+  There is no default: the caller (CLI or test) must supply the scale explicitly.
 """
 
 from __future__ import annotations
@@ -53,8 +53,8 @@ class EmaOrientationEstimator:
 	def __init__(
 		self,
 		*,
-		smoothing_window: int = 5,
-		meters_per_pixel: float = 1.0,
+		smoothing_window: int,
+		meters_per_pixel: float,
 	) -> None:
 		if smoothing_window < 2:
 			raise ValueError(f"smoothing_window must be >= 2, got {smoothing_window}.")

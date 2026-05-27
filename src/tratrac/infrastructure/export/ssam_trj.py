@@ -1,8 +1,9 @@
 """SSAM .trj v1.04 binary exporter.
 
 Spec lives in vault/04_ssam_format.md. MVP1 conventions are documented there:
-little-endian, metric units, scale=1.0 by default, image-space Y flipped into
-SSAM Cartesian, Link ID = 0, Lane ID = 0.
+little-endian, metric units, image-space Y flipped into SSAM Cartesian, Link
+ID = 0, Lane ID = 0. The ``scale`` (metres per pixel) is a required constructor
+argument — there is no default; the caller supplies the resolved GSD.
 """
 
 from __future__ import annotations
@@ -37,7 +38,7 @@ class SsamTrjExporter:
 	the file. ``emit_frame`` writes one TIMESTEP and one VEHICLE record per state.
 	"""
 
-	def __init__(self, path: Path, metadata: VideoMetadata, *, scale: float = 1.0) -> None:
+	def __init__(self, path: Path, metadata: VideoMetadata, *, scale: float) -> None:
 		if scale <= 0.0:
 			raise ValueError(f"Scale must be positive, got {scale}.")
 		self._path = path

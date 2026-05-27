@@ -111,7 +111,7 @@ class TestPipeline:
 			detector=_FixedDetector([[_det(0.0)], [_det(1.0)], [_det(2.0)]]),
 			tracker=_IdentityTracker(),
 			exporter=exporter,
-			orientation=EmaOrientationEstimator(),
+			orientation=EmaOrientationEstimator(smoothing_window=5, meters_per_pixel=1.0),
 		)
 		processed = pipeline.run()
 
@@ -129,7 +129,7 @@ class TestPipeline:
 			detector=_FixedDetector([[]]),
 			tracker=_IdentityTracker(),
 			exporter=exporter,
-			orientation=EmaOrientationEstimator(),
+			orientation=EmaOrientationEstimator(smoothing_window=5, meters_per_pixel=1.0),
 		)
 		pipeline.run()
 		assert exporter.opened
@@ -142,7 +142,7 @@ class TestPipeline:
 			detector=_FixedDetector([[], []]),
 			tracker=_IdentityTracker(),
 			exporter=exporter,
-			orientation=EmaOrientationEstimator(),
+			orientation=EmaOrientationEstimator(smoothing_window=5, meters_per_pixel=1.0),
 		)
 		pipeline.run()
 		assert all(states == [] for _, states in exporter.emitted)
@@ -155,7 +155,7 @@ class TestPipeline:
 			detector=_FixedDetector([[_det(0.0)], [_det(30.0)], [_det(60.0)]]),
 			tracker=_IdentityTracker(),
 			exporter=exporter,
-			orientation=EmaOrientationEstimator(),
+			orientation=EmaOrientationEstimator(smoothing_window=5, meters_per_pixel=1.0),
 		)
 		pipeline.run()
 		# Final frame's state should have eastward heading.
@@ -172,7 +172,7 @@ class TestProgressEmission:
 			detector=_FixedDetector([[_det(0.0)], [_det(1.0)]]),
 			tracker=_IdentityTracker(),
 			exporter=_CapturingExporter(),
-			orientation=EmaOrientationEstimator(),
+			orientation=EmaOrientationEstimator(smoothing_window=5, meters_per_pixel=1.0),
 			reporter=reporter,
 		)
 		pipeline.run()
@@ -197,7 +197,7 @@ class TestProgressEmission:
 			detector=_BoomDetector(),
 			tracker=_IdentityTracker(),
 			exporter=_CapturingExporter(),
-			orientation=EmaOrientationEstimator(),
+			orientation=EmaOrientationEstimator(smoothing_window=5, meters_per_pixel=1.0),
 			reporter=reporter,
 		)
 		with pytest.raises(RuntimeError, match="boom"):

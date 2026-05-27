@@ -24,9 +24,6 @@ from tratrac.domain.detection import Detection, VehicleClass
 from tratrac.domain.frame import Frame
 from tratrac.domain.geometry import BoundingBox
 
-_DEFAULT_REPO_ID = "Mahadih534/YoloV8-VisDrone"
-_DEFAULT_FILENAME = "visDrone.pt"
-
 # VisDrone class IDs the model emits, mapped to TraTrac's VehicleClass.
 # Excluded: 0 pedestrian, 1 people, 2 bicycle, 6 tricycle, 7 awning-tricycle
 # (not relevant to vehicle trajectory analytics for MVP1).
@@ -44,10 +41,10 @@ class YoloV8VisDroneDetector:
 
 	def __init__(
 		self,
-		repo_id: str = _DEFAULT_REPO_ID,
-		filename: str = _DEFAULT_FILENAME,
-		device: str = "cpu",
-		score_threshold: float = 0.25,
+		repo_id: str,
+		filename: str,
+		device: str,
+		score_threshold: float,
 	) -> None:
 		if not 0.0 <= score_threshold <= 1.0:
 			raise ValueError(f"score_threshold must be in [0, 1], got {score_threshold}.")

@@ -31,7 +31,7 @@ def _estimate(
 
 class TestFirstObservation:
 	def test_velocity_and_acceleration_are_zero(self) -> None:
-		estimator = EmaOrientationEstimator()
+		estimator = EmaOrientationEstimator(smoothing_window=5, meters_per_pixel=1.0)
 		state = _estimate(
 			estimator,
 			_tracked(1, BoundingBox(x=0.0, y=0.0, width=4.0, height=2.0)),
@@ -41,7 +41,7 @@ class TestFirstObservation:
 		assert state.acceleration.magnitude == 0.0
 
 	def test_heading_falls_back_to_bbox_major_axis_east_when_wide(self) -> None:
-		estimator = EmaOrientationEstimator()
+		estimator = EmaOrientationEstimator(smoothing_window=5, meters_per_pixel=1.0)
 		state = _estimate(
 			estimator,
 			_tracked(1, BoundingBox(x=0.0, y=0.0, width=4.0, height=2.0)),
@@ -51,7 +51,7 @@ class TestFirstObservation:
 		assert state.heading.dy == 0.0
 
 	def test_heading_falls_back_to_bbox_major_axis_south_when_tall(self) -> None:
-		estimator = EmaOrientationEstimator()
+		estimator = EmaOrientationEstimator(smoothing_window=5, meters_per_pixel=1.0)
 		state = _estimate(
 			estimator,
 			_tracked(1, BoundingBox(x=0.0, y=0.0, width=2.0, height=8.0)),
@@ -61,7 +61,7 @@ class TestFirstObservation:
 		assert state.heading.dy == 1.0
 
 	def test_dimensions_come_from_bbox_major_minor(self) -> None:
-		estimator = EmaOrientationEstimator()
+		estimator = EmaOrientationEstimator(smoothing_window=5, meters_per_pixel=1.0)
 		state = _estimate(
 			estimator,
 			_tracked(1, BoundingBox(x=10.0, y=20.0, width=6.0, height=2.0)),
@@ -73,7 +73,7 @@ class TestFirstObservation:
 
 class TestVelocity:
 	def test_two_observations_eastward_yield_east_heading(self) -> None:
-		estimator = EmaOrientationEstimator()
+		estimator = EmaOrientationEstimator(smoothing_window=5, meters_per_pixel=1.0)
 		_estimate(
 			estimator,
 			_tracked(1, BoundingBox(x=0.0, y=0.0, width=4.0, height=2.0)),
@@ -91,7 +91,7 @@ class TestVelocity:
 		assert math.isclose(state.heading.dy, 0.0)
 
 	def test_stationary_track_falls_back_to_bbox(self) -> None:
-		estimator = EmaOrientationEstimator()
+		estimator = EmaOrientationEstimator(smoothing_window=5, meters_per_pixel=1.0)
 		bbox = BoundingBox(x=0.0, y=0.0, width=2.0, height=6.0)
 		_estimate(estimator, _tracked(1, bbox), timestamp_seconds=0.0)
 		state = _estimate(estimator, _tracked(1, bbox), timestamp_seconds=1.0)
@@ -101,7 +101,7 @@ class TestVelocity:
 
 class TestAcceleration:
 	def test_constant_velocity_yields_zero_acceleration(self) -> None:
-		estimator = EmaOrientationEstimator()
+		estimator = EmaOrientationEstimator(smoothing_window=5, meters_per_pixel=1.0)
 		for i, t in enumerate([0.0, 1.0, 2.0]):
 			_estimate(
 				estimator,
@@ -118,7 +118,7 @@ class TestAcceleration:
 		assert math.isclose(final.acceleration.dy, 0.0, abs_tol=1e-6)
 
 	def test_accelerating_motion_produces_positive_acceleration(self) -> None:
-		estimator = EmaOrientationEstimator()
+		estimator = EmaOrientationEstimator(smoothing_window=5, meters_per_pixel=1.0)
 		# x positions: 0, 1, 3, 6 — velocity rising 1, 2, 3 per unit time.
 		positions = [0.0, 1.0, 3.0, 6.0]
 		for i, x in enumerate(positions):
@@ -138,7 +138,7 @@ class TestAcceleration:
 
 class TestIdentity:
 	def test_separate_tracks_do_not_share_history(self) -> None:
-		estimator = EmaOrientationEstimator()
+		estimator = EmaOrientationEstimator(smoothing_window=5, meters_per_pixel=1.0)
 		_estimate(
 			estimator,
 			_tracked(1, BoundingBox(x=0.0, y=0.0, width=4.0, height=2.0)),
@@ -153,7 +153,7 @@ class TestIdentity:
 		assert state.velocity.magnitude == 0.0
 
 	def test_vehicle_id_matches_track_id(self) -> None:
-		estimator = EmaOrientationEstimator()
+		estimator = EmaOrientationEstimator(smoothing_window=5, meters_per_pixel=1.0)
 		state = _estimate(
 			estimator,
 			_tracked(42, BoundingBox(x=0.0, y=0.0, width=4.0, height=2.0)),
@@ -164,7 +164,7 @@ class TestIdentity:
 
 class TestForget:
 	def test_forget_drops_history(self) -> None:
-		estimator = EmaOrientationEstimator()
+		estimator = EmaOrientationEstimator(smoothing_window=5, meters_per_pixel=1.0)
 		_estimate(
 			estimator,
 			_tracked(1, BoundingBox(x=0.0, y=0.0, width=4.0, height=2.0)),
@@ -183,4 +183,4 @@ class TestForget:
 class TestConfig:
 	def test_smoothing_window_must_be_at_least_two(self) -> None:
 		with pytest.raises(ValueError, match="window"):
-			EmaOrientationEstimator(smoothing_window=1)
+			EmaOrientationEstimator(smoothing_window=1, meters_per_pixel=1.0)
