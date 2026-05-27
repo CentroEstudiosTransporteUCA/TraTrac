@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository Status
 
-MVP1 landed. The repo contains:
+**MVP1.75 landed** — metric sizes/speeds from drone-metadata GSD calibration (see `vault/05_5_mvp1_75.md`): `Length`/`Width`/`Speed`/`Acceleration` and `DIMENSIONS.Scale` are now real metric values. **MVP1.5 (RT-DETR fine-tune) was leapfrogged, not yet done** — 1.75 is an independent shortcut that slots between MVP1 and MVP2. So detection + tracking are still MVP1-grade (YOLOv8-VisDrone emergency detector + IoU-only BoT-SORT, no ReID), and SSAM **positions remain image-space pixels** (MVP2 homography/world projection not started). The repo contains:
 
 - `vault/` — authoritative design documents (system overview, architecture principles, coordinate systems, tech stack, MVP roadmap, SSAM format spec). The two SSAM PDFs (v1.04 + v3.0) live here as the ground truth for the binary format.
 - `pyproject.toml`, `uv.lock`, `.python-version` (3.12) — uv-managed project.
@@ -12,6 +12,7 @@ MVP1 landed. The repo contains:
   - `domain/` — pure value objects (geometry, frame, detection, vehicle, progress events, step-timing records) and Protocol ports (`VideoSource`, `Detector`, `Tracker`, `OrientationEstimator`, `TrajectoryExporter`, `ProgressReporter`, `TimingSink`).
   - `application/` — `EmaOrientationEstimator` (batch `OrientationEstimator` port impl: per-track kinematics with EMA-smoothed heading), `TrajectoryPipeline` (per-frame orchestrator that emits a progress event stream), and `NullProgressReporter` (silent default).
   - `infrastructure/` — adapters: `video/opencv.py` (+ `video/window.py`, the pure `FrameWindow` seconds→frame-range math for `--start`/`--end` trimming, see `vault/17_time_window.md`), `detection/rt_detr.py` (HF transformers), `detection/yolov8_visdrone.py` (**MVP1 emergency default**, see `vault/05_mvp1.md`), `tracking/boxmot_bot_sort.py`, `export/ssam_trj.py` (binary v1.04 writer), `progress/console.py` (throttled stderr progress reporter), `timing/decorators.py` (per-port `Timed*` step-timing decorators) + `timing/csv.py` (wide-row CSV timing sink), `export/decimating.py` (`TrajectoryExporter` decorator thinning the TIMESTEP stream for `--timestep-precision`, see `vault/18_timestep_precision.md`).
+  - `calibration/` — drone-metadata GSD calibration (MVP1.75, see `vault/05_5_mvp1_75.md`): `gsd.py` (`ground_sample_distance` from sensor + focal + altitude), `drone_specs.py` (`known_models`/`lookup` sensor+focal registry), `srt_parser.py` (`mean_altitude` from a DJI `.SRT` sidecar). Resolves the metres-per-pixel scale that feeds the exporter and orientation estimator.
   - `cli.py` — Typer CLI entry point with `--detector {yolov8_visdrone,rt_detr}`, `--timing-csv PATH` (opt-in per-frame step timings), `--start`/`--end` timecode flags (analysis-window trimming), and `--timestep-precision SECONDS` (minimum seconds between exported TIMESTEPs, see `vault/18_timestep_precision.md`) flags. `--force`/`-f` skips the overwrite confirmation so runs are fully non-interactive; without it, an existing output under a non-TTY stdin errors (exit 2) instead of hanging. Requires explicit GSD calibration (errors without `--meters-per-pixel` or `--drone-model`). Installed script: `tratrac`.
 - `tests/` — `unit/` (44 tests, fully isolated from heavy deps) and `integration/` (1 e2e smoke test, marked `@pytest.mark.slow` because it downloads the detector checkpoint on first run).
 - `scripts/` — standalone diagnostic tools (pure stdlib + cv2 where possible, do **not** depend on the package internals so they work even when something is broken):
@@ -74,6 +75,7 @@ All commands run from the repo root. `uv` manages the venv (`.venv/`) and resolv
 - `16_trj_validation.md` — the semantic e2e `.trj` validator: the three checks (continuity, orientation smoothness, kinematic plausibility), why no-ground-truth bounds what can be validated, and why a kinematic *consistency* check was rejected as tautological.
 - `17_time_window.md` — `--start`/`--end` analysis-window trimming: why it lives in the video adapter (seek), the pure `FrameWindow` math, and why trimmed clips keep absolute TIMESTEPs.
 - `18_timestep_precision.md` — `--timestep-precision` output decimation: why it samples the export (not the processing) via a `TrajectoryExporter` decorator, the anchored emission-grid math, and the SSAM coarseness caveat.
+- `final_polish.md` — backlog of deliberate "ship cheaper now, upgrade later" decisions behind stable ports (not numbered: it tracks quality upgrades to existing capabilities, not new MVP capabilities). First entry: replace the MVP2 OpenCV-ECC ego-motion adapter with SuperPoint+LightGlue via the `EgoMotionEstimator` port.
 
 If the vault and any future code disagree, surface the conflict and ask which is authoritative before editing.
 

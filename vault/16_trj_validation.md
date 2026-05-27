@@ -78,8 +78,10 @@ The stored Speed and Acceleration are **physical**, in `DIMENSIONS.Units`
 (m/s, m/s² or ft/s, ft/s²) per the SSAM spec — *not* pixels, *not* scaled by
 `Scale`. Each is checked against a real-world ceiling (unit-aware defaults,
 overridable): speed finite and in `[0, max_speed]`; acceleration finite with
-`|a| ≤ max_accel`. Defaults reject the impossible, not driving style: ~70 m/s
-(252 km/h) and ~12 m/s² (~1.2 g), or the ft equivalents.
+`|a| ≤ max_accel`. The metric defaults were tightened for urban-intersection
+footage — 22 m/s (79 km/h) and 15 m/s² (~1.5 g) — and now differ from the
+English ones, which keep the original "reject the impossible" limits (~70 m/s,
+~12 m/s²). Raise `--max-speed` for fast-road clips.
 
 **MVP1 caveat — failing is the intended signal.** MVP1 writes
 pixel-displacement into these fields while declaring metric units (see
@@ -125,23 +127,30 @@ because the pipeline emits exactly one TIMESTEP per decoded frame.
 ## Thresholds
 
 All are CLI flags with documented defaults (constants at the top of the
-script). They are deliberately conservative sanity bounds, not tuned truth:
+script):
 
-- `--boundary-margin` (default 30 grid units, added to half the vehicle major
-  axis).
+- `--boundary-margin` (default 33 grid units / pixels, added to half the
+  vehicle's major axis — itself converted from `DIMENSIONS.Units` to pixels via
+  `Scale`; see Scale Independence below).
 - `--max-heading-step` (default 20°): above this a transition counts as a
   sudden switch. A hard turn at 30 fps is ~1–2°/frame, so 20° passes real
   driving while catching flips.
-- `--max-speed` / `--max-accel`: default to the unit-aware physical ceilings;
-  override for a specific dataset or once real metric output exists.
+- `--max-speed` / `--max-accel`: unit-aware defaults. The metric pair was
+  tightened to urban-vehicle limits (22 m/s, 15 m/s²) and no longer matches the
+  English pair (~70 m/s, ~12 m/s²); override per dataset.
 
 ---
 
 ## Scale Independence
 
-The position-based checks (continuity, orientation) work entirely in the file's
-grid units against the `DIMENSIONS` bounds, and the stored grid coordinates are
-pixels regardless of `Scale` (the exporter writes `coord / Scale`). So those
-checks are unaffected by whether `Scale` is 1.0 (MVP1 pixels-as-metres) or a
-real GSD (MVP1.75+). Only kinematic plausibility depends on units, and it reads
-them from `DIMENSIONS.Units`.
+Positions are stored in grid units (pixels) regardless of `Scale` — the
+exporter writes `coord / Scale` — so the heading check and the edge-distance
+part of continuity compare pixels against the `DIMENSIONS` bounds directly.
+Continuity's "near a boundary" test is the one subtlety: it adds half the
+vehicle's body, but `Length`/`Width` are stored in `DIMENSIONS.Units` (metres),
+*not* pixels, so it divides them by `Scale` to reach pixels. The outcome is
+physically scale-independent (a car spans the same pixels whether `Scale` is 1.0
+for MVP1 pixels-as-metres or a real GSD for MVP1.75+), but the code must read
+`Scale` to get there — assuming those fields were already grid units was the
+original bug. Kinematic plausibility likewise depends on units, reading them
+from `DIMENSIONS.Units`.

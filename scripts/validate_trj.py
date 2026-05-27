@@ -30,9 +30,12 @@ families of checks, each measured as "compliant instances / total instances":
      output is expected to fail these bounds wholesale — that is the intended
      signal, not a bug in the validator.
 
-Position-based checks (continuity, orientation) work entirely in the file's
-grid units against the DIMENSIONS bounds, so they are scale-independent: they
-work whether Scale is 1.0 (MVP1 pixels-as-metres) or a real GSD (MVP1.75+).
+Position/heading checks (continuity, orientation) compare in the file's grid
+units (pixels) against the DIMENSIONS bounds. Continuity's "near a boundary"
+test also needs the vehicle's body size, which SSAM stores in DIMENSIONS.Units
+(metres), not pixels — so it converts Length/Width to pixels via Scale. The
+result is physically scale-independent (a car spans the same pixels whether
+Scale is 1.0 for MVP1 pixels-as-metres or a real GSD for MVP1.75+).
 
 Usage:
 	uv run python scripts/validate_trj.py PATH [options]
@@ -58,19 +61,21 @@ _TIMESTEP = 2
 _VEHICLE = 3
 
 # --- Default thresholds -----------------------------------------------------
-_DEFAULT_BOUNDARY_MARGIN = 100.0  # slack added to half the vehicle's major axis
+_DEFAULT_BOUNDARY_MARGIN = 33  # slack added to half the vehicle's major axis
 _DEFAULT_MAX_HEADING_STEP_DEG = 20.0  # heading change above this = a sudden switch
 
-# Physical plausibility ceilings for a road vehicle, in DIMENSIONS.Units. The
+# Plausibility ceilings for a road vehicle, in DIMENSIONS.Units. The
 # Speed/Acceleration fields are physical (m/s, m/s^2 or ft/s, ft/s^2), so the
 # right bound depends on the file's unit byte — resolved at runtime by
-# _default_kinematic_bounds. Generous on purpose: reject the impossible
-# (teleports, >~1g sustained accel), not judge driving style.
-# ~70 m/s = 252 km/h; ~12 m/s^2 ~ 1.2 g.
-_MAX_SPEED_METRIC = 70.0  # m/s
-_MAX_ACCEL_METRIC = 12.0  # m/s^2
-_MAX_SPEED_ENGLISH = 230.0  # ft/s (~70 m/s)
-_MAX_ACCEL_ENGLISH = 40.0  # ft/s^2 (~12 m/s^2)
+# _default_kinematic_bounds. Override per dataset with --max-speed / --max-accel.
+# NOTE: the metric ceilings were tightened for urban-intersection footage and no
+# longer match the English ones (which keep the original "reject the impossible"
+# limits): metric 22 m/s (79 km/h) / 15 m/s^2 (~1.5 g) vs English ~70 m/s
+# (252 km/h) / ~12 m/s^2 (~1.2 g). Raise --max-speed for fast-road clips.
+_MAX_SPEED_METRIC = 22.0  # m/s   (79 km/h)
+_MAX_ACCEL_METRIC = 15.0  # m/s^2 (~1.5 g)
+_MAX_SPEED_ENGLISH = 230.0  # ft/s   (~70 m/s, 252 km/h)
+_MAX_ACCEL_ENGLISH = 40.0  # ft/s^2 (~12 m/s^2, ~1.2 g)
 
 
 @dataclass(frozen=True, slots=True)
@@ -238,10 +243,18 @@ def _edge_distance(record: VehicleRecord, bounds: tuple[int, int, int, int]) -> 
 	return min(cx - min_x, max_x - cx, cy - min_y, max_y - cy)
 
 
-def _near_boundary(record: VehicleRecord, bounds: tuple[int, int, int, int], margin: float) -> bool:
+def _near_boundary(
+	record: VehicleRecord, bounds: tuple[int, int, int, int], margin: float, scale: float
+) -> bool:
 	"""True if the vehicle's body can reach an image edge: centroid distance to
-	the nearest edge is within `margin` plus half the vehicle's major axis."""
-	return _edge_distance(record, bounds) <= margin + 0.5 * record.major_axis
+	the nearest edge is within `margin` plus half the vehicle's major axis.
+
+	`major_axis` (Length/Width) is stored in DIMENSIONS.Units — metres for a
+	metric file — while positions are grid units (pixels = world / Scale). So it
+	is converted to pixels via `/ scale` before joining the pixel margin. No-op
+	when Scale is 1.0 (MVP1 pixels-as-metres); only bites once real GSD
+	calibration lands (MVP1.75+)."""
+	return _edge_distance(record, bounds) <= margin + 0.5 * record.major_axis / scale
 
 
 def _angle_delta_deg(a: float, b: float) -> float:
@@ -287,7 +300,7 @@ def check_continuity(
 			start_ord, start_rec = observations[start_i]
 			end_ord, end_rec = observations[end_i]
 			appear_total += 1
-			if start_ord == 0 or _near_boundary(start_rec, trj.bounds, margin):
+			if start_ord == 0 or _near_boundary(start_rec, trj.bounds, margin, trj.scale):
 				appear_ok += 1
 			else:
 				dist = _edge_distance(start_rec, trj.bounds)
@@ -302,7 +315,7 @@ def check_continuity(
 					)
 				)
 			disappear_total += 1
-			if end_ord == last_ordinal or _near_boundary(end_rec, trj.bounds, margin):
+			if end_ord == last_ordinal or _near_boundary(end_rec, trj.bounds, margin, trj.scale):
 				disappear_ok += 1
 			else:
 				dist = _edge_distance(end_rec, trj.bounds)
@@ -512,14 +525,14 @@ def main() -> int:
 		type=float,
 		default=None,
 		help="Plausibility ceiling for Speed, in the file's units (m/s or ft/s). "
-		"Default depends on DIMENSIONS.Units (70 m/s or 230 ft/s).",
+		"Default depends on DIMENSIONS.Units (22 m/s or 230 ft/s).",
 	)
 	parser.add_argument(
 		"--max-accel",
 		type=float,
 		default=None,
 		help="Plausibility ceiling for |Acceleration|, in the file's units "
-		"(m/s^2 or ft/s^2). Default depends on DIMENSIONS.Units (12 or 40).",
+		"(m/s^2 or ft/s^2). Default depends on DIMENSIONS.Units (15 or 40).",
 	)
 	parser.add_argument(
 		"--violations-csv",
