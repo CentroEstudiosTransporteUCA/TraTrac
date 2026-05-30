@@ -20,39 +20,44 @@ swap with no change to the domain, the pipeline, or the other adapters.
 
 ## Items
 
-### 1. Ego-motion estimation: OpenCV ECC → SuperPoint + LightGlue
+### 1. Ego-motion estimation: ORB → SuperPoint + LightGlue
 
 | | |
 | --- | --- |
-| Port | `EgoMotionEstimator` (MVP2 stabilization seam) |
-| Ships with | OpenCV ECC adapter (`cv2.findTransformECC`) — no new dependency |
+| Port | `EgoMotionEstimator` (stabilization seam, **shipped in MVP1.9** — see `05_75_mvp1_9.md`) |
+| Ships with | ORB + RANSAC similarity adapter (`OrbEgoMotionEstimator`) — no new dependency |
 | Target | SuperPoint + LightGlue adapter (`kornia` or the standalone `lightglue`) |
 | Trigger to upgrade | Measured stabilization error on real aerial footage exceeds tolerance |
 
-**Why the upgrade.** ECC is an intensity-based global image-alignment: it assumes
-a mostly-static scene and a single parametric warp. On aerial traffic footage that
-assumption frays — much of the frame is moving vehicles (foreground that violates
-the static-scene model), and aerial scenes are often low-texture, repetitive
-(lane markings, asphalt), and motion-blurred, which is exactly where intensity
-alignment is weakest. SuperPoint + LightGlue match *learned* keypoints, which are
-far more robust on these scenes; this is why `03_tech_stack.md` and `06_mvp2.md`
-specify SuperPoint + LightGlue as the target stabilizer.
+**Why ORB ships first (chosen over ECC).** The interim stabilizer is **ORB**, not
+the ECC adapter this entry originally proposed. Both are zero-new-dependency
+(`cv2` is already present), but they differ on the axis that matters for this
+domain — **moving foreground**, where much of the frame is the vehicles we track:
 
-**Why ECC ships first anyway.**
+- **ORB is feature-based**, so it produces explicit correspondences and **RANSAC
+  rejects the moving-vehicle matches as outliers**.
+- **ECC is intensity-based** and optimizes over *all* pixels with no outlier
+  rejection; it cannot ignore the cars, and on bare asphalt the high-contrast
+  pixels it locks onto are often the vehicles themselves.
 
-- Zero new dependencies — `cv2` is already in the project; SuperPoint + LightGlue
-  add a heavy dep on top of the currently CPU-pinned `torch`.
-- It is the same method BoT-SORT already runs for its internal camera-motion
-  compensation (`cmc_method=ecc`), so it is known to execute on our footage.
-- Measure-before-optimize: ship ECC, quantify how much camera motion actually
-  pollutes exported trajectories, and only pay for the heavy estimator if the gap
-  warrants it.
+ECC's only edge was that BoT-SORT already runs it internally (`cmc_method=ecc`) —
+a familiarity argument, not a quality one. So MVP1.9 ships ORB as the cheap
+interim and keeps measure-before-optimize: quantify how much camera motion
+actually pollutes exported trajectories, and only pay for the heavy learned
+estimator if the gap warrants it.
+
+**Why the upgrade to SuperPoint + LightGlue.** Even ORB's handcrafted features
+thin out on the worst aerial footage — low-texture, repetitive (lane markings,
+asphalt), motion-blurred. SuperPoint + LightGlue match *learned* keypoints, far
+more robust there, and LightGlue's attention rejects ambiguous matches that ORB's
+local ratio test would accept. This is why `03_tech_stack.md` and `06_mvp2.md`
+name SuperPoint + LightGlue as the target stabilizer.
 
 **Why it is a clean swap.** The `EgoMotionEstimator` port returns a `Transform2D`
-per frame; nothing downstream knows or cares how it was estimated. Replacing ECC
+per frame; nothing downstream knows or cares how it was estimated. Replacing ORB
 with SuperPoint + LightGlue is a single new adapter wired in the CLI — no domain,
 pipeline, exporter, or test changes outside the new adapter and its own tests.
 
-> When the ECC slice lands, record the ECC-first deviation (and this upgrade
-> pointer) in `06_mvp2.md`, which currently specifies SuperPoint + LightGlue from
-> the start.
+> The MVP1.9 ORB slice has landed; `06_mvp2.md` still specifies SuperPoint +
+> LightGlue from the start — its stabilization box is now an *upgrade* of MVP1.9's
+> ORB adapter, not a from-scratch addition.

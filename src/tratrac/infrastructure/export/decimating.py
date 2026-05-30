@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from types import TracebackType
 
+from tratrac.domain.frame import Frame
 from tratrac.domain.ports import TrajectoryExporter
 from tratrac.domain.vehicle import VehicleState
 
@@ -47,13 +48,15 @@ class DecimatingTrajectoryExporter:
 		self._epsilon = 0.5 / fps
 		self._next_emit_at: float | None = None
 
-	def emit_frame(self, timestamp_seconds: float, states: list[VehicleState]) -> None:
+	def emit_frame(
+		self, timestamp_seconds: float, states: list[VehicleState], frame: Frame
+	) -> None:
 		if self._next_emit_at is None:
-			self._inner.emit_frame(timestamp_seconds, states)
+			self._inner.emit_frame(timestamp_seconds, states, frame)
 			self._next_emit_at = timestamp_seconds + self._interval
 			return
 		if timestamp_seconds >= self._next_emit_at - self._epsilon:
-			self._inner.emit_frame(timestamp_seconds, states)
+			self._inner.emit_frame(timestamp_seconds, states, frame)
 			# Advance the grid past this timestamp. The loop (not a single step)
 			# keeps the schedule correct when the interval is finer than the frame
 			# spacing, where it collapses to emitting every frame.

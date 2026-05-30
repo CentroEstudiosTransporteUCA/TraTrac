@@ -9,10 +9,15 @@ import math
 import struct
 from pathlib import Path
 
-from tratrac.domain.frame import VideoMetadata
+import numpy as np
+
+from tratrac.domain.frame import Frame, VideoMetadata
 from tratrac.domain.geometry import Dimensions, Heading, Point2D, Vector2D
 from tratrac.domain.vehicle import VehicleState
 from tratrac.infrastructure.export.ssam_trj import SsamTrjExporter
+
+# SSAM is a pure data format and ignores the frame; a shared dummy suffices.
+_FRAME = Frame(index=0, pixels=np.zeros((1, 1, 3), dtype=np.uint8))
 
 _FORMAT_SIZE = 6
 _DIMENSIONS_SIZE = 22
@@ -30,7 +35,7 @@ def _vehicle(
 	length: float = 4.0,
 	width: float = 2.0,
 	velocity: Vector2D = Vector2D(0.0, 0.0),
-	acceleration: Vector2D = Vector2D(0.0, 0.0),
+	acceleration: float = 0.0,
 ) -> VehicleState:
 	return VehicleState(
 		vehicle_id=vehicle_id,
@@ -76,7 +81,7 @@ class TestTimestep:
 		path = tmp_path / "x.trj"
 		meta = VideoMetadata(width=100, height=200, fps=30.0, total_frames=1)
 		with SsamTrjExporter(path, meta, scale=1.0) as exporter:
-			exporter.emit_frame(timestamp_seconds=2.5, states=[])
+			exporter.emit_frame(timestamp_seconds=2.5, states=[], frame=_FRAME)
 		data = path.read_bytes()
 
 		record_type, ts = struct.unpack("<Bf", data[_HEADER_SIZE : _HEADER_SIZE + _TIMESTEP_SIZE])
@@ -95,10 +100,10 @@ class TestVehicleRecord:
 			length=4.0,
 			width=2.0,
 			velocity=Vector2D(3.0, 0.0),
-			acceleration=Vector2D(0.5, 0.0),
+			acceleration=0.5,
 		)
 		with SsamTrjExporter(path, meta, scale=1.0) as exporter:
-			exporter.emit_frame(timestamp_seconds=0.0, states=[state])
+			exporter.emit_frame(timestamp_seconds=0.0, states=[state], frame=_FRAME)
 		data = path.read_bytes()
 
 		offset = _HEADER_SIZE + _TIMESTEP_SIZE
@@ -126,7 +131,7 @@ class TestVehicleRecord:
 		# Heading "up the screen" in image space (y decreasing) -> y increasing in SSAM.
 		state = _vehicle(centroid=Point2D(100.0, 200.0), heading=Heading(0.0, -1.0), length=10.0)
 		with SsamTrjExporter(path, meta, scale=1.0) as exporter:
-			exporter.emit_frame(timestamp_seconds=0.0, states=[state])
+			exporter.emit_frame(timestamp_seconds=0.0, states=[state], frame=_FRAME)
 		data = path.read_bytes()
 
 		offset = _HEADER_SIZE + _TIMESTEP_SIZE
@@ -144,7 +149,7 @@ class TestVehicleRecord:
 		meta = VideoMetadata(width=400, height=400, fps=10.0, total_frames=1)
 		state = _vehicle(centroid=Point2D(100.0, 100.0), heading=Heading(1.0, 0.0), length=4.0)
 		with SsamTrjExporter(path, meta, scale=0.5) as exporter:
-			exporter.emit_frame(timestamp_seconds=0.0, states=[state])
+			exporter.emit_frame(timestamp_seconds=0.0, states=[state], frame=_FRAME)
 		data = path.read_bytes()
 
 		# Verify Scale in DIMENSIONS record.
@@ -169,7 +174,7 @@ class TestVehicleRecord:
 		# Place a centroid at 30 m from the top of the image (image-space y).
 		state = _vehicle(centroid=Point2D(50.0, 30.0), heading=Heading(1.0, 0.0), length=4.0)
 		with SsamTrjExporter(path, meta, scale=0.5) as exporter:
-			exporter.emit_frame(timestamp_seconds=0.0, states=[state])
+			exporter.emit_frame(timestamp_seconds=0.0, states=[state], frame=_FRAME)
 		data = path.read_bytes()
 
 		offset = _HEADER_SIZE + _TIMESTEP_SIZE
@@ -191,12 +196,12 @@ class TestLinkAndLaneIds:
 			heading=Heading(1.0, 0.0),
 			dimensions=Dimensions(length=4.0, width=2.0),
 			velocity=Vector2D(0.0, 0.0),
-			acceleration=Vector2D(0.0, 0.0),
+			acceleration=0.0,
 			link_id=104,
 			lane_id=2,
 		)
 		with SsamTrjExporter(path, meta, scale=1.0) as exporter:
-			exporter.emit_frame(timestamp_seconds=0.0, states=[state])
+			exporter.emit_frame(timestamp_seconds=0.0, states=[state], frame=_FRAME)
 		data = path.read_bytes()
 
 		offset = _HEADER_SIZE + _TIMESTEP_SIZE
@@ -213,8 +218,8 @@ class TestFileLayout:
 		v1 = _vehicle(vehicle_id=1, centroid=Point2D(20.0, 30.0))
 		v2 = _vehicle(vehicle_id=2, centroid=Point2D(40.0, 60.0))
 		with SsamTrjExporter(path, meta, scale=1.0) as exporter:
-			exporter.emit_frame(0.0, [v1, v2])
-			exporter.emit_frame(1.0 / 30.0, [v1])
+			exporter.emit_frame(0.0, [v1, v2], _FRAME)
+			exporter.emit_frame(1.0 / 30.0, [v1], _FRAME)
 
 		expected = _HEADER_SIZE + 2 * _TIMESTEP_SIZE + 3 * _VEHICLE_SIZE
 		assert path.stat().st_size == expected
@@ -224,7 +229,7 @@ class TestFileLayout:
 		meta = VideoMetadata(width=100, height=100, fps=10.0, total_frames=1)
 		v = _vehicle()
 		with SsamTrjExporter(path, meta, scale=1.0) as exporter:
-			exporter.emit_frame(0.0, [v])
+			exporter.emit_frame(0.0, [v], _FRAME)
 		data = path.read_bytes()
 
 		assert data[0] == 0  # FORMAT

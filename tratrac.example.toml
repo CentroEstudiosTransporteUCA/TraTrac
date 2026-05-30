@@ -30,6 +30,18 @@ meters_per_pixel = 0.05
 # altitude_m  = 80.0              # metres AGL ... OR provide an SRT instead:
 # srt = "clips/highway_run3.SRT"  # DJI sidecar with per-frame altitude
 
+[ego_motion]
+# ORB ego-motion (MVP1.9, see vault/05_75_mvp1_9.md). When on, detection/tracking
+# run on the raw full frame and the keyframe transform is applied to the DETECTIONS
+# (coordinates, not pixels) so trajectories are free of drone ego-motion and nothing
+# is ever cropped to black. The anchor re-sets when too little of it stays in view.
+enabled = false                   # explicit on/off; the keys below are required only when true
+n_features = 2000                 # ORB keypoints per frame
+match_ratio = 0.75                # Lowe ratio test, (0, 1); lower = stricter matches
+min_matches = 10                  # minimum good matches to fit a transform (else assume no motion)
+ransac_threshold = 3.0            # RANSAC reprojection threshold in pixels
+min_anchor_overlap = 0.6          # re-anchor the keyframe when <this fraction stays in view, (0, 1)
+
 [tracker]
 det_thresh = 0.1                  # BoT-SORT detection threshold (kept below detector.conf)
 
@@ -39,6 +51,8 @@ smoothing_window = 5              # EMA heading window, >= 2
 [export]
 out = "out/highway_run3.trj"      # output .trj path (overridden by --out)
 timestep_precision = 0.0          # min seconds between exported TIMESTEPs; 0 = every frame
+video_out = ""                    # "" = no overlay video; else an .mp4 of frames + trajectories
+video_trail = 0                   # overlay trail length in frames; 0 = whole path (only used when video_out set)
 
 [window]
 start = ""                        # "" = clip start; else HH:MM:SS(.ms) / MM:SS / SS

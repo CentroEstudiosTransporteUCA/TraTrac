@@ -115,8 +115,10 @@ class TimedExporter:
 		self._inner = inner
 		self._stopwatch = StepStopwatch(PipelineStep.EXPORT, sink, clock=clock)
 
-	def emit_frame(self, timestamp_seconds: float, states: list[VehicleState]) -> None:
-		self._stopwatch.time(lambda: self._inner.emit_frame(timestamp_seconds, states))
+	def emit_frame(
+		self, timestamp_seconds: float, states: list[VehicleState], frame: Frame
+	) -> None:
+		self._stopwatch.time(lambda: self._inner.emit_frame(timestamp_seconds, states, frame))
 
 	def __enter__(self) -> TimedExporter:
 		self._inner.__enter__()

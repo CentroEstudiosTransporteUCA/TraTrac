@@ -11,7 +11,7 @@ config file key-for-key; the positional ``video`` overrides ``input.video`` and
 from __future__ import annotations
 
 import sys
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import Annotated, Any
@@ -26,7 +26,9 @@ from tratrac.application.config import (
 )
 from tratrac.application.orientation import EmaOrientationEstimator
 from tratrac.application.pipeline import TrajectoryPipeline
+from tratrac.domain.geometry import Transform2D
 from tratrac.domain.ports import (
+	DetectionObserver,
 	Detector,
 	OrientationEstimator,
 	TimingSink,
@@ -36,7 +38,9 @@ from tratrac.domain.ports import (
 from tratrac.infrastructure.config.toml import load_toml
 from tratrac.infrastructure.detection.rt_detr import RtDetrDetector
 from tratrac.infrastructure.detection.yolov8_visdrone import YoloV8VisDroneDetector
+from tratrac.infrastructure.export.composite import CompositeTrajectoryExporter
 from tratrac.infrastructure.export.decimating import DecimatingTrajectoryExporter
+from tratrac.infrastructure.export.overlay_video import OverlayVideoExporter
 from tratrac.infrastructure.export.ssam_trj import SsamTrjExporter
 from tratrac.infrastructure.progress.console import ConsoleProgressReporter
 from tratrac.infrastructure.timing.csv import CsvTimingSink
@@ -47,6 +51,7 @@ from tratrac.infrastructure.timing.decorators import (
 	TimedTracker,
 )
 from tratrac.infrastructure.tracking.boxmot_bot_sort import BoxmotBotSortTracker
+from tratrac.infrastructure.video.ego_motion_orb import OrbEgoMotionEstimator
 from tratrac.infrastructure.video.opencv import OpenCvVideoSource
 
 app = typer.Typer(
@@ -116,6 +121,43 @@ def process(
 		Path | None,
 		typer.Option("--srt", help="DJI .SRT sidecar with per-frame altitude (calibration.srt)."),
 	] = None,
+	stabilize: Annotated[
+		bool | None,
+		typer.Option(
+			"--stabilize/--no-stabilize",
+			help="ORB ego-motion: stabilize detection coordinates (ego_motion.enabled).",
+		),
+	] = None,
+	orb_features: Annotated[
+		int | None,
+		typer.Option("--orb-features", help="ORB keypoints per frame (ego_motion.n_features)."),
+	] = None,
+	orb_match_ratio: Annotated[
+		float | None,
+		typer.Option("--orb-match-ratio", help="Lowe ratio test, (0, 1) (ego_motion.match_ratio)."),
+	] = None,
+	orb_min_matches: Annotated[
+		int | None,
+		typer.Option(
+			"--orb-min-matches",
+			help="Min good matches to fit a transform (ego_motion.min_matches).",
+		),
+	] = None,
+	orb_ransac_threshold: Annotated[
+		float | None,
+		typer.Option(
+			"--orb-ransac-threshold",
+			help="RANSAC reprojection threshold in px (ego_motion.ransac_threshold).",
+		),
+	] = None,
+	min_anchor_overlap: Annotated[
+		float | None,
+		typer.Option(
+			"--min-anchor-overlap",
+			help="Re-anchor when the keyframe's shared area drops below this, (0, 1) "
+			"(ego_motion.min_anchor_overlap).",
+		),
+	] = None,
 	det_thresh: Annotated[
 		float | None,
 		typer.Option("--det-thresh", help="Tracker detection threshold (tracker.det_thresh)."),
@@ -132,6 +174,21 @@ def process(
 		typer.Option(
 			"--timestep-precision",
 			help="Min seconds between exported TIMESTEPs; 0 = every frame (export.timestep_precision).",
+		),
+	] = None,
+	video_out: Annotated[
+		Path | None,
+		typer.Option(
+			"--video-out",
+			dir_okay=False,
+			help="Overlay video output (raw frame + trajectories); omit to skip (export.video_out).",
+		),
+	] = None,
+	video_trail: Annotated[
+		int | None,
+		typer.Option(
+			"--video-trail",
+			help="Trail length in frames for the overlay video; 0 = whole path (export.video_trail).",
 		),
 	] = None,
 	start: Annotated[
@@ -172,9 +229,17 @@ def process(
 		"calibration.drone_model": drone_model,
 		"calibration.altitude_m": altitude_m,
 		"calibration.srt": srt,
+		"ego_motion.enabled": stabilize,
+		"ego_motion.n_features": orb_features,
+		"ego_motion.match_ratio": orb_match_ratio,
+		"ego_motion.min_matches": orb_min_matches,
+		"ego_motion.ransac_threshold": orb_ransac_threshold,
+		"ego_motion.min_anchor_overlap": min_anchor_overlap,
 		"tracker.det_thresh": det_thresh,
 		"orientation.smoothing_window": smoothing_window,
 		"export.timestep_precision": timestep_precision,
+		"export.video_out": video_out,
+		"export.video_trail": video_trail,
 		"window.start": start,
 		"window.end": end,
 		"run.force": force,
@@ -202,6 +267,11 @@ def process(
 		and run.export.out.resolve() == run.options.timing_csv.resolve()
 	):
 		raise typer.BadParameter("run.timing_csv must differ from export.out.")
+	if run.export.video_out is not None and run.export.video_out.resolve() in {
+		run.export.out.resolve(),
+		run.options.timing_csv.resolve() if run.options.timing_csv is not None else None,
+	}:
+		raise typer.BadParameter("export.video_out must differ from export.out and run.timing_csv.")
 	if run.export.timestep_precision > _COARSE_TIMESTEP_WARNING_SECONDS:
 		typer.echo(
 			f"WARNING: timestep_precision {run.export.timestep_precision}s is coarse; SSAM "
@@ -212,6 +282,8 @@ def process(
 	_prepare_output_path(run.export.out, force=run.options.force)
 	if run.options.timing_csv is not None:
 		_prepare_output_path(run.options.timing_csv, force=run.options.force)
+	if run.export.video_out is not None:
+		_prepare_output_path(run.export.video_out, force=run.options.force)
 
 	with _open_video(
 		run.input.video,
@@ -224,8 +296,30 @@ def process(
 			# A non-positive altitude (e.g. an SRT with no usable values) surfaces from
 			# the calibration chain; report it cleanly rather than as a traceback.
 			raise typer.BadParameter(str(exc)) from exc
+		# Coordinate stabilization (MVP1.9, vault/05_75_mvp1_9.md): the detector and
+		# tracker run on the raw frame; the ego-motion transform is applied to the
+		# detections (not the pixels) inside the pipeline. None when stabilization is
+		# off. The estimator is also the DetectionObserver — it masks the raw-frame
+		# detections out of its own ORB feature extraction.
+		ego_motion: OrbEgoMotionEstimator | None = None
+		detection_observer: DetectionObserver | None = None
+		if run.ego_motion.enabled:
+			ego_motion = OrbEgoMotionEstimator(
+				n_features=run.ego_motion.n_features,
+				match_ratio=run.ego_motion.match_ratio,
+				min_matches=run.ego_motion.min_matches,
+				ransac_threshold=run.ego_motion.ransac_threshold,
+				min_anchor_overlap=run.ego_motion.min_anchor_overlap,
+			)
+			detection_observer = ego_motion
 		det: Detector = _build_detector(run.detector, device=run.runtime.device)
-		tracker: Tracker = BoxmotBotSortTracker(source.metadata, det_thresh=run.tracker.det_thresh)
+		# When we stabilize coordinates ourselves, disable BoT-SORT's own camera-motion
+		# compensation so it does not double-correct the already-stabilized boxes.
+		tracker: Tracker = BoxmotBotSortTracker(
+			source.metadata,
+			det_thresh=run.tracker.det_thresh,
+			compensate_camera_motion=not run.ego_motion.enabled,
+		)
 		exporter: TrajectoryExporter = SsamTrjExporter(run.export.out, source.metadata, scale=scale)
 		if run.export.timestep_precision > 0.0:
 			# Decimate the TIMESTEP stream. Sits inside TimedExporter (below) so the
@@ -234,6 +328,24 @@ def process(
 				exporter,
 				min_interval_seconds=run.export.timestep_precision,
 				fps=source.metadata.fps,
+			)
+		if run.export.video_out is not None:
+			# Fan out to the .trj (decimated above if requested) AND a full-framerate
+			# overlay video. Only the .trj leg is decimated; the video keeps every
+			# processed frame. See vault/20_video_export.md.
+			exporter = CompositeTrajectoryExporter(
+				[
+					exporter,
+					OverlayVideoExporter(
+						run.export.video_out,
+						source.metadata,
+						scale=scale,
+						trail_length=run.export.video_trail,
+						# Map stabilized coordinates back onto the raw frame; identity
+						# (default) when stabilization is off.
+						transform_source=_overlay_transform_source(ego_motion),
+					),
+				]
 			)
 		orientation: OrientationEstimator = EmaOrientationEstimator(
 			smoothing_window=run.orientation.smoothing_window,
@@ -252,6 +364,8 @@ def process(
 				exporter=exporter,
 				orientation=orientation,
 				reporter=ConsoleProgressReporter(),
+				detection_observer=detection_observer,
+				ego_motion=ego_motion,
 			)
 			n_frames = pipeline.run()
 
@@ -261,6 +375,16 @@ def process(
 # Above this, exported timesteps get too sparse for SSAM conflict analysis
 # (vault/04: sub-second, ~0.1s, is the practical minimum). Still valid, so warn.
 _COARSE_TIMESTEP_WARNING_SECONDS = 0.5
+
+
+def _overlay_transform_source(
+	ego_motion: OrbEgoMotionEstimator | None,
+) -> Callable[[], Transform2D] | None:
+	"""A callable yielding the current stabilization transform for the overlay video,
+	or ``None`` when stabilization is off (the overlay then uses identity)."""
+	if ego_motion is None:
+		return None
+	return lambda: ego_motion.current_transform
 
 
 @contextmanager

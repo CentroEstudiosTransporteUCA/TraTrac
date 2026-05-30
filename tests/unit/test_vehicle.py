@@ -17,7 +17,7 @@ def _state(
 	length: float = 4.0,
 	width: float = 2.0,
 	velocity: Vector2D = Vector2D(0.0, 0.0),
-	acceleration: Vector2D = Vector2D(0.0, 0.0),
+	acceleration: float = 0.0,
 ) -> VehicleState:
 	return VehicleState(
 		vehicle_id=1,
@@ -64,7 +64,7 @@ class TestLinkAndLaneIds:
 				heading=Heading(1.0, 0.0),
 				dimensions=Dimensions(length=4.0, width=2.0),
 				velocity=Vector2D(0.0, 0.0),
-				acceleration=Vector2D(0.0, 0.0),
+				acceleration=0.0,
 				link_id=-1,
 			)
 
@@ -77,7 +77,7 @@ class TestLinkAndLaneIds:
 				heading=Heading(1.0, 0.0),
 				dimensions=Dimensions(length=4.0, width=2.0),
 				velocity=Vector2D(0.0, 0.0),
-				acceleration=Vector2D(0.0, 0.0),
+				acceleration=0.0,
 				lane_id=256,
 			)
 
@@ -90,7 +90,7 @@ class TestLinkAndLaneIds:
 				heading=Heading(1.0, 0.0),
 				dimensions=Dimensions(length=4.0, width=2.0),
 				velocity=Vector2D(0.0, 0.0),
-				acceleration=Vector2D(0.0, 0.0),
+				acceleration=0.0,
 				lane_id=-1,
 			)
 
@@ -100,10 +100,12 @@ class TestKinematics:
 		state = _state(velocity=Vector2D(3.0, 4.0))
 		assert state.speed == 5.0
 
-	def test_forward_acceleration_projects_onto_heading(self) -> None:
-		state = _state(heading=Heading(1.0, 0.0), acceleration=Vector2D(2.5, 99.0))
-		assert state.forward_acceleration == 2.5
+	def test_acceleration_is_the_stored_longitudinal_scalar(self) -> None:
+		# Acceleration is the rate of change of speed (units/sec²), stored
+		# directly — no heading projection. The estimator computes it.
+		state = _state(acceleration=2.5)
+		assert state.acceleration == 2.5
 
-	def test_forward_acceleration_is_negative_when_decelerating(self) -> None:
-		state = _state(heading=Heading(1.0, 0.0), acceleration=Vector2D(-3.0, 0.0))
-		assert state.forward_acceleration == -3.0
+	def test_acceleration_is_negative_when_decelerating(self) -> None:
+		state = _state(acceleration=-3.0)
+		assert state.acceleration == -3.0

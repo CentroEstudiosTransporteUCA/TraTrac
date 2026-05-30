@@ -59,9 +59,12 @@ uv run python scripts/dump_trj.py path/to/file.trj --max-frames 50  # first 50 t
 # score, no filtering. Also writes an annotated PNG alongside the video.
 uv run python scripts/probe_detector.py path/to/video.mp4 --frame 1000
 
-# Overlay a .trj on its source video — bumpers, IDs, trails coloured per track.
-uv run python scripts/render_trajectories.py path/to/video.mp4 path/to/file.trj \
-    --out path/to/overlay.mp4 [--start SEC --end SEC --trail FRAMES]
+# Render the overlay video (frame + trajectories) directly from a run by setting
+# export.video_out (or --video-out); see vault/20_video_export.md. Then mark
+# validator violations on top of that overlay .mp4:
+uv run python scripts/render_violations.py path/to/overlay.mp4 \
+    --violations-csv path/to/violations.csv --out path/to/marked.mp4 \
+    [--start SEC --end SEC --checks appearance,...]
 ```
 
 ## Architecture

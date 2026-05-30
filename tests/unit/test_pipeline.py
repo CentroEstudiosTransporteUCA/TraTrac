@@ -12,7 +12,7 @@ from tratrac.application.orientation import EmaOrientationEstimator
 from tratrac.application.pipeline import TrajectoryPipeline
 from tratrac.domain.detection import Detection, TrackedDetection, VehicleClass
 from tratrac.domain.frame import Frame, VideoMetadata
-from tratrac.domain.geometry import BoundingBox
+from tratrac.domain.geometry import BoundingBox, Transform2D
 from tratrac.domain.progress import (
 	FrameProcessed,
 	ProcessingFailed,
@@ -68,11 +68,15 @@ class _IdentityTracker:
 class _CapturingExporter:
 	def __init__(self) -> None:
 		self.emitted: list[tuple[float, list[VehicleState]]] = []
+		self.frames: list[Frame] = []
 		self.opened = False
 		self.closed = False
 
-	def emit_frame(self, timestamp_seconds: float, states: list[VehicleState]) -> None:
+	def emit_frame(
+		self, timestamp_seconds: float, states: list[VehicleState], frame: Frame
+	) -> None:
 		self.emitted.append((timestamp_seconds, states))
+		self.frames.append(frame)
 
 	def __enter__(self) -> _CapturingExporter:
 		self.opened = True
@@ -93,6 +97,14 @@ class _RecordingReporter:
 
 	def receive(self, event: ProgressEvent) -> None:
 		self.events.append(event)
+
+
+class _RecordingObserver:
+	def __init__(self) -> None:
+		self.batches: list[list[Detection]] = []
+
+	def observe(self, detections: list[Detection]) -> None:
+		self.batches.append(detections)
 
 
 def _bbox(x: float) -> BoundingBox:
@@ -147,6 +159,20 @@ class TestPipeline:
 		pipeline.run()
 		assert all(states == [] for _, states in exporter.emitted)
 
+	def test_forwards_each_frames_detections_to_the_observer(self) -> None:
+		observer = _RecordingObserver()
+		per_frame = [[_det(0.0)], [_det(1.0), _det(2.0)], []]
+		pipeline = TrajectoryPipeline(
+			video=_FakeVideoSource(n_frames=3),
+			detector=_FixedDetector(per_frame),
+			tracker=_IdentityTracker(),
+			exporter=_CapturingExporter(),
+			orientation=EmaOrientationEstimator(smoothing_window=5, meters_per_pixel=1.0),
+			detection_observer=observer,
+		)
+		pipeline.run()
+		assert observer.batches == per_frame
+
 	def test_states_carry_orientation_derived_attributes(self) -> None:
 		exporter = _CapturingExporter()
 		# Eastward motion across three frames.
@@ -162,6 +188,78 @@ class TestPipeline:
 		final_state = exporter.emitted[-1][1][0]
 		assert final_state.heading.dx > 0.9
 		assert final_state.speed > 0.0
+
+
+class _CapturingTracker:
+	"""Records the detections it receives; assigns track_id = index."""
+
+	def __init__(self) -> None:
+		self.received: list[list[Detection]] = []
+
+	def update(self, frame: Frame, detections: Sequence[Detection]) -> list[TrackedDetection]:
+		self.received.append(list(detections))
+		return [TrackedDetection(track_id=i, detection=d) for i, d in enumerate(detections)]
+
+
+class _StubEgoMotion:
+	"""Returns a fixed transform; records the frames it is asked about."""
+
+	def __init__(self, transform: Transform2D) -> None:
+		self._transform = transform
+		self.frames: list[Frame] = []
+
+	def estimate(self, frame: Frame) -> Transform2D:
+		self.frames.append(frame)
+		return self._transform
+
+
+class TestStabilization:
+	def test_detections_are_transformed_before_reaching_the_tracker(self) -> None:
+		# Pure translation by +100 in x; detection centre (2, 11) -> (102, 11).
+		ego = _StubEgoMotion(Transform2D(a=1.0, b=0.0, tx=100.0, c=0.0, d=1.0, ty=0.0))
+		tracker = _CapturingTracker()
+		pipeline = TrajectoryPipeline(
+			video=_FakeVideoSource(n_frames=1),
+			detector=_FixedDetector([[_det(0.0)]]),
+			tracker=tracker,
+			exporter=_CapturingExporter(),
+			orientation=EmaOrientationEstimator(smoothing_window=5, meters_per_pixel=1.0),
+			ego_motion=ego,
+		)
+		pipeline.run()
+
+		assert ego.frames[0].index == 0  # estimator saw the raw frame
+		assert tracker.received[0][0].bbox.center.x == pytest.approx(102.0)
+		assert tracker.received[0][0].bbox.center.y == pytest.approx(11.0)
+
+	def test_without_ego_motion_detections_pass_through_unchanged(self) -> None:
+		tracker = _CapturingTracker()
+		pipeline = TrajectoryPipeline(
+			video=_FakeVideoSource(n_frames=1),
+			detector=_FixedDetector([[_det(5.0)]]),
+			tracker=tracker,
+			exporter=_CapturingExporter(),
+			orientation=EmaOrientationEstimator(smoothing_window=5, meters_per_pixel=1.0),
+		)
+		pipeline.run()
+		# Detection centre is (5 + 2, 11) = (7, 11), untouched.
+		assert tracker.received[0][0].bbox.center.x == pytest.approx(7.0)
+
+	def test_exporter_receives_the_raw_frame(self) -> None:
+		ego = _StubEgoMotion(Transform2D(a=1.0, b=0.0, tx=100.0, c=0.0, d=1.0, ty=0.0))
+		exporter = _CapturingExporter()
+		pipeline = TrajectoryPipeline(
+			video=_FakeVideoSource(n_frames=1),
+			detector=_FixedDetector([[_det(0.0)]]),
+			tracker=_IdentityTracker(),
+			exporter=exporter,
+			orientation=EmaOrientationEstimator(smoothing_window=5, meters_per_pixel=1.0),
+			ego_motion=ego,
+		)
+		pipeline.run()
+		# The raw frame (index 0, all-zero pixels) reaches the exporter, not a warp.
+		assert exporter.frames[0].index == 0
+		assert not exporter.frames[0].pixels.any()
 
 
 class TestProgressEmission:

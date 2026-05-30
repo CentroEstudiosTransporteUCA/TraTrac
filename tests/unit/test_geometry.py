@@ -6,7 +6,15 @@ import math
 
 import pytest
 
-from tratrac.domain.geometry import BoundingBox, Dimensions, Heading, Point2D, Vector2D
+from tratrac.domain.geometry import (
+	BoundingBox,
+	Dimensions,
+	Heading,
+	Point2D,
+	Transform2D,
+	Vector2D,
+	clipped_overlap_fraction,
+)
 
 
 class TestVector2D:
@@ -73,3 +81,100 @@ class TestBoundingBox:
 	def test_rejects_non_positive_dimensions(self) -> None:
 		with pytest.raises(ValueError, match="positive"):
 			BoundingBox(x=0.0, y=0.0, width=0.0, height=10.0)
+
+
+class TestTransform2D:
+	def test_identity_is_a_no_op(self) -> None:
+		assert Transform2D.identity().apply(Point2D(3.0, -7.0)) == Point2D(3.0, -7.0)
+
+	def test_apply_translates(self) -> None:
+		shift = Transform2D(a=1.0, b=0.0, tx=10.0, c=0.0, d=1.0, ty=-5.0)
+		assert shift.apply(Point2D(2.0, 2.0)) == Point2D(12.0, -3.0)
+
+	def test_apply_scales_and_translates(self) -> None:
+		t = Transform2D(a=2.0, b=0.0, tx=1.0, c=0.0, d=3.0, ty=-1.0)
+		assert t.apply(Point2D(4.0, 5.0)) == Point2D(9.0, 14.0)
+
+	def test_apply_rotates_quarter_turn(self) -> None:
+		# +90°: (x, y) -> (-y, x). a=0,b=-1,c=1,d=0.
+		rot = Transform2D(a=0.0, b=-1.0, tx=0.0, c=1.0, d=0.0, ty=0.0)
+		out = rot.apply(Point2D(1.0, 0.0))
+		assert math.isclose(out.x, 0.0, abs_tol=1e-9)
+		assert math.isclose(out.y, 1.0, abs_tol=1e-9)
+
+	def test_compose_applies_inner_first(self) -> None:
+		# outer.compose(inner).apply(p) == outer.apply(inner.apply(p))
+		inner = Transform2D(a=1.0, b=0.0, tx=3.0, c=0.0, d=1.0, ty=4.0)
+		outer = Transform2D(a=2.0, b=0.0, tx=0.0, c=0.0, d=2.0, ty=0.0)
+		p = Point2D(1.0, 1.0)
+		assert outer.compose(inner).apply(p) == outer.apply(inner.apply(p))
+		# Concretely: inner -> (4, 5), then outer scales x2 -> (8, 10).
+		assert outer.compose(inner).apply(p) == Point2D(8.0, 10.0)
+
+	def test_identity_is_neutral_under_compose(self) -> None:
+		t = Transform2D(a=2.0, b=1.0, tx=3.0, c=-1.0, d=2.0, ty=4.0)
+		ident = Transform2D.identity()
+		p = Point2D(5.0, 6.0)
+		assert t.compose(ident).apply(p) == t.apply(p)
+		assert ident.compose(t).apply(p) == t.apply(p)
+
+	def test_inverse_undoes_apply(self) -> None:
+		# A rotation + scale + translation (a representative similarity).
+		t = Transform2D(a=2.0, b=1.0, tx=3.0, c=-1.0, d=2.0, ty=4.0)
+		p = Point2D(5.0, 6.0)
+		back = t.inverse().apply(t.apply(p))
+		assert back.x == pytest.approx(p.x)
+		assert back.y == pytest.approx(p.y)
+
+	def test_inverse_of_identity_is_identity(self) -> None:
+		p = Point2D(5.0, 6.0)
+		assert Transform2D.identity().inverse().apply(p) == p
+
+	def test_inverse_raises_on_singular_linear_part(self) -> None:
+		singular = Transform2D(a=1.0, b=2.0, tx=0.0, c=2.0, d=4.0, ty=0.0)
+		with pytest.raises(ValueError, match="singular"):
+			singular.inverse()
+
+	def test_scale_of_pure_translation_is_one(self) -> None:
+		shift = Transform2D(a=1.0, b=0.0, tx=10.0, c=0.0, d=1.0, ty=-5.0)
+		assert shift.scale == pytest.approx(1.0)
+
+	def test_scale_of_uniform_scaling(self) -> None:
+		scaled = Transform2D(a=3.0, b=0.0, tx=0.0, c=0.0, d=3.0, ty=0.0)
+		assert scaled.scale == pytest.approx(3.0)
+
+	def test_scale_is_rotation_invariant(self) -> None:
+		# A similarity with scale 2 rotated 30°: scale must still read 2.
+		s, ang = 2.0, math.radians(30.0)
+		sim = Transform2D(
+			a=s * math.cos(ang),
+			b=-s * math.sin(ang),
+			tx=0.0,
+			c=s * math.sin(ang),
+			d=s * math.cos(ang),
+			ty=0.0,
+		)
+		assert sim.scale == pytest.approx(2.0)
+
+
+class TestClippedOverlapFraction:
+	def test_identity_is_full_overlap(self) -> None:
+		assert clipped_overlap_fraction(Transform2D.identity(), 100, 100) == pytest.approx(1.0)
+
+	def test_half_width_translation_halves_overlap(self) -> None:
+		# Shift the frame 50px right in a 100px-wide frame: 50px column still inside.
+		shift = Transform2D(a=1.0, b=0.0, tx=50.0, c=0.0, d=1.0, ty=0.0)
+		assert clipped_overlap_fraction(shift, 100, 100) == pytest.approx(0.5)
+
+	def test_fully_disjoint_is_zero(self) -> None:
+		shift = Transform2D(a=1.0, b=0.0, tx=200.0, c=0.0, d=1.0, ty=0.0)
+		assert clipped_overlap_fraction(shift, 100, 100) == pytest.approx(0.0)
+
+	def test_zoom_in_keeps_frame_inside_anchor(self) -> None:
+		# Content scaled to half size lands within the anchor: a quarter of the area.
+		half = Transform2D(a=0.5, b=0.0, tx=0.0, c=0.0, d=0.5, ty=0.0)
+		assert clipped_overlap_fraction(half, 100, 100) == pytest.approx(0.25)
+
+	def test_rejects_non_positive_dimensions(self) -> None:
+		with pytest.raises(ValueError, match="positive"):
+			clipped_overlap_fraction(Transform2D.identity(), 0, 100)

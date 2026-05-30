@@ -102,6 +102,8 @@ def _full_config(tmp_path: Path, *, video: Path) -> Path:
 		'device = "cpu"\n'
 		"[calibration]\n"
 		"meters_per_pixel = 0.1\n"
+		"[ego_motion]\n"
+		"enabled = false\n"
 		"[tracker]\n"
 		"det_thresh = 0.1\n"
 		"[orientation]\n"

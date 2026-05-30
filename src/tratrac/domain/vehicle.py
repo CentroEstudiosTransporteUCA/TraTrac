@@ -28,7 +28,12 @@ class VehicleState:
 	heading: Heading
 	dimensions: Dimensions
 	velocity: Vector2D
-	acceleration: Vector2D
+	# Longitudinal acceleration: the rate of change of speed (d|v|/dt), already a
+	# scalar in units/sec². This is the SSAM Acceleration field directly — NOT a
+	# vector projected onto the heading. Estimated as a windowed finite-difference
+	# of the speed signal (see EmaOrientationEstimator), so it reports genuine
+	# speeding-up / slowing-down and stays ~0 through constant-speed turns.
+	acceleration: float
 	link_id: int = 0
 	lane_id: int = 0
 
@@ -42,11 +47,6 @@ class VehicleState:
 	def speed(self) -> float:
 		"""Magnitude of the velocity vector. SSAM Speed field."""
 		return self.velocity.magnitude
-
-	@property
-	def forward_acceleration(self) -> float:
-		"""Component of acceleration along the heading. SSAM Acceleration field."""
-		return self.acceleration.dx * self.heading.dx + self.acceleration.dy * self.heading.dy
 
 	@property
 	def front_bumper(self) -> Point2D:

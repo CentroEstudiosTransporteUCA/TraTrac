@@ -115,7 +115,12 @@ against physical units is the check that actually constrains the values.
   straight at the frame + spot to inspect. Sorted by frame then vehicle. On
   MVP1 the plausibility checks dominate this file by volume; filter on the
   `check` column for the actionable rows (`appearance`, `disappearance`,
-  `heading_switch`).
+  `heading_switch`). This CSV is consumable by `scripts/render_violations.py
+  --violations-csv` to mark each instance in red on the video frame it occurs
+  (aligned by `round(timestamp_s * fps)`, not the ordinal `frame_index`, so it
+  survives `--start`/`--timestep-precision`); `--checks` narrows the same way.
+  Point it at the pipeline's overlay `.mp4` (`export.video_out`) to layer the
+  marks over frame + trajectories.
 - **`--fail-under PCT`** (opt-in): exit non-zero if any check is below `PCT`,
   for use as a CI gate.
 

@@ -4,10 +4,15 @@ from __future__ import annotations
 
 from types import TracebackType
 
+import numpy as np
 import pytest
 
+from tratrac.domain.frame import Frame
 from tratrac.domain.vehicle import VehicleState
 from tratrac.infrastructure.export.decimating import DecimatingTrajectoryExporter
+
+# The decorator forwards the frame opaquely; a single shared dummy suffices.
+_FRAME = Frame(index=0, pixels=np.zeros((1, 1, 3), dtype=np.uint8))
 
 
 class _RecordingExporter:
@@ -17,7 +22,9 @@ class _RecordingExporter:
 		self.events: list[str] = []
 		self.timestamps: list[float] = []
 
-	def emit_frame(self, timestamp_seconds: float, states: list[VehicleState]) -> None:
+	def emit_frame(
+		self, timestamp_seconds: float, states: list[VehicleState], frame: Frame
+	) -> None:
 		self.events.append("emit")
 		self.timestamps.append(timestamp_seconds)
 
@@ -37,7 +44,7 @@ class _RecordingExporter:
 def _feed(decorator: DecimatingTrajectoryExporter, fps: float, n_frames: int) -> None:
 	"""Push ``n_frames`` contiguous frames at ``fps`` through the decorator."""
 	for i in range(n_frames):
-		decorator.emit_frame(i / fps, [])
+		decorator.emit_frame(i / fps, [], _FRAME)
 
 
 class TestConstruction:
@@ -54,7 +61,7 @@ class TestDecimation:
 	def test_first_frame_is_always_emitted(self) -> None:
 		inner = _RecordingExporter()
 		dec = DecimatingTrajectoryExporter(inner, min_interval_seconds=10.0, fps=30.0)
-		dec.emit_frame(0.0, [])
+		dec.emit_frame(0.0, [], _FRAME)
 		assert inner.timestamps == [0.0]
 
 	def test_emits_on_the_interval_grid(self) -> None:
@@ -76,7 +83,7 @@ class TestDecimation:
 		inner = _RecordingExporter()
 		dec = DecimatingTrajectoryExporter(inner, min_interval_seconds=0.1, fps=30.0)
 		for i in range(10):
-			dec.emit_frame(10.0 + i / 30, [])
+			dec.emit_frame(10.0 + i / 30, [], _FRAME)
 		assert inner.timestamps == pytest.approx([10.0 + k / 30 for k in (0, 3, 6, 9)])
 
 	def test_spacing_never_drops_below_the_interval(self) -> None:
@@ -95,7 +102,7 @@ class TestContextManager:
 		inner = _RecordingExporter()
 		dec = DecimatingTrajectoryExporter(inner, min_interval_seconds=0.1, fps=30.0)
 		with dec:
-			dec.emit_frame(0.0, [])
+			dec.emit_frame(0.0, [], _FRAME)
 		assert inner.events == ["enter", "emit", "exit"]
 
 	def test_resets_grid_on_reentry(self) -> None:
@@ -103,7 +110,7 @@ class TestContextManager:
 		inner = _RecordingExporter()
 		dec = DecimatingTrajectoryExporter(inner, min_interval_seconds=10.0, fps=30.0)
 		with dec:
-			dec.emit_frame(0.0, [])
+			dec.emit_frame(0.0, [], _FRAME)
 		with dec:
-			dec.emit_frame(0.0, [])
+			dec.emit_frame(0.0, [], _FRAME)
 		assert inner.timestamps == [0.0, 0.0]

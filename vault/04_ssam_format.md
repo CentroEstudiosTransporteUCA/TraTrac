@@ -176,7 +176,12 @@ MVP1 emits **valid v1.04** (no Z, no multi-plane). Concrete choices:
 - Lane ID: `0` (no lane assignment until MVP6).
 - Front/Rear X/Y: image pixels after Y-flip.
 - Length/Width: bounding-box dimensions in pixels (treated as meters — known wrong).
-- Speed/Acceleration: derived from pixel displacement / time (treated as m/s and m/s² — known wrong).
+- Speed: windowed pixel-displacement / time (treated as m/s — known wrong until MVP1.75 calibration).
+- Acceleration: the **longitudinal** acceleration = rate of change of speed (d|v|/dt), a scalar in
+  units/sec². It is a windowed finite-difference of the Speed signal above, **not** a vector projected
+  onto the heading — so a vehicle turning at constant speed reports ~0, where a heading projection
+  would fire spuriously as the EMA heading lags the rotating velocity. `VehicleState.acceleration`
+  carries this scalar directly.
 - Timestep: `frame_index / fps`, Float seconds.
 
 MVP2 replaces Scale + coordinates with real metric values from a single homography; MVP3 introduces v3.0 with Z when multi-homography lands.

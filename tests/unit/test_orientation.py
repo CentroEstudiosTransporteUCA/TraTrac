@@ -38,7 +38,7 @@ class TestFirstObservation:
 			timestamp_seconds=0.0,
 		)
 		assert state.velocity.magnitude == 0.0
-		assert state.acceleration.magnitude == 0.0
+		assert state.acceleration == 0.0
 
 	def test_heading_falls_back_to_bbox_major_axis_east_when_wide(self) -> None:
 		estimator = EmaOrientationEstimator(smoothing_window=5, meters_per_pixel=1.0)
@@ -114,8 +114,7 @@ class TestAcceleration:
 			timestamp_seconds=3.0,
 		)
 		# Velocity has been constant at 10 m/s. Acceleration should be ~0.
-		assert math.isclose(final.acceleration.dx, 0.0, abs_tol=1e-6)
-		assert math.isclose(final.acceleration.dy, 0.0, abs_tol=1e-6)
+		assert math.isclose(final.acceleration, 0.0, abs_tol=1e-6)
 
 	def test_accelerating_motion_produces_positive_acceleration(self) -> None:
 		estimator = EmaOrientationEstimator(smoothing_window=5, meters_per_pixel=1.0)
@@ -133,7 +132,25 @@ class TestAcceleration:
 			_tracked(1, BoundingBox(x=10.0, y=0.0, width=2.0, height=1.0)),
 			timestamp_seconds=4.0,
 		)
-		assert final.acceleration.dx > 0.0
+		assert final.acceleration > 0.0
+
+	def test_constant_speed_turn_yields_near_zero_acceleration(self) -> None:
+		# The point of the fix: a vehicle turning at constant speed has ~0
+		# longitudinal acceleration. The old heading-projected vector acceleration
+		# fired spuriously here because the EMA heading lags the rotating velocity.
+		estimator = EmaOrientationEstimator(smoothing_window=5, meters_per_pixel=1.0)
+		radius = 20.0
+		step = 0.15  # radians/frame — a steady turn at constant arc speed
+		final: VehicleState | None = None
+		for i in range(12):
+			angle = i * step
+			bbox = BoundingBox(
+				x=radius * math.cos(angle), y=radius * math.sin(angle), width=4.0, height=2.0
+			)
+			final = _estimate(estimator, _tracked(1, bbox), timestamp_seconds=float(i))
+		assert final is not None
+		assert final.speed > 1.0  # genuinely moving, not parked
+		assert math.isclose(final.acceleration, 0.0, abs_tol=1e-9)
 
 
 class TestIdentity:
