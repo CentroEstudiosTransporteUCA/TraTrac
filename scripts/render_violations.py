@@ -19,9 +19,16 @@ a matching ``--start`` so the seek re-aligns the absolute frame index. The CSV's
 own ``frame_index`` ordinal is deliberately NOT used (it is the in-file timestep
 count, which diverges under ``--timestep-precision`` decimation).
 
+Coordinates: when the run used ego-motion stabilization, the ``.trj`` — and so the
+violations CSV — carries positions in the *global* stabilization frame, not raw
+pixels. Pass ``--transforms-csv`` (the run's ``export.transform_csv``) so each mark
+is mapped from the global frame back onto the raw video, the same inverse-transform
+the overlay video applies to its bumpers/trails. Without it, marks are drawn as-is,
+which is correct only when stabilization was off (global == raw).
+
 Usage:
 	uv run python scripts/render_violations.py VIDEO --violations-csv CSV [--out OUT]
-		[--start HH:MM:SS] [--end HH:MM:SS] [--checks appearance,...]
+		[--transforms-csv TCSV] [--start HH:MM:SS] [--end HH:MM:SS] [--checks appearance,...]
 """
 
 from __future__ import annotations
@@ -75,16 +82,70 @@ def _parse_timecode(value: str) -> float:
 
 _REQUIRED_VIOLATION_COLUMNS = ("timestamp_s", "vehicle_id", "check", "centroid_x", "centroid_y")
 
+# 2x3 affine coefficients (a, b, c, d, tx, ty): maps a raw frame's pixels into the
+# global stabilization frame (the space the .trj/violations positions live in when
+# ego-motion is on). Its inverse maps those positions back onto the raw frame.
+Transform = tuple[float, float, float, float, float, float]
+_REQUIRED_TRANSFORM_COLUMNS = ("frame", "a", "b", "c", "d", "tx", "ty")
+
+
+def parse_transforms_csv(path: Path) -> dict[int, Transform]:
+	"""Load a tratrac per-frame transform CSV (export.transform_csv) by frame index.
+
+	Each row is the current-frame -> global ego-motion transform for that frame. The
+	`frame` column is the absolute Frame.index, which matches round(timestamp_s * fps)
+	for the violation rows, so the two align on the same integer key.
+	"""
+	transforms: dict[int, Transform] = {}
+	with path.open(newline="") as fh:
+		reader = csv.DictReader(fh)
+		missing = [c for c in _REQUIRED_TRANSFORM_COLUMNS if c not in (reader.fieldnames or [])]
+		if missing:
+			raise ValueError(f"{path}: missing columns {missing}; not a tratrac transform CSV?")
+		for row in reader:
+			transforms[int(row["frame"])] = (
+				float(row["a"]),
+				float(row["b"]),
+				float(row["c"]),
+				float(row["d"]),
+				float(row["tx"]),
+				float(row["ty"]),
+			)
+	return transforms
+
+
+def global_to_raw(transform: Transform, x: float, y: float) -> tuple[float, float]:
+	"""Map a global-frame point back onto the raw frame by inverting `transform`.
+
+	Mirrors domain.geometry.Transform2D.inverse().apply(); reimplemented here in
+	plain arithmetic so this script stays standalone (stdlib + cv2 only). The 2x2
+	linear part of a 4-DOF similarity is always non-singular (det = squared scale).
+	"""
+	a, b, c, d, tx, ty = transform
+	det = a * d - b * c
+	if det == 0.0:
+		raise ValueError("Cannot invert a transform with a singular linear part.")
+	ia, ib = d / det, -b / det
+	ic, id_ = -c / det, a / det
+	itx = -(ia * tx + ib * ty)
+	ity = -(ic * tx + id_ * ty)
+	return (ia * x + ib * y + itx, ic * x + id_ * y + ity)
+
 
 def parse_violations_csv(
-	path: Path, fps: float, checks: set[str] | None
+	path: Path, fps: float, checks: set[str] | None, transforms: dict[int, Transform] | None = None
 ) -> dict[int, list[ViolationMark]]:
 	"""Group a validate_trj.py violations CSV by video frame.
 
-	Rows already carry image-space (y-down) positions, so no Y-flip is needed.
 	Each row is placed on round(timestamp_s * fps). When `checks` is given, rows
 	whose `check` is not in it are dropped. Multiple checks failing for one vehicle
 	on one frame collapse into a single mark.
+
+	Positions are image-space (y-down), so no Y-flip is needed. When `transforms` is
+	given (a run with ego-motion on), each position is in the global stabilization
+	frame and is mapped back onto the raw frame via that frame's inverse transform
+	before rounding; without it the positions are drawn as-is (correct when
+	stabilization was off, where global == raw).
 	"""
 	checks_by_key: dict[tuple[int, int], set[str]] = defaultdict(set)
 	centroid_by_key: dict[tuple[int, int], tuple[int, int]] = {}
@@ -97,12 +158,15 @@ def parse_violations_csv(
 			check = row["check"]
 			if checks is not None and check not in checks:
 				continue
-			key = (round(float(row["timestamp_s"]) * fps), int(row["vehicle_id"]))
+			frame_idx = round(float(row["timestamp_s"]) * fps)
+			key = (frame_idx, int(row["vehicle_id"]))
+			cx, cy = float(row["centroid_x"]), float(row["centroid_y"])
+			if transforms is not None:
+				transform = transforms.get(frame_idx)
+				if transform is not None:
+					cx, cy = global_to_raw(transform, cx, cy)
 			checks_by_key[key].add(check)
-			centroid_by_key[key] = (
-				round(float(row["centroid_x"])),
-				round(float(row["centroid_y"])),
-			)
+			centroid_by_key[key] = (round(cx), round(cy))
 
 	by_frame: dict[int, list[ViolationMark]] = defaultdict(list)
 	for (frame_idx, vid), names in checks_by_key.items():
@@ -147,6 +211,14 @@ def main() -> int:
 		help="Comma-separated subset of check names to overlay (e.g. "
 		"appearance,disappearance,heading_switch). Default: every check in the CSV.",
 	)
+	parser.add_argument(
+		"--transforms-csv",
+		type=Path,
+		default=None,
+		help="Per-frame ego-motion transform CSV (tratrac export.transform_csv). Required to "
+		"place marks correctly when the run used ego-motion stabilization; the positions are "
+		"then mapped from the global frame back onto the raw video. Omit for non-stabilized runs.",
+	)
 	args = parser.parse_args()
 
 	if not args.video.exists():
@@ -154,6 +226,9 @@ def main() -> int:
 		return 1
 	if not args.violations_csv.exists():
 		print(f"Violations CSV not found: {args.violations_csv}", file=sys.stderr)
+		return 1
+	if args.transforms_csv is not None and not args.transforms_csv.exists():
+		print(f"Transforms CSV not found: {args.transforms_csv}", file=sys.stderr)
 		return 1
 
 	cap = cv2.VideoCapture(str(args.video))
@@ -169,7 +244,10 @@ def main() -> int:
 	checks_filter = (
 		{c.strip() for c in args.checks.split(",") if c.strip()} if args.checks else None
 	)
-	violations_by_frame = parse_violations_csv(args.violations_csv, fps, checks_filter)
+	transforms = parse_transforms_csv(args.transforms_csv) if args.transforms_csv else None
+	if transforms is not None:
+		print(f"Loaded {len(transforms)} per-frame transforms; mapping marks back onto raw frames.")
+	violations_by_frame = parse_violations_csv(args.violations_csv, fps, checks_filter, transforms)
 	mark_count = sum(len(v) for v in violations_by_frame.values())
 	print(f"Loaded {mark_count} violation marks from {args.violations_csv.name}.")
 

@@ -30,10 +30,12 @@ from tratrac.domain.geometry import Transform2D
 from tratrac.domain.ports import (
 	DetectionObserver,
 	Detector,
+	EgoMotionEstimator,
 	OrientationEstimator,
 	TimingSink,
 	Tracker,
 	TrajectoryExporter,
+	TransformSink,
 )
 from tratrac.infrastructure.config.toml import load_toml
 from tratrac.infrastructure.detection.rt_detr import RtDetrDetector
@@ -51,6 +53,8 @@ from tratrac.infrastructure.timing.decorators import (
 	TimedTracker,
 )
 from tratrac.infrastructure.tracking.boxmot_bot_sort import BoxmotBotSortTracker
+from tratrac.infrastructure.transform.csv import CsvTransformSink
+from tratrac.infrastructure.transform.recording import RecordingEgoMotionEstimator
 from tratrac.infrastructure.video.ego_motion_orb import OrbEgoMotionEstimator
 from tratrac.infrastructure.video.opencv import OpenCvVideoSource
 
@@ -191,6 +195,15 @@ def process(
 			help="Trail length in frames for the overlay video; 0 = whole path (export.video_trail).",
 		),
 	] = None,
+	transform_csv: Annotated[
+		Path | None,
+		typer.Option(
+			"--transform-csv",
+			dir_okay=False,
+			help='Per-frame ego-motion transform CSV; "" disables. Requires --stabilize '
+			"(export.transform_csv).",
+		),
+	] = None,
 	start: Annotated[
 		str | None,
 		typer.Option(
@@ -240,6 +253,7 @@ def process(
 		"export.timestep_precision": timestep_precision,
 		"export.video_out": video_out,
 		"export.video_trail": video_trail,
+		"export.transform_csv": transform_csv,
 		"window.start": start,
 		"window.end": end,
 		"run.force": force,
@@ -272,6 +286,14 @@ def process(
 		run.options.timing_csv.resolve() if run.options.timing_csv is not None else None,
 	}:
 		raise typer.BadParameter("export.video_out must differ from export.out and run.timing_csv.")
+	if run.export.transform_csv is not None and run.export.transform_csv.resolve() in {
+		run.export.out.resolve(),
+		run.options.timing_csv.resolve() if run.options.timing_csv is not None else None,
+		run.export.video_out.resolve() if run.export.video_out is not None else None,
+	}:
+		raise typer.BadParameter(
+			"export.transform_csv must differ from export.out, run.timing_csv, and export.video_out."
+		)
 	if run.export.timestep_precision > _COARSE_TIMESTEP_WARNING_SECONDS:
 		typer.echo(
 			f"WARNING: timestep_precision {run.export.timestep_precision}s is coarse; SSAM "
@@ -284,6 +306,8 @@ def process(
 		_prepare_output_path(run.options.timing_csv, force=run.options.force)
 	if run.export.video_out is not None:
 		_prepare_output_path(run.export.video_out, force=run.options.force)
+	if run.export.transform_csv is not None:
+		_prepare_output_path(run.export.transform_csv, force=run.options.force)
 
 	with _open_video(
 		run.input.video,
@@ -351,12 +375,22 @@ def process(
 			smoothing_window=run.orientation.smoothing_window,
 			meters_per_pixel=scale,
 		)
-		with _timing_sink(run.options.timing_csv) as sink:
+		with (
+			_timing_sink(run.options.timing_csv) as sink,
+			_transform_sink(run.export.transform_csv) as transform_sink,
+		):
 			if sink is not None:
 				det = TimedDetector(det, sink)
 				tracker = TimedTracker(tracker, sink)
 				orientation = TimedOrientation(orientation, sink)
 				exporter = TimedExporter(exporter, sink)
+			# Persist the per-frame transform by decorating the estimator (the
+			# pipeline stays untouched). The concrete estimator above keeps serving the
+			# overlay's transform_source and the DetectionObserver; the pipeline drives
+			# the recorder. Guaranteed present when transform_csv is set (config guard).
+			pipeline_ego_motion: EgoMotionEstimator | None = ego_motion
+			if transform_sink is not None and ego_motion is not None:
+				pipeline_ego_motion = RecordingEgoMotionEstimator(ego_motion, transform_sink)
 			pipeline = TrajectoryPipeline(
 				video=source,
 				detector=det,
@@ -365,7 +399,7 @@ def process(
 				orientation=orientation,
 				reporter=ConsoleProgressReporter(),
 				detection_observer=detection_observer,
-				ego_motion=ego_motion,
+				ego_motion=pipeline_ego_motion,
 			)
 			n_frames = pipeline.run()
 
@@ -460,6 +494,16 @@ def _timing_sink(path: Path | None) -> Iterator[TimingSink | None]:
 		yield None
 		return
 	with CsvTimingSink(path) as sink:
+		yield sink
+
+
+@contextmanager
+def _transform_sink(path: Path | None) -> Iterator[TransformSink | None]:
+	"""Yield a CSV transform sink when a path is given, else ``None`` (off)."""
+	if path is None:
+		yield None
+		return
+	with CsvTransformSink(path) as sink:
 		yield sink
 
 

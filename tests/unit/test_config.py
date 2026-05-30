@@ -44,6 +44,7 @@ def _complete(tmp_path: Path, **overrides: Any) -> dict[str, Any]:
 			"timestep_precision": 0.0,
 			"video_out": "",
 			"video_trail": 0,
+			"transform_csv": "",
 		},
 		"window": {"start": "", "end": ""},
 		"run": {"force": False, "timing_csv": ""},
@@ -302,6 +303,41 @@ class TestVideoExport:
 		file_values["export"]["video_out"] = str(tmp_path / "overlay.mp4")
 		del file_values["export"]["video_trail"]
 		with pytest.raises(ConfigError, match="video_trail is missing"):
+			RunConfig.resolve(file_values, {})
+
+
+class TestTransformCsv:
+	_ENABLED: ClassVar[dict[str, Any]] = {
+		"enabled": True,
+		"n_features": 2000,
+		"match_ratio": 0.75,
+		"min_matches": 10,
+		"ransac_threshold": 3.0,
+		"min_anchor_overlap": 0.6,
+	}
+
+	def test_off_resolves_to_none(self, tmp_path: Path) -> None:
+		run = RunConfig.resolve(_complete(tmp_path), {})
+		assert run.export.transform_csv is None  # "" disables
+
+	def test_missing_key_is_an_error(self, tmp_path: Path) -> None:
+		file_values = _complete(tmp_path)
+		del file_values["export"]["transform_csv"]
+		with pytest.raises(ConfigError, match="transform_csv is missing"):
+			RunConfig.resolve(file_values, {})
+
+	def test_path_resolves_when_ego_motion_enabled(self, tmp_path: Path) -> None:
+		file_values = _complete(tmp_path, ego_motion=self._ENABLED)
+		file_values["export"]["transform_csv"] = str(tmp_path / "transforms.csv")
+		run = RunConfig.resolve(file_values, {})
+		assert run.export.transform_csv == tmp_path / "transforms.csv"
+
+	def test_set_without_stabilization_is_an_error(self, tmp_path: Path) -> None:
+		# ego_motion disabled in the default fixture: a transform CSV would only ever
+		# hold identities, so requesting one is a contradictory run spec.
+		file_values = _complete(tmp_path)
+		file_values["export"]["transform_csv"] = str(tmp_path / "transforms.csv")
+		with pytest.raises(ConfigError, match=r"transform_csv requires ego_motion\.enabled"):
 			RunConfig.resolve(file_values, {})
 
 	def test_negative_video_trail_is_an_error(self, tmp_path: Path) -> None:
