@@ -78,7 +78,9 @@ class _RecordingExporter:
 	def __init__(self) -> None:
 		self.calls: list[str] = []
 
-	def emit_frame(self, timestamp_seconds: float, states: list[VehicleState]) -> None:
+	def emit_frame(
+		self, timestamp_seconds: float, states: list[VehicleState], frame: Frame
+	) -> None:
 		self.calls.append("emit")
 
 	def __enter__(self) -> _RecordingExporter:
@@ -179,7 +181,7 @@ class TestTimedExporter:
 		inner = _RecordingExporter()
 		timed = TimedExporter(inner, sink, clock=_StubClock([0.0, 0.5]))
 		with timed:
-			timed.emit_frame(1.0, [])
+			timed.emit_frame(1.0, [], _frame())
 		assert inner.calls == ["enter", "emit", "exit"]
 		assert sink.records == [StepTiming(PipelineStep.EXPORT, 0, 0.5)]
 

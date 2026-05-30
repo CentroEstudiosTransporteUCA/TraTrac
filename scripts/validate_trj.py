@@ -73,7 +73,7 @@ _DEFAULT_MAX_HEADING_STEP_DEG = 20.0  # heading change above this = a sudden swi
 # limits): metric 22 m/s (79 km/h) / 15 m/s^2 (~1.5 g) vs English ~70 m/s
 # (252 km/h) / ~12 m/s^2 (~1.2 g). Raise --max-speed for fast-road clips.
 _MAX_SPEED_METRIC = 22.0  # m/s   (79 km/h)
-_MAX_ACCEL_METRIC = 15.0  # m/s^2 (~1.5 g)
+_MAX_ACCEL_METRIC = 5.0  # m/s^2 (~1.5 g)
 _MAX_SPEED_ENGLISH = 230.0  # ft/s   (~70 m/s, 252 km/h)
 _MAX_ACCEL_ENGLISH = 40.0  # ft/s^2 (~12 m/s^2, ~1.2 g)
 

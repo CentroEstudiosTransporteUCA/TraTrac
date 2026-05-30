@@ -28,15 +28,29 @@ _VEHICLE_CLASS_TO_COCO_ID: dict[VehicleClass, int] = {
 class BoxmotBotSortTracker:
 	"""Wraps ``boxmot.trackers.BotSort`` behind the ``Tracker`` port."""
 
-	def __init__(self, metadata: VideoMetadata, *, det_thresh: float) -> None:
+	def __init__(
+		self,
+		metadata: VideoMetadata,
+		*,
+		det_thresh: float,
+		compensate_camera_motion: bool = True,
+	) -> None:
 		# det_thresh below the detector's threshold so the detector is the sole
 		# gatekeeper. Aerial-domain detections often peak in the 0.25-0.4 range,
 		# and BotSort's stock 0.3 would suppress legitimate low-confidence cars.
+		#
+		# When coordinate stabilization is on (vault/05_75_mvp1_9.md), detections are
+		# already mapped into the stabilized frame before they reach the tracker, so
+		# BoT-SORT must NOT also compensate camera motion — doing so would double-
+		# correct. cmc_method=None disables its internal CMC. Left on for raw
+		# (unstabilized) runs so a moving camera is still handled for association.
+		cmc_method = "ecc" if compensate_camera_motion else None
 		self._tracker: Any = BotSort(
 			reid_model=None,
 			with_reid=False,
 			frame_rate=round(metadata.fps),
 			det_thresh=det_thresh,
+			cmc_method=cmc_method,
 		)
 
 	def update(self, frame: Frame, detections: Sequence[Detection]) -> list[TrackedDetection]:

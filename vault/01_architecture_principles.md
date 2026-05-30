@@ -139,3 +139,11 @@ This representation:
 | lane_id | Lane ID |
 | length | Vehicle Length |
 | width | Vehicle Width |
+
+`velocity` is a 2D vector; SSAM **Speed** takes its magnitude (`speed = |velocity|`). `acceleration`,
+by contrast, is stored as the **scalar longitudinal acceleration** — the rate of change of speed
+(`d|v|/dt`) — and maps straight to SSAM **Acceleration**. It is *not* a vector projected onto the
+heading: that projection conflated cornering with speeding-up/slowing-down, firing spuriously through
+constant-speed turns as the smoothed heading lagged the rotating velocity. The lateral/centripetal
+component of acceleration is intentionally not retained (SSAM cannot express it, and no analytics need
+it yet); reintroduce a full acceleration vector only when an analytic consumer requires lateral g.

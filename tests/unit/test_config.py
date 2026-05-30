@@ -7,7 +7,7 @@ config as a dict — no temp files needed. The TOML loader is tested separately.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 
@@ -36,9 +36,15 @@ def _complete(tmp_path: Path, **overrides: Any) -> dict[str, Any]:
 		},
 		"runtime": {"device": "cpu"},
 		"calibration": {"meters_per_pixel": 0.05},
+		"ego_motion": {"enabled": False},
 		"tracker": {"det_thresh": 0.1},
 		"orientation": {"smoothing_window": 5},
-		"export": {"out": str(tmp_path / "out.trj"), "timestep_precision": 0.0},
+		"export": {
+			"out": str(tmp_path / "out.trj"),
+			"timestep_precision": 0.0,
+			"video_out": "",
+			"video_trail": 0,
+		},
 		"window": {"start": "", "end": ""},
 		"run": {"force": False, "timing_csv": ""},
 	}
@@ -58,6 +64,7 @@ class TestResolveComplete:
 		assert run.orientation.smoothing_window == 5
 		assert run.export.out == tmp_path / "out.trj"
 		assert run.export.timestep_precision == 0.0
+		assert run.export.video_out is None  # "" disables
 		assert run.window.start_seconds is None
 		assert run.window.end_seconds is None
 		assert run.options.force is False
@@ -166,6 +173,59 @@ class TestCalibration:
 		assert run.calibration.resolve_scale(_METADATA) > 0.0
 
 
+class TestEgoMotion:
+	_ENABLED: ClassVar[dict[str, Any]] = {
+		"enabled": True,
+		"n_features": 2000,
+		"match_ratio": 0.75,
+		"min_matches": 10,
+		"ransac_threshold": 3.0,
+		"min_anchor_overlap": 0.6,
+	}
+
+	def test_disabled_needs_no_orb_params(self, tmp_path: Path) -> None:
+		run = RunConfig.resolve(_complete(tmp_path, ego_motion={"enabled": False}), {})
+		assert run.ego_motion.enabled is False
+
+	def test_enabled_resolves_orb_params(self, tmp_path: Path) -> None:
+		run = RunConfig.resolve(_complete(tmp_path, ego_motion=self._ENABLED), {})
+		assert run.ego_motion.enabled is True
+		assert run.ego_motion.n_features == 2000
+		assert run.ego_motion.match_ratio == 0.75
+		assert run.ego_motion.min_matches == 10
+		assert run.ego_motion.ransac_threshold == 3.0
+		assert run.ego_motion.min_anchor_overlap == 0.6
+
+	def test_missing_enabled_is_an_error(self, tmp_path: Path) -> None:
+		file_values = _complete(tmp_path)
+		del file_values["ego_motion"]
+		with pytest.raises(ConfigError, match=r"ego_motion\.enabled is missing"):
+			RunConfig.resolve(file_values, {})
+
+	def test_enabled_without_orb_params_is_an_error(self, tmp_path: Path) -> None:
+		with pytest.raises(ConfigError) as excinfo:
+			RunConfig.resolve(_complete(tmp_path, ego_motion={"enabled": True}), {})
+		problems = excinfo.value.problems
+		assert "ego_motion.n_features is missing." in problems
+		assert "ego_motion.match_ratio is missing." in problems
+		assert "ego_motion.min_matches is missing." in problems
+		assert "ego_motion.ransac_threshold is missing." in problems
+		assert "ego_motion.min_anchor_overlap is missing." in problems
+
+	def test_out_of_range_anchor_overlap_is_an_error(self, tmp_path: Path) -> None:
+		bad = {**self._ENABLED, "min_anchor_overlap": 1.5}
+		with pytest.raises(ConfigError, match="min_anchor_overlap"):
+			RunConfig.resolve(_complete(tmp_path, ego_motion=bad), {})
+
+	def test_out_of_range_orb_params_are_errors(self, tmp_path: Path) -> None:
+		bad = {**self._ENABLED, "match_ratio": 1.5, "min_matches": 1}
+		with pytest.raises(ConfigError) as excinfo:
+			RunConfig.resolve(_complete(tmp_path, ego_motion=bad), {})
+		problems = excinfo.value.problems
+		assert any("match_ratio" in p for p in problems)
+		assert any("min_matches" in p for p in problems)
+
+
 class TestWindow:
 	def test_timecodes_parse_to_seconds(self, tmp_path: Path) -> None:
 		run = RunConfig.resolve(_complete(tmp_path, window={"start": "0:10", "end": "1:30"}), {})
@@ -213,6 +273,51 @@ class TestValueValidation:
 		file_values["run"]["timing_csv"] = str(tmp_path / "timing.csv")
 		run = RunConfig.resolve(file_values, {})
 		assert run.options.timing_csv == tmp_path / "timing.csv"
+
+
+class TestVideoExport:
+	def test_video_out_path_enables_overlay_and_resolves_trail(self, tmp_path: Path) -> None:
+		file_values = _complete(tmp_path)
+		file_values["export"]["video_out"] = str(tmp_path / "overlay.mp4")
+		file_values["export"]["video_trail"] = 60
+		run = RunConfig.resolve(file_values, {})
+		assert run.export.video_out == tmp_path / "overlay.mp4"
+		assert run.export.video_trail == 60
+
+	def test_missing_video_out_key_is_an_error(self, tmp_path: Path) -> None:
+		file_values = _complete(tmp_path)
+		del file_values["export"]["video_out"]
+		with pytest.raises(ConfigError, match="video_out is missing"):
+			RunConfig.resolve(file_values, {})
+
+	def test_video_trail_only_required_when_video_enabled(self, tmp_path: Path) -> None:
+		# With the overlay off ("" ), a missing video_trail must NOT be an error.
+		file_values = _complete(tmp_path)
+		del file_values["export"]["video_trail"]
+		run = RunConfig.resolve(file_values, {})
+		assert run.export.video_out is None
+
+	def test_video_trail_required_when_video_enabled(self, tmp_path: Path) -> None:
+		file_values = _complete(tmp_path)
+		file_values["export"]["video_out"] = str(tmp_path / "overlay.mp4")
+		del file_values["export"]["video_trail"]
+		with pytest.raises(ConfigError, match="video_trail is missing"):
+			RunConfig.resolve(file_values, {})
+
+	def test_negative_video_trail_is_an_error(self, tmp_path: Path) -> None:
+		file_values = _complete(tmp_path)
+		file_values["export"]["video_out"] = str(tmp_path / "overlay.mp4")
+		file_values["export"]["video_trail"] = -1
+		with pytest.raises(ConfigError, match="video_trail must be"):
+			RunConfig.resolve(file_values, {})
+
+	def test_cli_video_out_override_enables_overlay(self, tmp_path: Path) -> None:
+		run = RunConfig.resolve(
+			_complete(tmp_path),
+			{"export.video_out": tmp_path / "overlay.mp4", "export.video_trail": 30},
+		)
+		assert run.export.video_out == tmp_path / "overlay.mp4"
+		assert run.export.video_trail == 30
 
 
 class TestLoadToml:

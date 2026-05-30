@@ -13,7 +13,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import IO
 
-from tratrac.domain.frame import VideoMetadata
+from tratrac.domain.frame import Frame, VideoMetadata
 from tratrac.domain.vehicle import VehicleState
 
 _FORMAT_RECORD_TYPE = 0
@@ -62,7 +62,12 @@ class SsamTrjExporter:
 			self._file.close()
 			self._file = None
 
-	def emit_frame(self, timestamp_seconds: float, states: list[VehicleState]) -> None:
+	def emit_frame(
+		self, timestamp_seconds: float, states: list[VehicleState], frame: Frame
+	) -> None:
+		# ``frame`` is part of the exporter port (the overlay video writer needs the
+		# pixels); SSAM is a pure data format, so it is intentionally ignored here.
+		del frame
 		out = self._require_file()
 		out.write(_TIMESTEP_STRUCT.pack(_TIMESTEP_RECORD_TYPE, timestamp_seconds))
 		for state in states:
@@ -108,7 +113,7 @@ class SsamTrjExporter:
 				state.dimensions.length,
 				state.dimensions.width,
 				state.speed,
-				state.forward_acceleration,
+				state.acceleration,
 			)
 		)
 

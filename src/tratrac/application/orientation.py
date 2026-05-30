@@ -4,6 +4,12 @@ Turns a stream of per-frame ``TrackedDetection``s into ``VehicleState``s by
 tracking each track's recent centroids and deriving velocity, acceleration,
 and heading from that history.
 
+* Acceleration is the *longitudinal* acceleration — the rate of change of speed
+  (d|v|/dt), a scalar — not a vector projected onto the heading. It is a windowed
+  finite-difference of the same speed signal exported as SSAM Speed, so it stays
+  ~0 through a constant-speed turn (where a heading-projected vector acceleration
+  would spuriously fire as the heading lags the rotating velocity).
+
 * Heading is a motion-magnitude-weighted EMA of the velocity direction. Fast
   motion fully trusts the velocity vector; slow motion blends toward the
   cached heading so detector-bbox jitter on stationary vehicles doesn't make
@@ -21,7 +27,7 @@ from __future__ import annotations
 
 from collections import deque
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from tratrac.domain.detection import TrackedDetection
 from tratrac.domain.geometry import BoundingBox, Dimensions, Heading, Point2D, Vector2D
@@ -39,7 +45,11 @@ _FULL_TRUST_SPEED = 50.0
 class _TrackHistory:
 	centroids: deque[Point2D]
 	timestamps: deque[float]
-	last_velocity: Vector2D = field(default_factory=lambda: Vector2D(0.0, 0.0))
+	# (timestamp, speed) samples, recorded only on frames where velocity is
+	# defined (>= 2 centroids). Acceleration is a windowed finite-difference over
+	# these — the direct analog of how _compute_velocity windows over centroids —
+	# so the artificial speed=0 of a track's first frame never enters the math.
+	speed_samples: deque[tuple[float, float]]
 	last_good_heading: Heading | None = None
 
 
@@ -85,15 +95,17 @@ class EmaOrientationEstimator:
 			history = _TrackHistory(
 				centroids=deque(maxlen=self._window),
 				timestamps=deque(maxlen=self._window),
+				speed_samples=deque(maxlen=self._window),
 			)
 			self._history[track_id] = history
 		history.centroids.append(centroid_world)
 		history.timestamps.append(timestamp_seconds)
 
 		velocity = self._compute_velocity(history)
-		acceleration = self._compute_acceleration(velocity, history)
+		if len(history.centroids) >= 2:
+			history.speed_samples.append((timestamp_seconds, velocity.magnitude))
+		acceleration = self._compute_speed_acceleration(history)
 		heading = self._compute_heading(velocity, bbox, history)
-		history.last_velocity = velocity
 
 		return VehicleState(
 			vehicle_id=track_id,
@@ -123,14 +135,22 @@ class EmaOrientationEstimator:
 		return displacement.scaled_by(1.0 / dt)
 
 	@staticmethod
-	def _compute_acceleration(current: Vector2D, history: _TrackHistory) -> Vector2D:
-		if len(history.timestamps) < 2:
-			return Vector2D(0.0, 0.0)
-		dt = history.timestamps[-1] - history.timestamps[-2]
+	def _compute_speed_acceleration(history: _TrackHistory) -> float:
+		"""Windowed rate of change of speed (d|v|/dt), in units/sec².
+
+		Mirrors ``_compute_velocity``: a finite-difference between the oldest and
+		newest samples in the smoothing window, dividing the speed change by the
+		time they span. Yields the longitudinal acceleration the SSAM
+		Acceleration field expects, smoothed exactly as the speed signal is.
+		"""
+		if len(history.speed_samples) < 2:
+			return 0.0
+		oldest_t, oldest_speed = history.speed_samples[0]
+		newest_t, newest_speed = history.speed_samples[-1]
+		dt = newest_t - oldest_t
 		if dt <= 0.0:
-			return Vector2D(0.0, 0.0)
-		prior = history.last_velocity
-		return Vector2D((current.dx - prior.dx) / dt, (current.dy - prior.dy) / dt)
+			return 0.0
+		return (newest_speed - oldest_speed) / dt
 
 	@staticmethod
 	def _compute_heading(velocity: Vector2D, bbox: BoundingBox, history: _TrackHistory) -> Heading:

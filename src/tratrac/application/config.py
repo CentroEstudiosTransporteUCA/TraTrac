@@ -114,6 +114,24 @@ class CalibrationConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class EgoMotionConfig:
+	"""ORB video-stabilization settings (MVP1.9, see ``vault/05_75_mvp1_9.md``).
+
+	``enabled`` is the explicit on/off toggle (per the "off is explicit" rule). The
+	ORB parameters are only meaningful — and only required by ``resolve`` — when
+	``enabled`` is true; when disabled they hold ignored placeholder zeros."""
+
+	enabled: bool
+	n_features: int
+	match_ratio: float
+	min_matches: int
+	ransac_threshold: float
+	# Minimum fraction of the keyframe anchor still visible before re-anchoring
+	# (see vault/05_75_mvp1_9.md). Only meaningful when ``enabled``.
+	min_anchor_overlap: float
+
+
+@dataclass(frozen=True, slots=True)
 class TrackerConfig:
 	det_thresh: float
 
@@ -127,6 +145,11 @@ class OrientationConfig:
 class ExportConfig:
 	out: Path
 	timestep_precision: float  # 0.0 = emit every processed frame
+	# Optional overlay video output (raw frame + trajectories). ``None`` = off.
+	# ``video_trail`` (trail length in frames; 0 = whole path) is only meaningful —
+	# and only required by ``resolve`` — when ``video_out`` is set.
+	video_out: Path | None
+	video_trail: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,6 +174,7 @@ class RunConfig:
 	detector: DetectorConfig
 	runtime: RuntimeConfig
 	calibration: CalibrationConfig
+	ego_motion: EgoMotionConfig
 	tracker: TrackerConfig
 	orientation: OrientationConfig
 	export: ExportConfig
@@ -182,6 +206,7 @@ class RunConfig:
 		_validate_device(device, resolver)
 
 		calibration = _resolve_calibration(resolver)
+		ego_motion = _resolve_ego_motion(resolver)
 
 		det_thresh = resolver.required_float("tracker.det_thresh")
 		_check_range(det_thresh, 0.0, 1.0, "tracker.det_thresh", resolver)
@@ -194,6 +219,7 @@ class RunConfig:
 		timestep_precision = resolver.required_float("export.timestep_precision")
 		if timestep_precision < 0.0:
 			resolver.problems.append("export.timestep_precision must be >= 0 (0 = every frame).")
+		video_out, video_trail = _resolve_video(resolver)
 
 		window = WindowConfig(
 			start_seconds=_resolve_window_bound(resolver, "window.start"),
@@ -214,9 +240,15 @@ class RunConfig:
 			),
 			runtime=RuntimeConfig(device=device),
 			calibration=calibration,
+			ego_motion=ego_motion,
 			tracker=TrackerConfig(det_thresh=det_thresh),
 			orientation=OrientationConfig(smoothing_window=smoothing_window),
-			export=ExportConfig(out=out, timestep_precision=timestep_precision),
+			export=ExportConfig(
+				out=out,
+				timestep_precision=timestep_precision,
+				video_out=video_out,
+				video_trail=video_trail,
+			),
 			window=window,
 			options=RunOptionsConfig(force=force, timing_csv=timing_csv),
 		)
@@ -424,6 +456,63 @@ def _resolve_calibration(resolver: _Resolver) -> CalibrationConfig:
 		"calibration: set meters_per_pixel, or drone_model with altitude_m or an srt path."
 	)
 	return CalibrationConfig(None, None, None, None)
+
+
+def _resolve_ego_motion(resolver: _Resolver) -> EgoMotionConfig:
+	"""Resolve the ORB stabilization config. ``enabled`` is always required; the ORB
+	parameters are required (and range-checked) only when stabilization is on."""
+	enabled = resolver.required_bool("ego_motion.enabled")
+	if not enabled:
+		# Disabled (or the toggle itself was missing — already reported): the ORB
+		# parameters are irrelevant. Placeholder zeros; never read downstream.
+		return EgoMotionConfig(
+			enabled=False,
+			n_features=0,
+			match_ratio=0.0,
+			min_matches=0,
+			ransac_threshold=0.0,
+			min_anchor_overlap=0.0,
+		)
+
+	n_features = resolver.required_int("ego_motion.n_features")
+	if resolver.present("ego_motion.n_features") and n_features <= 0:
+		resolver.problems.append("ego_motion.n_features must be positive.")
+	match_ratio = resolver.required_float("ego_motion.match_ratio")
+	if resolver.present("ego_motion.match_ratio") and not 0.0 < match_ratio < 1.0:
+		resolver.problems.append("ego_motion.match_ratio must be in (0, 1).")
+	min_matches = resolver.required_int("ego_motion.min_matches")
+	if resolver.present("ego_motion.min_matches") and min_matches < 2:
+		resolver.problems.append("ego_motion.min_matches must be >= 2.")
+	ransac_threshold = resolver.required_float("ego_motion.ransac_threshold")
+	if resolver.present("ego_motion.ransac_threshold") and ransac_threshold <= 0.0:
+		resolver.problems.append("ego_motion.ransac_threshold must be positive.")
+	min_anchor_overlap = resolver.required_float("ego_motion.min_anchor_overlap")
+	if resolver.present("ego_motion.min_anchor_overlap") and not 0.0 < min_anchor_overlap < 1.0:
+		resolver.problems.append("ego_motion.min_anchor_overlap must be in (0, 1).")
+	return EgoMotionConfig(
+		enabled=True,
+		n_features=n_features,
+		match_ratio=match_ratio,
+		min_matches=min_matches,
+		ransac_threshold=ransac_threshold,
+		min_anchor_overlap=min_anchor_overlap,
+	)
+
+
+def _resolve_video(resolver: _Resolver) -> tuple[Path | None, int]:
+	"""Resolve the optional overlay-video output. ``export.video_out`` is a required
+	toggleable key ("" = off, like ``run.timing_csv``); ``export.video_trail`` is
+	required (and range-checked) only when the video output is on, mirroring how the
+	ORB parameters are required only when ego-motion is enabled."""
+	video_out = resolver.toggleable_path("export.video_out")
+	if video_out is None:
+		# Off (or the key was missing — already reported). The trail length is
+		# irrelevant; a placeholder zero that is never read downstream.
+		return None, 0
+	video_trail = resolver.required_int("export.video_trail")
+	if resolver.present("export.video_trail") and video_trail < 0:
+		resolver.problems.append("export.video_trail must be >= 0 (0 = whole path).")
+	return video_out, video_trail
 
 
 def _resolve_window_bound(resolver: _Resolver, dotted: str) -> float | None:

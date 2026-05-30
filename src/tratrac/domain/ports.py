@@ -8,6 +8,7 @@ from typing import Protocol
 
 from tratrac.domain.detection import Detection, TrackedDetection
 from tratrac.domain.frame import Frame, VideoMetadata
+from tratrac.domain.geometry import Transform2D
 from tratrac.domain.progress import ProgressEvent
 from tratrac.domain.timing import StepTiming
 from tratrac.domain.vehicle import VehicleState
@@ -31,10 +32,37 @@ class VideoSource(Protocol):
 	) -> None: ...
 
 
+class EgoMotionEstimator(Protocol):
+	"""Estimates camera ego-motion per frame for coordinate stabilization.
+
+	Stateful: ``estimate`` is called once per frame in stream order and returns the
+	transform mapping *this frame's* pixel coordinates into a continuous global
+	frame (anchored to the first frame). The first call returns the identity.
+	Implementations may match against a keyframe anchor and compose anchor poses
+	internally. The pipeline applies the returned transform to detections (not
+	pixels). See vault/05_75_mvp1_9.md.
+	"""
+
+	def estimate(self, frame: Frame) -> Transform2D: ...
+
+
 class Detector(Protocol):
 	"""Detects vehicles in a single frame."""
 
 	def detect(self, frame: Frame) -> list[Detection]: ...
+
+
+class DetectionObserver(Protocol):
+	"""Receives each frame's detections after the detector runs, in stream order.
+
+	A backward channel from the pipeline to an upstream collaborator that wants to
+	reuse detections the pipeline already computed instead of detecting again. The
+	masked-ORB ego-motion path uses it: the stabilizer keeps the latest batch and,
+	on the next frame, masks those vehicles out of ORB feature extraction so the
+	moving foreground cannot bias the ego-motion fit. See vault/05_75_mvp1_9.md.
+	"""
+
+	def observe(self, detections: list[Detection]) -> None: ...
 
 
 class Tracker(Protocol):
@@ -57,13 +85,21 @@ class OrientationEstimator(Protocol):
 
 class TrajectoryExporter(Protocol):
 	"""
-	Writes per-timestep vehicle states to disk in some trajectory format.
+	Writes per-timestep vehicle states to some trajectory output.
 
 	Used as a context manager so the exporter can write headers on enter and
 	flush/close on exit.
+
+	``emit_frame`` also receives the ``Frame`` the states were derived from — the
+	(already-stabilized, if stabilization is on) pixels the pipeline processed.
+	Pure data exporters (SSAM ``.trj``) ignore it; pixel exporters (the overlay
+	video writer) render onto it. Carrying the frame here keeps every output a
+	single uniform port so they compose behind one ``CompositeTrajectoryExporter``.
 	"""
 
-	def emit_frame(self, timestamp_seconds: float, states: list[VehicleState]) -> None: ...
+	def emit_frame(
+		self, timestamp_seconds: float, states: list[VehicleState], frame: Frame
+	) -> None: ...
 
 	def __enter__(self) -> TrajectoryExporter: ...
 
