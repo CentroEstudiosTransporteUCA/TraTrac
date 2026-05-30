@@ -150,6 +150,11 @@ class ExportConfig:
 	# and only required by ``resolve`` — when ``video_out`` is set.
 	video_out: Path | None
 	video_trail: int
+	# Optional per-frame ego-motion transform CSV (current frame -> global). ``None``
+	# = off. Only meaningful when ego-motion is enabled (``resolve`` enforces this):
+	# with stabilization off every transform is the identity, so there is nothing to
+	# record. See vault/05_75_mvp1_9.md.
+	transform_csv: Path | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -220,6 +225,12 @@ class RunConfig:
 		if timestep_precision < 0.0:
 			resolver.problems.append("export.timestep_precision must be >= 0 (0 = every frame).")
 		video_out, video_trail = _resolve_video(resolver)
+		transform_csv = resolver.toggleable_path("export.transform_csv")
+		if transform_csv is not None and not ego_motion.enabled:
+			resolver.problems.append(
+				"export.transform_csv requires ego_motion.enabled = true; with stabilization "
+				'off every transform is the identity, so there is nothing to record (use "").'
+			)
 
 		window = WindowConfig(
 			start_seconds=_resolve_window_bound(resolver, "window.start"),
@@ -248,6 +259,7 @@ class RunConfig:
 				timestep_precision=timestep_precision,
 				video_out=video_out,
 				video_trail=video_trail,
+				transform_csv=transform_csv,
 			),
 			window=window,
 			options=RunOptionsConfig(force=force, timing_csv=timing_csv),

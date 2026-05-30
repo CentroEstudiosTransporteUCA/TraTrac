@@ -10,6 +10,7 @@ from tratrac.domain.detection import Detection, TrackedDetection
 from tratrac.domain.frame import Frame, VideoMetadata
 from tratrac.domain.geometry import Transform2D
 from tratrac.domain.progress import ProgressEvent
+from tratrac.domain.stabilization import FrameTransform
 from tratrac.domain.timing import StepTiming
 from tratrac.domain.vehicle import VehicleState
 
@@ -131,3 +132,15 @@ class TimingSink(Protocol):
 	"""
 
 	def record(self, timing: StepTiming) -> None: ...
+
+
+class TransformSink(Protocol):
+	"""Receives each frame's ego-motion transform while a video is processed.
+
+	One record per processed frame (current frame -> global stabilization frame).
+	Adapters persist them (CSV now) so a downstream tool can invert each to map
+	stabilized coordinates back onto the raw frame. Streaming, like ``TimingSink``;
+	see ``tratrac.domain.stabilization`` and vault/05_75_mvp1_9.md.
+	"""
+
+	def record(self, frame_transform: FrameTransform) -> None: ...

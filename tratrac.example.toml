@@ -53,6 +53,8 @@ out = "out/highway_run3.trj"      # output .trj path (overridden by --out)
 timestep_precision = 0.0          # min seconds between exported TIMESTEPs; 0 = every frame
 video_out = ""                    # "" = no overlay video; else an .mp4 of frames + trajectories
 video_trail = 0                   # overlay trail length in frames; 0 = whole path (only used when video_out set)
+transform_csv = ""                # "" = off; else a per-frame ego-motion transform CSV. Requires ego_motion.enabled
+                                  # (lets scripts/render_violations.py map global-frame positions back onto the raw video)
 
 [window]
 start = ""                        # "" = clip start; else HH:MM:SS(.ms) / MM:SS / SS
