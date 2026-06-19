@@ -189,12 +189,13 @@ class BoundingBox:
 
 @dataclass(frozen=True, slots=True)
 class Polygon:
-	"""A simple polygon in image pixel space (same frame as ``BoundingBox``).
+	"""A simple polygon in some coordinate frame (image or stabilization).
 
 	Vertices in order (winding either way). Backs image-space exclusion zones —
 	regions whose detections are dropped before tracking (see
-	``vault/21_exclusion_zones.md``). ``overlap_fraction`` reports how much of a
-	bounding box this polygon covers.
+	``vault/21_exclusion_zones.md``). Pure vertex container: coverage of a bounding
+	box is computed by an infrastructure ``DetectionMask`` that rasterizes the zones
+	per frame, so concave polygons and overlapping zones union correctly.
 	"""
 
 	vertices: tuple[Point2D, ...]
@@ -202,21 +203,6 @@ class Polygon:
 	def __post_init__(self) -> None:
 		if len(self.vertices) < 3:
 			raise ValueError(f"Polygon needs at least 3 vertices, got {len(self.vertices)}.")
-
-	def overlap_fraction(self, bbox: BoundingBox) -> float:
-		"""Fraction of ``bbox``'s area covered by this polygon, in ``[0, 1]``.
-
-		Exact for a convex polygon — Sutherland-Hodgman clipping against the convex
-		box is exact; a concave polygon can over/under-count, so concave zones should
-		be split into convex pieces. We translate the polygon so the box sits at the
-		origin as ``[0, width] x [0, height]`` and reuse the stabilizer's clip, then
-		take the clipped area over the box area.
-		"""
-		shifted = [Point2D(v.x - bbox.x, v.y - bbox.y) for v in self.vertices]
-		clipped = _clip_to_rectangle(shifted, bbox.width, bbox.height)
-		if len(clipped) < 3:
-			return 0.0
-		return min(1.0, _polygon_area(clipped) / (bbox.width * bbox.height))
 
 
 def clipped_overlap_fraction(transform: Transform2D, width: int, height: int) -> float:

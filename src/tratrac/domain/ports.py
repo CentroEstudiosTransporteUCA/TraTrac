@@ -66,6 +66,22 @@ class DetectionObserver(Protocol):
 	def observe(self, detections: list[Detection]) -> None: ...
 
 
+class DetectionMask(Protocol):
+	"""Drops detections that fall inside masked image regions (exclusion zones).
+
+	Applied after detection and ego-motion estimation but BEFORE the detections are
+	mapped into the global frame, so it tests raw-pixel boxes. ``transform`` is the
+	frame's ego-motion pose (raw -> global; identity when stabilization is off): an
+	implementation maps its masked regions back into the raw frame with the inverse
+	and drops detections mostly covered by them, so the zones track the scene under
+	a moving drone. See vault/21_exclusion_zones.md.
+	"""
+
+	def filter(
+		self, detections: list[Detection], transform: Transform2D, frame: Frame
+	) -> list[Detection]: ...
+
+
 class Tracker(Protocol):
 	"""Assigns stable identities to detections across frames."""
 

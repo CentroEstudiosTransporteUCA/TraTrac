@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from tratrac.application.detection_mask import NullDetectionMask
 from tratrac.application.detection_observer import NullDetectionObserver
 from tratrac.application.progress import NullProgressReporter
 from tratrac.application.stabilization import apply_transform
+from tratrac.domain.geometry import Transform2D
 from tratrac.domain.ports import (
+	DetectionMask,
 	DetectionObserver,
 	Detector,
 	EgoMotionEstimator,
@@ -36,6 +39,7 @@ class TrajectoryPipeline:
 		orientation: OrientationEstimator,
 		reporter: ProgressReporter | None = None,
 		detection_observer: DetectionObserver | None = None,
+		detection_mask: DetectionMask | None = None,
 		ego_motion: EgoMotionEstimator | None = None,
 	) -> None:
 		self._video = video
@@ -55,6 +59,10 @@ class TrajectoryPipeline:
 		# Same Null Object treatment: the masked-ORB stabilizer subscribes here to
 		# reuse each frame's detections; every other run gets the silent default.
 		self._detection_observer: DetectionObserver = detection_observer or NullDetectionObserver()
+		# Exclusion zones drop detections in raw pixel space, after ego-motion is
+		# estimated (so zones can be mapped into the current frame) but before the
+		# detections are stabilized. Null Object default => no exclusions.
+		self._detection_mask: DetectionMask = detection_mask or NullDetectionMask()
 
 	def run(self) -> int:
 		"""Process every frame from the (already-open) video.
@@ -78,10 +86,18 @@ class TrajectoryPipeline:
 					# stabilizer) before estimating motion — it masks them out of ORB
 					# feature extraction on this same frame.
 					self._detection_observer.observe(detections)
+					# The frame's ego-motion pose (raw -> global); identity when off.
+					transform = (
+						self._ego_motion.estimate(frame)
+						if self._ego_motion is not None
+						else Transform2D.identity()
+					)
+					# Drop detections inside exclusion zones, in raw pixel space, using
+					# the pose to map each zone into this frame (vault/21). No-op default.
+					detections = self._detection_mask.filter(detections, transform, frame)
 					if self._ego_motion is not None:
 						# Stabilize coordinates, not pixels: map each detection into the
 						# global frame so the tracker associates ego-motion-free boxes.
-						transform = self._ego_motion.estimate(frame)
 						detections = [apply_transform(d, transform) for d in detections]
 					tracked = self._tracker.update(frame, detections)
 					states = self._orientation.estimate(tracked, timestamp)

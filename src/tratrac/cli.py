@@ -24,11 +24,13 @@ from tratrac.application.config import (
 	DetectorConfig,
 	RunConfig,
 )
+from tratrac.application.exclusion import to_global_polygons
 from tratrac.application.orientation import EmaOrientationEstimator
 from tratrac.application.pipeline import TrajectoryPipeline
 from tratrac.domain.exclusion import ExclusionZones
 from tratrac.domain.geometry import Transform2D
 from tratrac.domain.ports import (
+	DetectionMask,
 	DetectionObserver,
 	Detector,
 	EgoMotionEstimator,
@@ -39,10 +41,10 @@ from tratrac.domain.ports import (
 	TransformSink,
 )
 from tratrac.infrastructure.config.toml import load_toml
-from tratrac.infrastructure.detection.masking import MaskingDetector
 from tratrac.infrastructure.detection.rt_detr import RtDetrDetector
 from tratrac.infrastructure.detection.yolov8_visdrone import YoloV8VisDroneDetector
 from tratrac.infrastructure.exclusion.json import load_exclusion_zones
+from tratrac.infrastructure.exclusion.raster import RasterExclusionMask
 from tratrac.infrastructure.export.composite import CompositeTrajectoryExporter
 from tratrac.infrastructure.export.decimating import DecimatingTrajectoryExporter
 from tratrac.infrastructure.export.overlay_video import OverlayVideoExporter
@@ -360,16 +362,17 @@ def process(
 				min_matches=run.ego_motion.min_matches,
 				ransac_threshold=run.ego_motion.ransac_threshold,
 				min_anchor_overlap=run.ego_motion.min_anchor_overlap,
-				# Also mask the static exclusion zones out of ORB feature extraction.
-				exclusion_zones=zones,
 			)
 			detection_observer = ego_motion
 		det: Detector = _build_detector(run.detector, device=run.runtime.device)
+		# Exclusion zones drop detections in raw pixel space inside the pipeline, after
+		# ego-motion is estimated (vault/21). Stage 1: every zone is authored in raw
+		# frame-0 coordinates (identity pose); moving-frame poses arrive with the scout.
+		detection_mask: DetectionMask | None = None
 		if zones is not None:
-			# Drop detections inside the exclusion zones at the detector seam — the one
-			# point where detections are still in raw pixel space (vault/21). Wrapped
-			# below TimedDetector so the EXPORT/timing step counts detect + filter.
-			det = MaskingDetector(det, zones)
+			detection_mask = RasterExclusionMask(
+				to_global_polygons(zones, lambda _frame: Transform2D.identity())
+			)
 		# When we stabilize coordinates ourselves, disable BoT-SORT's own camera-motion
 		# compensation so it does not double-correct the already-stabilized boxes.
 		tracker: Tracker = BoxmotBotSortTracker(
@@ -432,6 +435,7 @@ def process(
 				orientation=orientation,
 				reporter=ConsoleProgressReporter(),
 				detection_observer=detection_observer,
+				detection_mask=detection_mask,
 				ego_motion=pipeline_ego_motion,
 			)
 			n_frames = pipeline.run()

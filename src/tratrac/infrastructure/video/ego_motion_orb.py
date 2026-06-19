@@ -20,11 +20,9 @@ raw, full-resolution frame and nothing is cropped — see vault/05_75_mvp1_9.md.
 
 Feature-based (not intensity ECC) because aerial traffic is dominated by moving
 foreground: explicit correspondences let RANSAC reject moving-vehicle matches. The
-estimator also masks regions out of feature extraction so they cannot bias the
-fit: the current frame's vehicles (it subscribes to the pipeline's detections via
-``observe``, now in *raw* frame coordinates, so the boxes mask the current frame
-directly with no remapping) and any static image-space exclusion zones (raw-pixel
-polygons rasterized once; see vault/21_exclusion_zones.md). SuperPoint+LightGlue
+estimator also masks vehicles out of feature extraction — it subscribes to the
+pipeline's detections (``observe``), which are now in *raw* frame coordinates, so
+the boxes mask the current frame directly with no remapping. SuperPoint+LightGlue
 is the eventual upgrade (``final_polish.md`` item 1).
 """
 
@@ -38,7 +36,6 @@ import numpy as np
 from numpy.typing import NDArray
 
 from tratrac.domain.detection import Detection
-from tratrac.domain.exclusion import ExclusionZones
 from tratrac.domain.frame import Frame
 from tratrac.domain.geometry import Transform2D, clipped_overlap_fraction
 
@@ -98,7 +95,6 @@ class OrbEgoMotionEstimator:
 		min_matches: int,
 		ransac_threshold: float,
 		min_anchor_overlap: float,
-		exclusion_zones: ExclusionZones | None = None,
 	) -> None:
 		if n_features <= 0:
 			raise ValueError(f"n_features must be positive, got {n_features}.")
@@ -125,10 +121,6 @@ class OrbEgoMotionEstimator:
 		# Latest detections fed back by the pipeline (raw frame coordinates), used to
 		# mask vehicles out of the current frame's feature extraction.
 		self._mask_detections: list[Detection] = []
-		# Static image-space exclusion zones masked out of feature extraction, and the
-		# lazily-rasterized 255/0 mask of them (built once, frame size known at first use).
-		self._exclusion_zones = exclusion_zones
-		self._static_mask: NDArray[np.uint8] | None = None
 
 	@property
 	def current_transform(self) -> Transform2D:
@@ -141,7 +133,7 @@ class OrbEgoMotionEstimator:
 	def estimate(self, frame: Frame) -> Transform2D:
 		gray = cv2.cvtColor(frame.pixels, cv2.COLOR_BGR2GRAY)
 		height, width = gray.shape[:2]
-		mask = self._feature_mask(height, width)
+		mask = self._vehicle_mask(height, width)
 		keypoints, descriptors = self._orb.detectAndCompute(gray, mask)
 		has_features = descriptors is not None and len(keypoints) >= self._min_matches
 
@@ -168,21 +160,16 @@ class OrbEgoMotionEstimator:
 		self._anchor_keypoints = keypoints
 		self._anchor_descriptors = descriptors
 
-	def _feature_mask(self, height: int, width: int) -> NDArray[np.uint8] | None:
-		"""Build an ORB feature mask (255 = keep, 0 = ignore).
+	def _vehicle_mask(self, height: int, width: int) -> NDArray[np.uint8] | None:
+		"""Build an ORB feature mask (255 = keep, 0 = ignore) excluding vehicles.
 
-		Zeros two kinds of region so neither biases the ego-motion fit: the static
-		exclusion zones (raw-pixel polygons, rasterized once and cached) and the
-		current frame's detected vehicles. ``None`` (no masking) only when there are
-		neither zones nor detections. Detections are in raw frame coordinates (the
-		detector runs on the raw frame), so the boxes mask the current frame directly.
+		``None`` (no masking) when there are no detections yet. Detections are in raw
+		frame coordinates (the detector runs on the raw frame), so the boxes mask the
+		current frame directly — no transform.
 		"""
-		static = self._static_exclusion_mask(height, width)
-		if static is None and not self._mask_detections:
+		if not self._mask_detections:
 			return None
-		mask: NDArray[np.uint8] = (
-			static.copy() if static is not None else np.full((height, width), 255, dtype=np.uint8)
-		)
+		mask: NDArray[np.uint8] = np.full((height, width), 255, dtype=np.uint8)
 		for detection in self._mask_detections:
 			box = detection.bbox
 			x0 = max(0, math.floor(box.x))
@@ -192,22 +179,6 @@ class OrbEgoMotionEstimator:
 			if x1 > x0 and y1 > y0:
 				mask[y0:y1, x0:x1] = 0
 		return mask
-
-	def _static_exclusion_mask(self, height: int, width: int) -> NDArray[np.uint8] | None:
-		"""The 255/0 mask of the static exclusion zones, rasterized once and cached.
-
-		``None`` when there are no zones. The zones are raw-pixel polygons fixed for
-		the whole clip, so the raster is frame-independent (size known at first use).
-		"""
-		if self._exclusion_zones is None or not self._exclusion_zones.zones:
-			return None
-		if self._static_mask is None:
-			mask: NDArray[np.uint8] = np.full((height, width), 255, dtype=np.uint8)
-			for zone in self._exclusion_zones.zones:
-				pts = np.array([(v.x, v.y) for v in zone.vertices], dtype=np.int32)
-				cv2.fillPoly(mask, [pts], 0)
-			self._static_mask = mask
-		return self._static_mask
 
 	def _fit_against_anchor(
 		self, keypoints: Any, descriptors: NDArray[np.uint8]
