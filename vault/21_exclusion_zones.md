@@ -83,23 +83,29 @@ A per-scene JSON file referenced from config (`analysis.exclusion_zones`, a
 coordinates, ≥3 per polygon. Bad path / malformed JSON / too-few vertices fail
 fast in the CLI before the costly video open.
 
-## Moving drone: authoring reference frames (the scout — see §Stage 2)
+## Moving drone: authoring reference frames via the scout
 
 For a moving drone the operator can't predict which frames to draw on, and a zone
 drawn on frame 0 isn't visible once the drone pans away. The reference frames are
 the **ORB keyframe anchors** (overlap-guaranteed to tile the traversed scene). A
-headless **scout pass** (`tratrac-scout`) discovers them: it runs ORB only,
-persists the per-frame ego-motion schedule (reusing `CsvTransformSink`), and emits
-each anchor frame as a PNG plus a manifest. The operator draws zones over those
-PNGs (`reference_frame` = the anchor index). The real run then **replays** the
-recorded schedule (`ReplayEgoMotionEstimator`) so its poses match the scout
-exactly — a correctness requirement, since zones placed with scout poses must meet
-detections placed with the same poses. (Scout + replay land in the second stage of
-this work.)
+headless **scout pass** (`tratrac-scout VIDEO --out-dir DIR`) discovers them: it
+runs ORB only (via the estimator's `anchor_observer` callback), persists the
+per-frame ego-motion schedule to `transforms.csv` (reusing `CsvTransformSink`),
+and emits each anchor frame as a PNG plus `refs_manifest.json`. The operator draws
+zones over those PNGs, tagging each with `reference_frame` = the anchor index.
+
+The real run sets `ego_motion.transforms = transforms.csv`, so it **replays** the
+recorded schedule (`ReplayEgoMotionEstimator`, reading the CSV via
+`read_transforms`) instead of recomputing ORB — its poses then match the scout
+exactly. That is a **correctness requirement**: zones are converted to global with
+the scout's `pose_R` and must meet detections placed with the same `pose_N`. The
+ORB parameters are unused on a replay run.
 
 ORB feature-masking of zones is **not** done: in a moving drone the excluded
 regions are static ground, exactly the features stabilization needs — masking them
-would hurt the fit. Vehicle-masking via `observe()` is unaffected.
+would hurt the fit. Vehicle-masking via `observe()` is unaffected. The scout itself
+runs ORB with vehicles unmasked (it has no detector); RANSAC rejects moving-vehicle
+matches and moving-drone footage is ground-dominated, so this is acceptable.
 
 ## Files
 
@@ -111,5 +117,10 @@ would hurt the fit. Vehicle-masking via `observe()` is unaffected.
 - `application/pipeline.py` — applies the mask post-estimate, pre-stabilize.
 - `infrastructure/exclusion/raster.py` — `RasterExclusionMask` (fillPoly union + coverage).
 - `infrastructure/exclusion/json.py` — sidecar loader.
-- `application/config.py` — `AnalysisConfig` + `analysis.exclusion_zones`.
-- `cli.py` — `--exclusion-zones`, load + existence check, builds `RasterExclusionMask`.
+- `infrastructure/video/ego_motion_orb.py` — `anchor_observer` callback (anchor events).
+- `infrastructure/video/ego_motion_replay.py` — `ReplayEgoMotionEstimator`.
+- `infrastructure/transform/csv.py` — `read_transforms` (the replay/zone-pose source).
+- `infrastructure/scout/` — `run_scout` + `ReferenceFrame`/`write_manifest`; `cli_scout.py` (`tratrac-scout`).
+- `application/config.py` — `AnalysisConfig` + `analysis.exclusion_zones`; `ego_motion.transforms`.
+- `cli.py` — `--exclusion-zones`/`--transforms`, existence checks, `_pose_for`, builds
+  `RasterExclusionMask` and the replay/ORB estimator.

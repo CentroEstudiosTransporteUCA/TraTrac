@@ -35,6 +35,7 @@ from tratrac.domain.ports import (
 	Detector,
 	EgoMotionEstimator,
 	OrientationEstimator,
+	StabilizationTransformSource,
 	TimingSink,
 	Tracker,
 	TrajectoryExporter,
@@ -58,9 +59,10 @@ from tratrac.infrastructure.timing.decorators import (
 	TimedTracker,
 )
 from tratrac.infrastructure.tracking.boxmot_bot_sort import BoxmotBotSortTracker
-from tratrac.infrastructure.transform.csv import CsvTransformSink
+from tratrac.infrastructure.transform.csv import CsvTransformSink, read_transforms
 from tratrac.infrastructure.transform.recording import RecordingEgoMotionEstimator
 from tratrac.infrastructure.video.ego_motion_orb import OrbEgoMotionEstimator
+from tratrac.infrastructure.video.ego_motion_replay import ReplayEgoMotionEstimator
 from tratrac.infrastructure.video.opencv import OpenCvVideoSource
 
 app = typer.Typer(
@@ -167,6 +169,15 @@ def process(
 			"(ego_motion.min_anchor_overlap).",
 		),
 	] = None,
+	transforms: Annotated[
+		Path | None,
+		typer.Option(
+			"--transforms",
+			dir_okay=False,
+			help='Scout transform CSV to REPLAY instead of computing ORB; "" computes live '
+			"(ego_motion.transforms). Required for moving-frame exclusion zones.",
+		),
+	] = None,
 	det_thresh: Annotated[
 		float | None,
 		typer.Option("--det-thresh", help="Tracker detection threshold (tracker.det_thresh)."),
@@ -262,6 +273,7 @@ def process(
 		"ego_motion.min_matches": orb_min_matches,
 		"ego_motion.ransac_threshold": orb_ransac_threshold,
 		"ego_motion.min_anchor_overlap": min_anchor_overlap,
+		"ego_motion.transforms": transforms,
 		"tracker.det_thresh": det_thresh,
 		"orientation.smoothing_window": smoothing_window,
 		"export.timestep_precision": timestep_precision,
@@ -304,6 +316,23 @@ def process(
 			zones = load_exclusion_zones(run.analysis.exclusion_zones)
 		except (ValueError, OSError) as exc:
 			raise typer.BadParameter(str(exc)) from exc
+	# Load the ego-motion schedule to replay, if requested. A cheap CSV read that also
+	# resolves the reference-frame poses for moving exclusion zones (vault/21).
+	transforms_map: dict[int, Transform2D] | None = None
+	if run.ego_motion.transforms is not None:
+		if not run.ego_motion.transforms.is_file():
+			raise typer.BadParameter(
+				f"ego_motion.transforms {run.ego_motion.transforms} does not exist or is not a file."
+			)
+		try:
+			transforms_map = read_transforms(run.ego_motion.transforms)
+		except (ValueError, OSError) as exc:
+			raise typer.BadParameter(str(exc)) from exc
+	# Convert each zone to the global frame once, using its reference frame's pose
+	# (identity for frame 0 / a static run); the mask maps them back per raw frame.
+	detection_mask: DetectionMask | None = None
+	if zones is not None:
+		detection_mask = RasterExclusionMask(to_global_polygons(zones, _pose_for(transforms_map)))
 	if (
 		run.options.timing_csv is not None
 		and run.export.out.resolve() == run.options.timing_csv.resolve()
@@ -351,28 +380,28 @@ def process(
 		# Coordinate stabilization (MVP1.9, vault/05_75_mvp1_9.md): the detector and
 		# tracker run on the raw frame; the ego-motion transform is applied to the
 		# detections (not the pixels) inside the pipeline. None when stabilization is
-		# off. The estimator is also the DetectionObserver — it masks the raw-frame
-		# detections out of its own ORB feature extraction.
-		ego_motion: OrbEgoMotionEstimator | None = None
+		# off. Live ORB is also the DetectionObserver (masking vehicles out of its own
+		# feature extraction); a replay estimator just serves the scout's schedule.
+		ego_motion: EgoMotionEstimator | None = None
+		stabilizer: StabilizationTransformSource | None = None
 		detection_observer: DetectionObserver | None = None
 		if run.ego_motion.enabled:
-			ego_motion = OrbEgoMotionEstimator(
-				n_features=run.ego_motion.n_features,
-				match_ratio=run.ego_motion.match_ratio,
-				min_matches=run.ego_motion.min_matches,
-				ransac_threshold=run.ego_motion.ransac_threshold,
-				min_anchor_overlap=run.ego_motion.min_anchor_overlap,
-			)
-			detection_observer = ego_motion
+			if transforms_map is not None:
+				replay = ReplayEgoMotionEstimator(transforms_map)
+				ego_motion = replay
+				stabilizer = replay
+			else:
+				orb = OrbEgoMotionEstimator(
+					n_features=run.ego_motion.n_features,
+					match_ratio=run.ego_motion.match_ratio,
+					min_matches=run.ego_motion.min_matches,
+					ransac_threshold=run.ego_motion.ransac_threshold,
+					min_anchor_overlap=run.ego_motion.min_anchor_overlap,
+				)
+				ego_motion = orb
+				stabilizer = orb
+				detection_observer = orb
 		det: Detector = _build_detector(run.detector, device=run.runtime.device)
-		# Exclusion zones drop detections in raw pixel space inside the pipeline, after
-		# ego-motion is estimated (vault/21). Stage 1: every zone is authored in raw
-		# frame-0 coordinates (identity pose); moving-frame poses arrive with the scout.
-		detection_mask: DetectionMask | None = None
-		if zones is not None:
-			detection_mask = RasterExclusionMask(
-				to_global_polygons(zones, lambda _frame: Transform2D.identity())
-			)
 		# When we stabilize coordinates ourselves, disable BoT-SORT's own camera-motion
 		# compensation so it does not double-correct the already-stabilized boxes.
 		tracker: Tracker = BoxmotBotSortTracker(
@@ -403,7 +432,7 @@ def process(
 						trail_length=run.export.video_trail,
 						# Map stabilized coordinates back onto the raw frame; identity
 						# (default) when stabilization is off.
-						transform_source=_overlay_transform_source(ego_motion),
+						transform_source=_overlay_transform_source(stabilizer),
 					),
 				]
 			)
@@ -449,13 +478,41 @@ _COARSE_TIMESTEP_WARNING_SECONDS = 0.5
 
 
 def _overlay_transform_source(
-	ego_motion: OrbEgoMotionEstimator | None,
+	stabilizer: StabilizationTransformSource | None,
 ) -> Callable[[], Transform2D] | None:
 	"""A callable yielding the current stabilization transform for the overlay video,
 	or ``None`` when stabilization is off (the overlay then uses identity)."""
-	if ego_motion is None:
+	if stabilizer is None:
 		return None
-	return lambda: ego_motion.current_transform
+	return lambda: stabilizer.current_transform
+
+
+def _pose_for(
+	transforms_map: dict[int, Transform2D] | None,
+) -> Callable[[int], Transform2D]:
+	"""Resolve an exclusion zone's reference-frame pose (raw -> global).
+
+	With a replay schedule, every reference frame's pose comes from it. Without one,
+	only static (frame-0) zones are meaningful; a ``reference_frame > 0`` then needs
+	the scout's transform CSV and is rejected.
+	"""
+
+	def pose(reference_frame: int) -> Transform2D:
+		if transforms_map is not None:
+			resolved = transforms_map.get(reference_frame)
+			if resolved is None:
+				raise typer.BadParameter(
+					f"exclusion zone reference_frame {reference_frame} is not in the transforms CSV."
+				)
+			return resolved
+		if reference_frame != 0:
+			raise typer.BadParameter(
+				f"exclusion zone reference_frame {reference_frame} needs ego_motion.transforms "
+				"(a scout transforms.csv) to resolve its pose."
+			)
+		return Transform2D.identity()
+
+	return pose
 
 
 @contextmanager

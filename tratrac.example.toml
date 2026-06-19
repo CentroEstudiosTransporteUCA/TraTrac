@@ -41,6 +41,8 @@ match_ratio = 0.75                # Lowe ratio test, (0, 1); lower = stricter ma
 min_matches = 10                  # minimum good matches to fit a transform (else assume no motion)
 ransac_threshold = 3.0            # RANSAC reprojection threshold in pixels
 min_anchor_overlap = 0.6          # re-anchor the keyframe when <this fraction stays in view, (0, 1)
+transforms = ""                   # "" = compute ORB live; else a scout transforms.csv to REPLAY
+                                  # (required for moving-frame exclusion zones; ORB params above unused)
 
 [tracker]
 det_thresh = 0.1                  # BoT-SORT detection threshold (kept below detector.conf)

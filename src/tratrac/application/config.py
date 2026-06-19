@@ -129,6 +129,10 @@ class EgoMotionConfig:
 	# Minimum fraction of the keyframe anchor still visible before re-anchoring
 	# (see vault/05_75_mvp1_9.md). Only meaningful when ``enabled``.
 	min_anchor_overlap: float
+	# Optional path to a scout's transform CSV to REPLAY instead of recomputing ORB
+	# (vault/21_exclusion_zones.md). ``None`` = compute live. When set, the ORB
+	# parameters above are unused. Only meaningful when ``enabled``.
+	transforms: Path | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -490,7 +494,7 @@ def _resolve_ego_motion(resolver: _Resolver) -> EgoMotionConfig:
 	enabled = resolver.required_bool("ego_motion.enabled")
 	if not enabled:
 		# Disabled (or the toggle itself was missing — already reported): the ORB
-		# parameters are irrelevant. Placeholder zeros; never read downstream.
+		# parameters and replay source are irrelevant. Placeholder zeros/None.
 		return EgoMotionConfig(
 			enabled=False,
 			n_features=0,
@@ -498,6 +502,21 @@ def _resolve_ego_motion(resolver: _Resolver) -> EgoMotionConfig:
 			min_matches=0,
 			ransac_threshold=0.0,
 			min_anchor_overlap=0.0,
+			transforms=None,
+		)
+
+	# Replay a recorded schedule instead of computing ORB: the ORB parameters are
+	# then unused (the poses are read back from the CSV). ``""`` = compute live.
+	transforms = resolver.toggleable_path("ego_motion.transforms")
+	if transforms is not None:
+		return EgoMotionConfig(
+			enabled=True,
+			n_features=0,
+			match_ratio=0.0,
+			min_matches=0,
+			ransac_threshold=0.0,
+			min_anchor_overlap=0.0,
+			transforms=transforms,
 		)
 
 	n_features = resolver.required_int("ego_motion.n_features")
@@ -522,6 +541,7 @@ def _resolve_ego_motion(resolver: _Resolver) -> EgoMotionConfig:
 		min_matches=min_matches,
 		ransac_threshold=ransac_threshold,
 		min_anchor_overlap=min_anchor_overlap,
+		transforms=None,
 	)
 
 

@@ -183,6 +183,7 @@ class TestEgoMotion:
 		"min_matches": 10,
 		"ransac_threshold": 3.0,
 		"min_anchor_overlap": 0.6,
+		"transforms": "",
 	}
 
 	def test_disabled_needs_no_orb_params(self, tmp_path: Path) -> None:
@@ -213,6 +214,31 @@ class TestEgoMotion:
 		assert "ego_motion.min_matches is missing." in problems
 		assert "ego_motion.ransac_threshold is missing." in problems
 		assert "ego_motion.min_anchor_overlap is missing." in problems
+
+	def test_replay_transforms_resolves_without_orb_params(self, tmp_path: Path) -> None:
+		# A replay source makes the ORB params unnecessary (poses are read back).
+		run = RunConfig.resolve(
+			_complete(
+				tmp_path,
+				ego_motion={"enabled": True, "transforms": str(tmp_path / "transforms.csv")},
+			),
+			{},
+		)
+		assert run.ego_motion.enabled is True
+		assert run.ego_motion.transforms == tmp_path / "transforms.csv"
+
+	def test_transforms_requires_enabled(self, tmp_path: Path) -> None:
+		# A replay source with stabilization off is a contradictory spec: transforms is
+		# only read when enabled, so it is silently dropped — assert it is None.
+		run = RunConfig.resolve(
+			_complete(
+				tmp_path,
+				ego_motion={"enabled": False, "transforms": str(tmp_path / "transforms.csv")},
+			),
+			{},
+		)
+		assert run.ego_motion.enabled is False
+		assert run.ego_motion.transforms is None
 
 	def test_out_of_range_anchor_overlap_is_an_error(self, tmp_path: Path) -> None:
 		bad = {**self._ENABLED, "min_anchor_overlap": 1.5}
@@ -315,6 +341,7 @@ class TestTransformCsv:
 		"min_matches": 10,
 		"ransac_threshold": 3.0,
 		"min_anchor_overlap": 0.6,
+		"transforms": "",
 	}
 
 	def test_off_resolves_to_none(self, tmp_path: Path) -> None:
