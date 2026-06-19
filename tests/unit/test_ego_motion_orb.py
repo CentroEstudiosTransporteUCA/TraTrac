@@ -94,6 +94,36 @@ class TestOrbEgoMotionEstimator:
 
 		assert transform == Transform2D.identity()
 
+	def test_anchor_observer_fires_on_first_frame_with_identity(self) -> None:
+		anchors: list[tuple[int, Transform2D]] = []
+		estimator = OrbEgoMotionEstimator(
+			n_features=2000,
+			match_ratio=0.75,
+			min_matches=10,
+			ransac_threshold=3.0,
+			min_anchor_overlap=0.6,
+			anchor_observer=lambda index, pose: anchors.append((index, pose)),
+		)
+		estimator.estimate(Frame(index=0, pixels=_textured_image()))
+		assert anchors == [(0, Transform2D.identity())]
+
+	def test_anchor_observer_fires_on_reanchor(self) -> None:
+		# A high overlap threshold forces a re-anchor as soon as the frame shifts.
+		anchors: list[tuple[int, Transform2D]] = []
+		estimator = OrbEgoMotionEstimator(
+			n_features=2000,
+			match_ratio=0.75,
+			min_matches=10,
+			ransac_threshold=3.0,
+			min_anchor_overlap=0.99,
+			anchor_observer=lambda index, pose: anchors.append((index, pose)),
+		)
+		base = _textured_image()
+		estimator.estimate(Frame(index=0, pixels=base))
+		estimator.estimate(Frame(index=1, pixels=_shifted(base, 20.0, 0.0)))
+		indices = [index for index, _ in anchors]
+		assert indices == [0, 1]  # first frame, then a re-anchor at frame 1
+
 	def test_mask_over_empty_region_still_recovers_shift(self) -> None:
 		# A small masked corner leaves ample background features elsewhere, so the
 		# known shift is still recovered — masking is targeted, not all-or-nothing.
