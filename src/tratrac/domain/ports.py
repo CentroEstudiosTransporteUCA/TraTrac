@@ -161,6 +161,20 @@ class TimingSink(Protocol):
 	def record(self, timing: StepTiming) -> None: ...
 
 
+class TrackSink(Protocol):
+	"""Receives each frame's tracked detections while a video is processed.
+
+	One call per processed frame, with the absolute ``frame_index`` and that frame's
+	tracked detections (in the tracker's coordinate frame — stabilized pixels when
+	ego-motion is on). Adapters persist them as the "export B" track-observation file
+	(the extended internal format of the dual-export architecture), which the offline
+	``tratrac-smooth`` pass reads to run the Kalman/RTS smoother. Streaming, like
+	``TransformSink``; see vault/22_smoothing.md.
+	"""
+
+	def record(self, frame_index: int, tracked: list[TrackedDetection]) -> None: ...
+
+
 class TransformSink(Protocol):
 	"""Receives each frame's ego-motion transform while a video is processed.
 
