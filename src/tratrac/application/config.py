@@ -64,6 +64,9 @@ class InputConfig:
 	config replays without any positional argument."""
 
 	video: Path
+	# Cap the processing cadence to this many frames per second (decode-time
+	# decimation, see vault/18_timestep_precision.md). ``0.0`` = process every frame.
+	process_fps: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -215,6 +218,9 @@ class RunConfig:
 		resolver = _Resolver(file_values, cli_overrides)
 
 		video = resolver.required_path("input.video")
+		process_fps = resolver.required_float("input.process_fps")
+		if resolver.present("input.process_fps") and process_fps < 0.0:
+			resolver.problems.append("input.process_fps must be >= 0 (0 = every frame).")
 
 		detector_name = _resolve_detector_name(resolver)
 		checkpoint = resolver.required_str("detector.checkpoint")
@@ -262,7 +268,7 @@ class RunConfig:
 			raise ConfigError(resolver.problems)
 
 		return cls(
-			input=InputConfig(video=video),
+			input=InputConfig(video=video, process_fps=process_fps),
 			detector=DetectorConfig(
 				name=detector_name, checkpoint=checkpoint, conf=conf, filename=filename
 			),

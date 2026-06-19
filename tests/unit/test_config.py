@@ -27,7 +27,7 @@ _METADATA = VideoMetadata(width=1920, height=1080, fps=30.0, total_frames=100)
 def _complete(tmp_path: Path, **overrides: Any) -> dict[str, Any]:
 	"""A complete, valid file-values mapping; ``overrides`` patch whole sections."""
 	file_values: dict[str, Any] = {
-		"input": {"video": str(tmp_path / "v.mp4")},
+		"input": {"video": str(tmp_path / "v.mp4"), "process_fps": 0.0},
 		"detector": {
 			"name": "yolov8_visdrone",
 			"checkpoint": "repo/model",
@@ -78,6 +78,28 @@ class TestResolveComplete:
 		assert run.options.timing_csv is None
 		assert run.window.start_seconds is None
 		assert run.export.timestep_precision == 0.0
+
+
+class TestProcessFps:
+	def test_zero_means_every_frame(self, tmp_path: Path) -> None:
+		assert RunConfig.resolve(_complete(tmp_path), {}).input.process_fps == 0.0
+
+	def test_positive_resolves(self, tmp_path: Path) -> None:
+		file_values = _complete(tmp_path)
+		file_values["input"]["process_fps"] = 10.0
+		assert RunConfig.resolve(file_values, {}).input.process_fps == 10.0
+
+	def test_negative_is_an_error(self, tmp_path: Path) -> None:
+		file_values = _complete(tmp_path)
+		file_values["input"]["process_fps"] = -1.0
+		with pytest.raises(ConfigError, match="process_fps"):
+			RunConfig.resolve(file_values, {})
+
+	def test_missing_is_an_error(self, tmp_path: Path) -> None:
+		file_values = _complete(tmp_path)
+		del file_values["input"]["process_fps"]
+		with pytest.raises(ConfigError, match=r"input\.process_fps is missing"):
+			RunConfig.resolve(file_values, {})
 
 
 class TestPrecedence:

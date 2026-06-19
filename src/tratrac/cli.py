@@ -88,6 +88,14 @@ def process(
 			help="Persisted run config (TOML). Supplies every value not given as a flag.",
 		),
 	] = None,
+	process_fps: Annotated[
+		float | None,
+		typer.Option(
+			"--process-fps",
+			help="Cap processing to ~N frames/sec; 0 = every frame (input.process_fps). "
+			"Fewer frames = faster but more tracker ID switches.",
+		),
+	] = None,
 	out: Annotated[
 		Path | None,
 		typer.Option("--out", "-o", dir_okay=False, help="Output .trj path (export.out)."),
@@ -257,6 +265,7 @@ def process(
 	"""Process a video into an SSAM .trj trajectory file."""
 	overrides: dict[str, Any] = {
 		"input.video": video,
+		"input.process_fps": process_fps,
 		"export.out": out,
 		"detector.name": detector.value if detector is not None else None,
 		"detector.conf": conf,
@@ -358,6 +367,16 @@ def process(
 			"be too sparse for surrogate-safety metrics.",
 			err=True,
 		)
+	if run.input.process_fps > 0.0 and run.export.timestep_precision > 0.0:
+		processing_interval = 1.0 / run.input.process_fps
+		if processing_interval > run.export.timestep_precision + 1e-9:
+			typer.echo(
+				f"WARNING: export.timestep_precision {run.export.timestep_precision}s is finer than "
+				f"input.process_fps allows (~{processing_interval:.3f}s between processed frames); "
+				"the export can only emit frames that were processed, so it effectively runs at the "
+				"processing rate.",
+				err=True,
+			)
 	_prepare_output_path(run.export.out, force=run.options.force)
 	if run.options.timing_csv is not None:
 		_prepare_output_path(run.options.timing_csv, force=run.options.force)
@@ -370,6 +389,7 @@ def process(
 		run.input.video,
 		start_seconds=run.window.start_seconds,
 		end_seconds=run.window.end_seconds,
+		process_fps=run.input.process_fps or None,
 	) as source:
 		try:
 			scale = run.calibration.resolve_scale(source.metadata)
@@ -517,9 +537,13 @@ def _pose_for(
 
 @contextmanager
 def _open_video(
-	video: Path, *, start_seconds: float | None, end_seconds: float | None
+	video: Path,
+	*,
+	start_seconds: float | None,
+	end_seconds: float | None,
+	process_fps: float | None,
 ) -> Iterator[OpenCvVideoSource]:
-	"""Open the (optionally windowed) video source.
+	"""Open the (optionally windowed, optionally rate-capped) video source.
 
 	Translates range ``ValueError``s raised while opening — e.g. a start past the
 	video's end — into a clean ``typer.BadParameter``. Exceptions from the
@@ -527,7 +551,12 @@ def _open_video(
 	"""
 	with ExitStack() as stack:
 		try:
-			source = OpenCvVideoSource(video, start_seconds=start_seconds, end_seconds=end_seconds)
+			source = OpenCvVideoSource(
+				video,
+				start_seconds=start_seconds,
+				end_seconds=end_seconds,
+				process_fps=process_fps,
+			)
 			stack.enter_context(source)
 		except ValueError as exc:
 			raise typer.BadParameter(str(exc)) from exc

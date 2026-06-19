@@ -176,7 +176,7 @@ class TestOpenVideo:
 		monkeypatch.setattr(cli, "OpenCvVideoSource", _Boom)
 		with (
 			pytest.raises(typer.BadParameter, match="video duration"),
-			_open_video(tmp_path / "v.mp4", start_seconds=99.0, end_seconds=None),
+			_open_video(tmp_path / "v.mp4", start_seconds=99.0, end_seconds=None, process_fps=None),
 		):
 			pass
 
@@ -197,6 +197,8 @@ class TestOpenVideo:
 				events.append("exit")
 
 		monkeypatch.setattr(cli, "OpenCvVideoSource", _Fake)
-		with _open_video(tmp_path / "v.mp4", start_seconds=None, end_seconds=None) as source:
+		with _open_video(
+			tmp_path / "v.mp4", start_seconds=None, end_seconds=None, process_fps=None
+		) as source:
 			events.append(type(source).__name__)
 		assert events == ["enter", "_Fake", "exit"]

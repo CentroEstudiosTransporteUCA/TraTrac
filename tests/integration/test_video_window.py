@@ -49,3 +49,23 @@ def test_no_window_reads_from_zero(synthetic_video: Path) -> None:
 	# mp4v may drop the final frame; require a contiguous run starting at 0.
 	assert indices[0] == 0
 	assert len(indices) >= _N_FRAMES - 1
+
+
+def test_process_fps_decimates_decode(synthetic_video: Path) -> None:
+	# 10 fps source, cap to 5 fps -> keep every other absolute index, and report the
+	# decimated count as total_frames (frames this run will process).
+	with OpenCvVideoSource(synthetic_video, process_fps=5.0) as source:
+		assert source.metadata.total_frames == 5
+		indices = [frame.index for frame in source.frames()]
+	# frame 8 is the last kept grid point; frame 9 (last) may be dropped by mp4v anyway.
+	assert indices[:4] == [0, 2, 4, 6]
+	assert indices[-1] in (6, 8)
+
+
+def test_process_fps_composes_with_window(synthetic_video: Path) -> None:
+	# Window 0.2..0.9s (frames 2..9) capped to 5 fps -> keep 2, 4, 6, 8.
+	with OpenCvVideoSource(
+		synthetic_video, start_seconds=0.2, end_seconds=0.9, process_fps=5.0
+	) as src:
+		indices = [frame.index for frame in src.frames()]
+	assert indices[:3] == [2, 4, 6]
