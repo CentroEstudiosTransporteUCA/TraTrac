@@ -47,6 +47,17 @@ class EgoMotionEstimator(Protocol):
 	def estimate(self, frame: Frame) -> Transform2D: ...
 
 
+class StabilizationTransformSource(Protocol):
+	"""Exposes the latest ego-motion transform (current frame -> global).
+
+	Both the live ORB estimator and the replay estimator publish this so the overlay
+	video can map stabilized coordinates back onto the raw frame. Read-only view,
+	distinct from ``EgoMotionEstimator`` (which the pipeline drives)."""
+
+	@property
+	def current_transform(self) -> Transform2D: ...
+
+
 class Detector(Protocol):
 	"""Detects vehicles in a single frame."""
 

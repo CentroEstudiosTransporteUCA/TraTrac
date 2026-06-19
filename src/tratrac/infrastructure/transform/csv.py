@@ -14,11 +14,36 @@ from pathlib import Path
 from types import TracebackType
 from typing import TextIO
 
+from tratrac.domain.geometry import Transform2D
 from tratrac.domain.stabilization import FrameTransform
 
 # Linear part (a, b, c, d) then translation (tx, ty). Consumers read by name, so
 # the column order is free; this groups the 2x2 ahead of the offset.
 _HEADER = ("frame", "a", "b", "c", "d", "tx", "ty")
+
+
+def read_transforms(path: Path) -> dict[int, Transform2D]:
+	"""Read a transform CSV back into a ``{frame_index: Transform2D}`` map.
+
+	The inverse of ``CsvTransformSink``: lets a replay estimator and the exclusion
+	mask reuse the schedule a scout pass recorded. Raises ``FileNotFoundError`` if
+	absent and ``ValueError`` on a malformed row (re-wrapped with the file path).
+	"""
+	transforms: dict[int, Transform2D] = {}
+	with path.open(newline="") as handle:
+		for row in csv.DictReader(handle):
+			try:
+				transforms[int(row["frame"])] = Transform2D(
+					a=float(row["a"]),
+					b=float(row["b"]),
+					tx=float(row["tx"]),
+					c=float(row["c"]),
+					d=float(row["d"]),
+					ty=float(row["ty"]),
+				)
+			except (KeyError, TypeError, ValueError) as exc:
+				raise ValueError(f"{path} is not a valid transform CSV: {exc}") from exc
+	return transforms
 
 
 class CsvTransformSink:
