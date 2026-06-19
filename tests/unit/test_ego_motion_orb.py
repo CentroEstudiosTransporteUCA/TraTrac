@@ -13,8 +13,9 @@ import pytest
 from numpy.typing import NDArray
 
 from tratrac.domain.detection import Detection, VehicleClass
+from tratrac.domain.exclusion import ExclusionZones
 from tratrac.domain.frame import Frame
-from tratrac.domain.geometry import BoundingBox, Transform2D
+from tratrac.domain.geometry import BoundingBox, Point2D, Polygon, Transform2D
 from tratrac.infrastructure.video.ego_motion_orb import OrbEgoMotionEstimator, _AnchorChain
 
 
@@ -39,13 +40,31 @@ def _shifted(image: NDArray[np.uint8], tx: float, ty: float) -> NDArray[np.uint8
 	return shifted
 
 
-def _make_estimator(min_anchor_overlap: float = 0.5) -> OrbEgoMotionEstimator:
+def _make_estimator(
+	min_anchor_overlap: float = 0.5, exclusion_zones: ExclusionZones | None = None
+) -> OrbEgoMotionEstimator:
 	return OrbEgoMotionEstimator(
 		n_features=2000,
 		match_ratio=0.75,
 		min_matches=10,
 		ransac_threshold=3.0,
 		min_anchor_overlap=min_anchor_overlap,
+		exclusion_zones=exclusion_zones,
+	)
+
+
+def _full_frame_zone() -> ExclusionZones:
+	return ExclusionZones(
+		zones=(
+			Polygon(
+				vertices=(
+					Point2D(0.0, 0.0),
+					Point2D(200.0, 0.0),
+					Point2D(200.0, 200.0),
+					Point2D(0.0, 200.0),
+				)
+			),
+		)
 	)
 
 
@@ -89,6 +108,18 @@ class TestOrbEgoMotionEstimator:
 		estimator = _make_estimator()
 		estimator.estimate(Frame(index=0, pixels=base))
 		estimator.observe([_vehicle(0.0, 0.0, 200.0, 200.0)])
+
+		transform = estimator.estimate(Frame(index=1, pixels=_shifted(base, 7.0, -4.0)))
+
+		assert transform == Transform2D.identity()
+
+	def test_full_frame_exclusion_zone_suppresses_all_features(self) -> None:
+		# A static exclusion zone covering the whole frame masks every pixel from ORB
+		# even with NO detections observed, so the next frame yields no features to
+		# match -> carry forward. Proves the static polygon mask reaches the extractor.
+		base = _textured_image()
+		estimator = _make_estimator(exclusion_zones=_full_frame_zone())
+		estimator.estimate(Frame(index=0, pixels=base))
 
 		transform = estimator.estimate(Frame(index=1, pixels=_shifted(base, 7.0, -4.0)))
 
