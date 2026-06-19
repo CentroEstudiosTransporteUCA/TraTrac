@@ -60,6 +60,14 @@ transform_csv = ""                # "" = off; else a per-frame ego-motion transf
 start = ""                        # "" = clip start; else HH:MM:SS(.ms) / MM:SS / SS
 end = ""                          # "" = clip end
 
+[analysis]
+# Image-space "do-not-analyze" regions (see vault/21_exclusion_zones.md). A sidecar
+# JSON of pixel polygons; detections whose bbox is >50% inside any polygon are dropped
+# before tracking, and the polygons are masked out of ORB ego-motion features. Best for
+# static / near-static cameras: the polygons are screen-fixed, so a moving drone would
+# slide them off the regions they were drawn over.
+exclusion_zones = ""              # "" = no exclusions; else a path to a zones .json
+
 [run]
 force = false                     # true = overwrite existing outputs without prompting
 timing_csv = ""                   # "" = profiling off; else a CSV path for per-frame timings

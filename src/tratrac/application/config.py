@@ -166,6 +166,16 @@ class WindowConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class AnalysisConfig:
+	"""What the run analyzes. ``exclusion_zones`` is a sidecar JSON path of
+	image-space polygons whose detections are dropped before tracking (and masked
+	out of ORB ego-motion features); ``None`` = no exclusions. See
+	vault/21_exclusion_zones.md."""
+
+	exclusion_zones: Path | None
+
+
+@dataclass(frozen=True, slots=True)
 class RunOptionsConfig:
 	force: bool
 	timing_csv: Path | None  # None = profiling off
@@ -184,6 +194,7 @@ class RunConfig:
 	orientation: OrientationConfig
 	export: ExportConfig
 	window: WindowConfig
+	analysis: AnalysisConfig
 	options: RunOptionsConfig
 
 	@classmethod
@@ -238,6 +249,8 @@ class RunConfig:
 		)
 		_validate_window(window, resolver)
 
+		exclusion_zones = resolver.toggleable_path("analysis.exclusion_zones")
+
 		force = resolver.required_bool("run.force")
 		timing_csv = resolver.toggleable_path("run.timing_csv")
 
@@ -262,6 +275,7 @@ class RunConfig:
 				transform_csv=transform_csv,
 			),
 			window=window,
+			analysis=AnalysisConfig(exclusion_zones=exclusion_zones),
 			options=RunOptionsConfig(force=force, timing_csv=timing_csv),
 		)
 

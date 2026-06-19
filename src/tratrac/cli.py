@@ -26,6 +26,7 @@ from tratrac.application.config import (
 )
 from tratrac.application.orientation import EmaOrientationEstimator
 from tratrac.application.pipeline import TrajectoryPipeline
+from tratrac.domain.exclusion import ExclusionZones
 from tratrac.domain.geometry import Transform2D
 from tratrac.domain.ports import (
 	DetectionObserver,
@@ -38,8 +39,10 @@ from tratrac.domain.ports import (
 	TransformSink,
 )
 from tratrac.infrastructure.config.toml import load_toml
+from tratrac.infrastructure.detection.masking import MaskingDetector
 from tratrac.infrastructure.detection.rt_detr import RtDetrDetector
 from tratrac.infrastructure.detection.yolov8_visdrone import YoloV8VisDroneDetector
+from tratrac.infrastructure.exclusion.json import load_exclusion_zones
 from tratrac.infrastructure.export.composite import CompositeTrajectoryExporter
 from tratrac.infrastructure.export.decimating import DecimatingTrajectoryExporter
 from tratrac.infrastructure.export.overlay_video import OverlayVideoExporter
@@ -214,6 +217,15 @@ def process(
 		str | None,
 		typer.Option("--end", help='Analysis-window end timecode; "" = clip end (window.end).'),
 	] = None,
+	exclusion_zones: Annotated[
+		Path | None,
+		typer.Option(
+			"--exclusion-zones",
+			dir_okay=False,
+			help='Sidecar JSON of image-space polygons to exclude from analysis; "" disables '
+			"(analysis.exclusion_zones).",
+		),
+	] = None,
 	force: Annotated[
 		bool | None,
 		typer.Option(
@@ -256,6 +268,7 @@ def process(
 		"export.transform_csv": transform_csv,
 		"window.start": start,
 		"window.end": end,
+		"analysis.exclusion_zones": exclusion_zones,
 		"run.force": force,
 		"run.timing_csv": timing_csv,
 	}
@@ -276,6 +289,19 @@ def process(
 	# --- Fail-fast checks that need the filesystem but not the (costly) video open. ---
 	if not run.input.video.is_file():
 		raise typer.BadParameter(f"input video {run.input.video} does not exist or is not a file.")
+	# Load the exclusion-zone polygons up front (pure, cheap file read) so a bad path
+	# or malformed JSON fails before the costly video open. None when the feature is off.
+	zones: ExclusionZones | None = None
+	if run.analysis.exclusion_zones is not None:
+		if not run.analysis.exclusion_zones.is_file():
+			raise typer.BadParameter(
+				f"analysis.exclusion_zones {run.analysis.exclusion_zones} does not exist "
+				"or is not a file."
+			)
+		try:
+			zones = load_exclusion_zones(run.analysis.exclusion_zones)
+		except (ValueError, OSError) as exc:
+			raise typer.BadParameter(str(exc)) from exc
 	if (
 		run.options.timing_csv is not None
 		and run.export.out.resolve() == run.options.timing_csv.resolve()
@@ -334,9 +360,16 @@ def process(
 				min_matches=run.ego_motion.min_matches,
 				ransac_threshold=run.ego_motion.ransac_threshold,
 				min_anchor_overlap=run.ego_motion.min_anchor_overlap,
+				# Also mask the static exclusion zones out of ORB feature extraction.
+				exclusion_zones=zones,
 			)
 			detection_observer = ego_motion
 		det: Detector = _build_detector(run.detector, device=run.runtime.device)
+		if zones is not None:
+			# Drop detections inside the exclusion zones at the detector seam — the one
+			# point where detections are still in raw pixel space (vault/21). Wrapped
+			# below TimedDetector so the EXPORT/timing step counts detect + filter.
+			det = MaskingDetector(det, zones)
 		# When we stabilize coordinates ourselves, disable BoT-SORT's own camera-motion
 		# compensation so it does not double-correct the already-stabilized boxes.
 		tracker: Tracker = BoxmotBotSortTracker(
