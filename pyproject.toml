@@ -21,6 +21,7 @@ dependencies = [
 
 [project.scripts]
 tratrac = "tratrac.cli:app"
+tratrac-scout = "tratrac.cli_scout:app"
 
 [build-system]
 requires = ["uv_build>=0.11.13,<0.12.0"]

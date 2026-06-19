@@ -29,6 +29,7 @@ is the eventual upgrade (``final_polish.md`` item 1).
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from typing import Any
 
 import cv2
@@ -38,6 +39,10 @@ from numpy.typing import NDArray
 from tratrac.domain.detection import Detection
 from tratrac.domain.frame import Frame
 from tratrac.domain.geometry import Transform2D, clipped_overlap_fraction
+
+# Notified when a frame becomes a keyframe anchor: (frame_index, global pose). The
+# scout subscribes to enumerate the reference frames an operator draws zones on.
+AnchorObserver = Callable[[int, Transform2D], None]
 
 
 class _AnchorChain:
@@ -95,6 +100,7 @@ class OrbEgoMotionEstimator:
 		min_matches: int,
 		ransac_threshold: float,
 		min_anchor_overlap: float,
+		anchor_observer: AnchorObserver | None = None,
 	) -> None:
 		if n_features <= 0:
 			raise ValueError(f"n_features must be positive, got {n_features}.")
@@ -110,6 +116,7 @@ class OrbEgoMotionEstimator:
 		self._min_matches = min_matches
 		self._ransac_threshold = ransac_threshold
 		self._min_anchor_overlap = min_anchor_overlap
+		self._anchor_observer = anchor_observer
 		# ORB_create is a factory alias absent from opencv's bundled type stubs.
 		self._orb: Any = cv2.ORB_create(nfeatures=n_features)  # type: ignore[attr-defined]
 		self._matcher: Any = cv2.BFMatcher(cv2.NORM_HAMMING)
@@ -141,6 +148,7 @@ class OrbEgoMotionEstimator:
 			# No anchor yet: establish it from the first usable frame, identity meanwhile.
 			if has_features:
 				self._set_anchor(keypoints, descriptors)
+				self._announce_anchor(frame.index)
 			return self._current
 
 		if not has_features:
@@ -154,7 +162,16 @@ class OrbEgoMotionEstimator:
 		)
 		if reanchor:
 			self._set_anchor(keypoints, descriptors)
+			self._announce_anchor(frame.index)
 		return self._current
+
+	def _announce_anchor(self, frame_index: int) -> None:
+		"""Notify the observer that ``frame_index`` is now a keyframe anchor.
+
+		``self._current`` is that anchor's global pose (identity for the first anchor;
+		the just-composed current-frame pose on a re-anchor)."""
+		if self._anchor_observer is not None:
+			self._anchor_observer(frame_index, self._current)
 
 	def _set_anchor(self, keypoints: Any, descriptors: NDArray[np.uint8]) -> None:
 		self._anchor_keypoints = keypoints
