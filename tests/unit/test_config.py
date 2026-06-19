@@ -47,6 +47,7 @@ def _complete(tmp_path: Path, **overrides: Any) -> dict[str, Any]:
 			"transform_csv": "",
 		},
 		"window": {"start": "", "end": ""},
+		"analysis": {"exclusion_zones": ""},
 		"run": {"force": False, "timing_csv": ""},
 	}
 	file_values.update(overrides)
@@ -354,6 +355,30 @@ class TestTransformCsv:
 		)
 		assert run.export.video_out == tmp_path / "overlay.mp4"
 		assert run.export.video_trail == 30
+
+
+class TestAnalysis:
+	def test_off_resolves_to_none(self, tmp_path: Path) -> None:
+		run = RunConfig.resolve(_complete(tmp_path), {})
+		assert run.analysis.exclusion_zones is None  # "" disables
+
+	def test_path_resolves(self, tmp_path: Path) -> None:
+		file_values = _complete(tmp_path)
+		file_values["analysis"]["exclusion_zones"] = str(tmp_path / "zones.json")
+		run = RunConfig.resolve(file_values, {})
+		assert run.analysis.exclusion_zones == tmp_path / "zones.json"
+
+	def test_missing_key_is_an_error(self, tmp_path: Path) -> None:
+		file_values = _complete(tmp_path)
+		del file_values["analysis"]["exclusion_zones"]
+		with pytest.raises(ConfigError, match="exclusion_zones is missing"):
+			RunConfig.resolve(file_values, {})
+
+	def test_cli_override_enables(self, tmp_path: Path) -> None:
+		run = RunConfig.resolve(
+			_complete(tmp_path), {"analysis.exclusion_zones": tmp_path / "zones.json"}
+		)
+		assert run.analysis.exclusion_zones == tmp_path / "zones.json"
 
 
 class TestLoadToml:
