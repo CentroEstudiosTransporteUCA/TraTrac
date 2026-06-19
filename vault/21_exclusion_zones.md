@@ -4,86 +4,112 @@
 
 A set of **pixel polygons** marking image regions the run must ignore — parking
 lots, buildings, sidewalks, static clutter. A detection whose bounding box is
-**mostly inside** a zone (more than 50% of its area) is **dropped before
-tracking**, so it never enters a trajectory; and the zones are **masked out of
-ORB ego-motion feature extraction**, so static objects there cannot bias the
-stabilization fit.
+**mostly covered** (more than 50% of its area) by the polygons' **union** is
+**dropped before tracking**, so it never enters a trajectory.
 
 Optional and off by default. It is the *spatial* analogue of the `--start`/
 `--end` time-window trim (`17_time_window.md`): an image-space input filter that
-leaves every downstream stage untouched. The vault did not previously anticipate
-it; mechanism-wise it is kin to the hand-drawn polygons of `13_road_topology.md`
-(MVP3), but it needs none of MVP3's homography/plane machinery, so it ships now.
+leaves the trajectory stages untouched. Mechanism-wise it is kin to the hand-drawn
+polygons of `13_road_topology.md` (MVP3), but it needs none of MVP3's
+homography/plane machinery, so it ships now.
 
-## Why the detector seam (not the pipeline)
+## Coverage by rasterized union (not analytic clipping)
 
-Pixel polygons only align with detections in **raw pixel space**. In the per-frame
-loop the detections are raw only between `detect` and the ego-motion
-`apply_transform`; after stabilization they live in the keyframe-anchored global
-frame and a raw-pixel polygon no longer matches (see `05_75_mvp1_9.md`).
+A detection is dropped when the masked **union** of zones covers more than `0.5`
+of its bounding box. Coverage is measured by rasterizing: the zones are filled
+into a `W×H` binary mask with `cv2.fillPoly`, and a detection's drop test is the
+mean of that mask over its (clamped) bbox versus `0.5`. `0.5` lives in
+`infrastructure/exclusion/raster.py` as `_MAJORITY`.
 
-So the drop happens at the **detector seam**, via a `MaskingDetector` decorator
-over the `Detector` port (`infrastructure/detection/masking.py`). Wrapping the
-real detector keeps `TrajectoryPipeline` byte-for-byte untouched — the same
-decorator idiom as `RecordingEgoMotionEstimator`, the `Timed*` decorators, and
-`DecimatingTrajectoryExporter`. It is wrapped *below* `TimedDetector`, so the
-detection step timing counts detect + filter together.
+Rasterizing — rather than an analytic per-polygon clip — is deliberate: `fillPoly`
+fills **concave** polygons correctly and **unions** overlapping/adjacent zones for
+free. This dissolves two earlier limitations of an analytic approach (convex-only
+area, and per-zone `max` letting a box straddling two zones survive). It also uses
+the same primitive the ORB vehicle-mask already uses.
 
-The ORB masking is independent: `OrbEgoMotionEstimator` takes the same
-`ExclusionZones`, rasterizes them once (raw-pixel, frame size known at first
-frame) into a cached 255/0 base mask, and zeros the per-frame vehicle boxes on
-top of it. With zones present a mask is now returned even before any detection
-arrives.
+## The seam: a `DetectionMask` port, applied after ego-motion
 
-## The "majority overlap" rule
+The drop runs **inside the pipeline**, between ego-motion estimation and
+stabilization — *not* at the detector seam. Reason: a moving-drone zone must be
+mapped into the frame being processed, which needs that frame's ego-motion pose,
+and the pose is produced by `EgoMotionEstimator.estimate()` *after*
+`Detector.detect()`. So a detector-seam decorator cannot see the pose.
 
-A detection is excluded when, for **some single zone**, the clipped area of the
-zone over the bbox exceeds **0.5**. `0.5` is the *definition* of majority, baked
-into `domain/exclusion.py` as `_MAJORITY` — not a config knob.
+The per-frame loop (`application/pipeline.py`) is therefore:
 
-The area is computed by reusing the stabilizer's existing geometry primitives:
-`Polygon.overlap_fraction(bbox)` translates the polygon so the box sits at the
-origin (`[0,w] x [0,h]`), runs `_clip_to_rectangle` (Sutherland–Hodgman) and
-`_polygon_area` (shoelace), and divides by the box area. No new clipping code.
+```
+detections = detect(frame)
+observe(detections)                              # ORB vehicle-masking (unchanged)
+pose = ego_motion.estimate(frame) or identity    # raw -> global
+detections = detection_mask.filter(detections, pose, frame)   # <-- the drop
+if ego_motion: detections = [apply_transform(d, pose) ...]    # stabilize
+tracker.update(frame, detections)
+```
+
+`DetectionMask` (`domain/ports.py`) is a Null-Object port (default
+`NullDetectionMask` = pass-through), so a run without zones is byte-identical to
+before. The implementation is `RasterExclusionMask`
+(`infrastructure/exclusion/raster.py`).
+
+## Zones live in the global frame; they move with the scene
+
+Each zone is authored on a **reference frame** `R` and carries `reference_frame`
+in the JSON. At load the polygon is converted **once** into the continuous global
+stabilization frame via that frame's pose: `polygon_global = pose_R.apply(verts)`
+(`application/exclusion.py:to_global_polygons`). At runtime, for frame `N` with
+pose `pose_N`, `RasterExclusionMask` maps the global polygon back into raw-`N`
+pixels with `inverse(pose_N)` before rasterizing. Detection (raw `N`) and zone
+(mapped to raw `N`) meet in the same frame, so the zone **tracks the scene** as the
+drone moves.
+
+A **static camera** is the degenerate case: `reference_frame = 0`, all poses
+identity, global == raw — equivalent to a fixed screen-space mask.
 
 ## Input: sidecar JSON
 
 A per-scene JSON file referenced from config (`analysis.exclusion_zones`, a
 `toggleable_path`: `""` = off), mirroring `calibration.srt`. Loaded by
 `infrastructure/exclusion/json.py` into the pure `ExclusionZones` value object.
-Schema:
 
 ```json
 { "exclusion_zones": [
-    { "label": "parking_lot", "vertices": [[x1, y1], [x2, y2], [x3, y3]] }
+    { "label": "parking_lot",
+      "reference_frame": 0,
+      "vertices": [[x1, y1], [x2, y2], [x3, y3]] }
 ] }
 ```
 
-`label` is optional (operator documentation). `vertices` are pixel coordinates,
-≥3 per polygon. Bad path / malformed JSON / too-few vertices fail fast in the CLI
-before the costly video open.
+`label` is optional. `reference_frame` defaults to `0`. `vertices` are pixel
+coordinates, ≥3 per polygon. Bad path / malformed JSON / too-few vertices fail
+fast in the CLI before the costly video open.
 
-## Caveats (deliberate, documented)
+## Moving drone: authoring reference frames (the scout — see §Stage 2)
 
-1. **Convexity.** Sutherland–Hodgman is exact only when the *clip window* (the
-   bbox) is convex (always true) **and** the subject polygon is convex. A concave
-   zone can mis-count its area, so concave regions should be drawn as several
-   convex polygons.
-2. **Union vs. max.** A box is tested against each zone independently (max), not
-   against the union of zones. A vehicle straddling two adjacent zones — say 30%
-   in each — survives even though the combined coverage is 60%. Acceptable for
-   distinct drawn regions; split-and-redraw if it matters.
-3. **Moving drone.** The polygons are **screen-fixed**. With `ego_motion.enabled`
-   (a moving drone) a screen-fixed zone masks a *moving* world region, so the
-   feature is intended primarily for **static / near-static cameras** — the same
-   regime where ORB stabilization itself is advised off on otherwise-static clips.
+For a moving drone the operator can't predict which frames to draw on, and a zone
+drawn on frame 0 isn't visible once the drone pans away. The reference frames are
+the **ORB keyframe anchors** (overlap-guaranteed to tile the traversed scene). A
+headless **scout pass** (`tratrac-scout`) discovers them: it runs ORB only,
+persists the per-frame ego-motion schedule (reusing `CsvTransformSink`), and emits
+each anchor frame as a PNG plus a manifest. The operator draws zones over those
+PNGs (`reference_frame` = the anchor index). The real run then **replays** the
+recorded schedule (`ReplayEgoMotionEstimator`) so its poses match the scout
+exactly — a correctness requirement, since zones placed with scout poses must meet
+detections placed with the same poses. (Scout + replay land in the second stage of
+this work.)
+
+ORB feature-masking of zones is **not** done: in a moving drone the excluded
+regions are static ground, exactly the features stabilization needs — masking them
+would hurt the fit. Vehicle-masking via `observe()` is unaffected.
 
 ## Files
 
-- `domain/geometry.py` — `Polygon` value object (`overlap_fraction`).
-- `domain/exclusion.py` — `ExclusionZones` (`excludes`, `_MAJORITY`).
-- `infrastructure/detection/masking.py` — `MaskingDetector` decorator.
-- `infrastructure/video/ego_motion_orb.py` — static-zone feature masking.
+- `domain/geometry.py` — `Polygon` (pure vertex container).
+- `domain/exclusion.py` — `ExclusionZone` (`reference_frame` + polygon), `ExclusionZones`.
+- `domain/ports.py` — `DetectionMask` port.
+- `application/detection_mask.py` — `NullDetectionMask` (Null Object default).
+- `application/exclusion.py` — `to_global_polygons` (reference-frame → global).
+- `application/pipeline.py` — applies the mask post-estimate, pre-stabilize.
+- `infrastructure/exclusion/raster.py` — `RasterExclusionMask` (fillPoly union + coverage).
 - `infrastructure/exclusion/json.py` — sidecar loader.
 - `application/config.py` — `AnalysisConfig` + `analysis.exclusion_zones`.
-- `cli.py` — `--exclusion-zones`, load + existence check, detector wrap + ORB inject.
+- `cli.py` — `--exclusion-zones`, load + existence check, builds `RasterExclusionMask`.

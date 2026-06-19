@@ -7,11 +7,15 @@ pure ``ExclusionZones`` value object. See vault/21_exclusion_zones.md.
 Schema::
 
     { "exclusion_zones": [
-        { "label": "parking_lot", "vertices": [[x1, y1], [x2, y2], [x3, y3]] }
+        { "label": "parking_lot",
+          "reference_frame": 0,
+          "vertices": [[x1, y1], [x2, y2], [x3, y3]] }
     ] }
 
-``label`` is optional and ignored (operator documentation only). ``vertices``
-are pixel coordinates; each polygon needs at least three.
+``label`` is optional (operator documentation only). ``reference_frame`` is the
+frame index the vertices are drawn on (optional, defaults to ``0`` for a static
+camera; for a moving drone it is one of the scout's anchor frame indices).
+``vertices`` are pixel coordinates; each polygon needs at least three.
 """
 
 from __future__ import annotations
@@ -20,7 +24,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from tratrac.domain.exclusion import ExclusionZones
+from tratrac.domain.exclusion import ExclusionZone, ExclusionZones
 from tratrac.domain.geometry import Point2D, Polygon
 
 
@@ -47,9 +51,10 @@ def load_exclusion_zones(path: Path) -> ExclusionZones:
 	return ExclusionZones(zones=tuple(zones))
 
 
-def _parse_zone(raw: Any, index: int, path: Path) -> Polygon:
+def _parse_zone(raw: Any, index: int, path: Path) -> ExclusionZone:
 	if not isinstance(raw, dict) or "vertices" not in raw:
 		raise ValueError(f'{path}: zone {index} must be an object with a "vertices" array.')
+	reference_frame = _parse_reference_frame(raw.get("reference_frame", 0), index, path)
 	raw_vertices = raw["vertices"]
 	if not isinstance(raw_vertices, list):
 		raise ValueError(f"{path}: zone {index} vertices must be an array.")
@@ -63,6 +68,15 @@ def _parse_zone(raw: Any, index: int, path: Path) -> Polygon:
 			raise ValueError(f"{path}: zone {index} vertices must be [x, y] number pairs.")
 		vertices.append(Point2D(float(vertex[0]), float(vertex[1])))
 	try:
-		return Polygon(vertices=tuple(vertices))
+		polygon = Polygon(vertices=tuple(vertices))
 	except ValueError as exc:
 		raise ValueError(f"{path}: zone {index}: {exc}") from exc
+	return ExclusionZone(reference_frame=reference_frame, polygon=polygon)
+
+
+def _parse_reference_frame(raw: Any, index: int, path: Path) -> int:
+	if isinstance(raw, bool) or not isinstance(raw, int):
+		raise ValueError(f"{path}: zone {index} reference_frame must be an integer.")
+	if raw < 0:
+		raise ValueError(f"{path}: zone {index} reference_frame must be >= 0.")
+	return raw

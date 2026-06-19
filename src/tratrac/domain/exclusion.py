@@ -1,38 +1,41 @@
 """Image-space exclusion zones: regions whose detections must not be analyzed.
 
-A set of pixel polygons (see ``vault/21_exclusion_zones.md``). A detection is
-excluded when a *majority* of its bounding box — strictly more than half its
-area — falls inside any one zone. Pure value object: the drop is applied by a
-``Detector`` decorator at the detector seam, and the same zones are masked out
-of ORB ego-motion feature extraction.
+A set of pixel polygons (see ``vault/21_exclusion_zones.md``), each authored on a
+*reference frame*. Pure data: the drop is computed by an infrastructure
+``DetectionMask`` that rasterizes the zones' union into a per-frame mask and drops
+any detection mostly (>50% of its area) covered. Rasterizing handles concave
+polygons and overlapping/adjacent zones (true union) that an analytic per-polygon
+test could not.
+
+For a moving drone, a zone is authored on the ORB keyframe anchor where its scene
+region is visible and converted once into the continuous global stabilization
+frame (using that frame's pose); at runtime it is mapped back into each raw frame,
+so the zone tracks the scene. A static camera is the degenerate case:
+``reference_frame = 0`` and an identity pose.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from tratrac.domain.geometry import BoundingBox, Polygon
+from tratrac.domain.geometry import Polygon
 
-# "Majority" overlap: strictly more than half the bbox area inside a single zone.
-# This is the definition of the feature, not a tunable knob.
-_MAJORITY = 0.5
+
+@dataclass(frozen=True, slots=True)
+class ExclusionZone:
+	"""One exclusion polygon and the reference frame its coordinates live in.
+
+	``reference_frame`` is the source ``Frame.index`` the polygon's pixel
+	coordinates are expressed in (``0`` for a static camera / single-frame
+	authoring).
+	"""
+
+	reference_frame: int
+	polygon: Polygon
 
 
 @dataclass(frozen=True, slots=True)
 class ExclusionZones:
-	"""A collection of image-space polygons to exclude from analysis.
+	"""A collection of exclusion zones. Pure data; empty is legal (excludes nothing)."""
 
-	Empty is legal and excludes nothing, so the feature can be wired in
-	unconditionally with an empty instance standing for "off".
-	"""
-
-	zones: tuple[Polygon, ...]
-
-	def excludes(self, bbox: BoundingBox) -> bool:
-		"""Whether ``bbox`` lies mostly (>50% of its area) inside any single zone.
-
-		Tested per zone (max), not against the union of zones, so a box straddling
-		two adjacent zones can survive even when their combined coverage exceeds half
-		— acceptable for distinct drawn regions (see vault/21_exclusion_zones.md).
-		"""
-		return any(zone.overlap_fraction(bbox) > _MAJORITY for zone in self.zones)
+	zones: tuple[ExclusionZone, ...]

@@ -62,10 +62,10 @@ end = ""                          # "" = clip end
 
 [analysis]
 # Image-space "do-not-analyze" regions (see vault/21_exclusion_zones.md). A sidecar
-# JSON of pixel polygons; detections whose bbox is >50% inside any polygon are dropped
-# before tracking, and the polygons are masked out of ORB ego-motion features. Best for
-# static / near-static cameras: the polygons are screen-fixed, so a moving drone would
-# slide them off the regions they were drawn over.
+# JSON of pixel polygons; a detection whose bbox is >50% covered by the polygons'
+# union (rasterized, so concave/overlapping zones are handled) is dropped before
+# tracking. Each zone carries a reference_frame (0 for a static camera); for a moving
+# drone, author zones on the scout's anchor frames so they track the scene.
 exclusion_zones = ""              # "" = no exclusions; else a path to a zones .json
 
 [run]
