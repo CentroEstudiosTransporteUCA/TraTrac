@@ -69,5 +69,7 @@ physically-impossible-jerk violations than the EMA `.trj` (the Punzo metric, §1
 - `domain/ports.py` — `TrackSink`; `infrastructure/tracking/recording.py` — `RecordingTracker`;
   `infrastructure/tracks/csv.py` — `CsvTrackSink` + `read_tracks`.
 - `cli_smooth.py` — `tratrac-smooth`; `cli.py`/`config.py` — `export.tracks` wiring.
-- Stage 4 (optional, RT path): `application/orientation_kalman.py` — inline forward
-  `KalmanOrientationEstimator`, selectable via `orientation.method`.
+- `application/orientation_kalman.py` — inline forward `KalmanOrientationEstimator`
+  (the streaming/RT path), selectable via `orientation.method = kalman` (EMA default).
+  Reuses the shared `build_state` reconstruction and adds staleness eviction (the
+  `EmaOrientationEstimator.forget` gap — per-track filters are dropped after a horizon).

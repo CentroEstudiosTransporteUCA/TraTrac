@@ -52,7 +52,10 @@ transforms = ""                   # "" = compute ORB live; else a scout transfor
 det_thresh = 0.1                  # BoT-SORT detection threshold (kept below detector.conf)
 
 [orientation]
-smoothing_window = 5              # EMA heading window, >= 2
+method = "ema"                    # ema | kalman (kalman = streaming forward CA filter, see vault/22)
+smoothing_window = 5              # EMA heading window, >= 2 (only used when method = ema)
+kalman_pos_noise = 2.0            # Kalman measurement-noise std in px (only used when method = kalman)
+kalman_jerk = 20.0               # Kalman process jerk density; higher = more responsive (kalman only)
 
 [export]
 out = "out/highway_run3.trj"      # output .trj path (overridden by --out)
