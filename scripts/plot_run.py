@@ -2,16 +2,14 @@
 
 Standalone (stdlib + numpy + matplotlib; no package imports, so it works even if the
 package is broken). Walks an outputs directory, finds every baseline ``.trj`` (and its
-``_smooth.trj`` / ``_tracks.csv`` siblings, if present), and writes two figures next to
-each:
+``_smooth.trj`` / ``_tracks.csv`` siblings, if present), and writes **one PNG per graph**
+into a per-run folder ``<stem>/``:
 
-  <stem>_smoothing.png  — the de-jitter story (cat. 1): speed(t), acceleration(t) with a
-                          plausibility band, a jerk histogram, and trajectory paths,
-                          baseline vs RTS-smoothed.
-  <stem>_tracking.png   — tracking / continuity (cat. 2): track-lifespan Gantt,
-                          track-length histogram, active tracks over time, track
-                          birth/death positions, and a detection-confidence histogram
-                          (when the tracks sidecar is present).
+  01_speed_vs_time · 02_acceleration · 03_jerk_distribution · 04_trajectories
+  05_track_lifespans · 06_track_length · 07_active_tracks · 08_birth_death
+  09_detection_confidence (only when the tracks sidecar is present)
+
+01-04 are the de-jitter story (baseline vs RTS-smoothed); 05-09 are tracking/continuity.
 
 The `.trj` is parsed inline (SSAM v1.04): positions are in image pixels; speed/accel are
 metric (m/s, m/s^2) when the run had a real GSD scale.
@@ -31,6 +29,7 @@ import csv
 import struct
 import sys
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -54,6 +53,9 @@ _VEHICLE = struct.Struct(
 )  # type, id, link, lane, fx, fy, rx, ry, len, wid, spd, acc
 _TIMESTEP_TYPE = 2
 _VEHICLE_TYPE = 3
+
+# A draw function takes a matplotlib Axes (untyped: matplotlib is unstubbed here).
+DrawFn = Callable[[object], None]
 
 
 @dataclass
@@ -140,7 +142,7 @@ def background_for(stem: str, video_arg: Path | None) -> np.ndarray | None:
 	return rgb
 
 
-def _draw_background(ax: object, frame: np.ndarray | None) -> None:
+def _draw_background(ax, frame: np.ndarray | None) -> None:
 	"""Place the filmed scene behind a spatial panel.
 
 	The frame is flipped vertically and drawn with ``origin='lower'`` so it lines up with
@@ -149,11 +151,11 @@ def _draw_background(ax: object, frame: np.ndarray | None) -> None:
 	if frame is None:
 		return
 	height, width = frame.shape[:2]
-	ax.imshow(  # type: ignore[attr-defined]
+	ax.imshow(
 		frame[::-1], extent=(0.0, float(width), 0.0, float(height)), origin="lower", alpha=0.55
 	)
-	ax.set_xlim(0, width)  # type: ignore[attr-defined]
-	ax.set_ylim(0, height)  # type: ignore[attr-defined]
+	ax.set_xlim(0, width)
+	ax.set_ylim(0, height)
 
 
 def _all_jerks(trj: Trj) -> np.ndarray:
@@ -177,42 +179,30 @@ def _representative_track(base: Trj, smooth: Trj | None) -> int:
 	return max(candidates, key=lambda v: len(candidates[v]))
 
 
-def plot_smoothing(
-	base: Trj,
-	smooth: Trj | None,
-	stem: str,
-	out: Path,
-	accel_bound: float,
-	background: np.ndarray | None = None,
-) -> None:
-	vid = _representative_track(base, smooth)
-	bt = base.by_vehicle[vid]
-	st = smooth.by_vehicle[vid] if smooth is not None and vid in smooth.by_vehicle else None
-	fig, axes = plt.subplots(2, 2, figsize=(14, 9))
-	fig.suptitle(f"{stem} — smoothing (track {vid} shown; jerk over all tracks)", fontsize=13)
-
-	ax = axes[0, 0]
+def _draw_speed(ax, bt: np.ndarray, st: np.ndarray | None) -> None:
 	ax.plot(bt[:, 0], bt[:, 3], color="#d62728", alpha=0.8, lw=1, label="baseline")
 	if st is not None:
 		ax.plot(st[:, 0], st[:, 3], color="#1f77b4", lw=1.6, label="RTS smoothed")
 	ax.set(title="Speed vs time", xlabel="t (s)", ylabel="speed (m/s)")
 	ax.legend(fontsize=8)
 
-	ax = axes[0, 1]
-	ax.axhspan(-accel_bound, accel_bound, color="#2ca02c", alpha=0.08)
-	ax.axhline(accel_bound, color="#2ca02c", lw=0.8, ls="--")
-	ax.axhline(-accel_bound, color="#2ca02c", lw=0.8, ls="--")
+
+def _draw_accel(ax, bt: np.ndarray, st: np.ndarray | None, bound: float) -> None:
+	ax.axhspan(-bound, bound, color="#2ca02c", alpha=0.08)
+	ax.axhline(bound, color="#2ca02c", lw=0.8, ls="--")
+	ax.axhline(-bound, color="#2ca02c", lw=0.8, ls="--")
 	ax.plot(bt[:, 0], bt[:, 4], color="#d62728", alpha=0.8, lw=1, label="baseline")
 	if st is not None:
 		ax.plot(st[:, 0], st[:, 4], color="#1f77b4", lw=1.6, label="RTS smoothed")
 	ax.set(
-		title=f"Acceleration vs time (±{accel_bound:g} m/s² plausible)",
+		title=f"Acceleration vs time (±{bound:g} m/s² plausible)",
 		xlabel="t (s)",
 		ylabel="accel (m/s²)",
 	)
 	ax.legend(fontsize=8)
 
-	ax = axes[1, 0]
+
+def _draw_jerk(ax, base: Trj, smooth: Trj | None) -> None:
 	bj = _all_jerks(base)
 	series = [bj[np.abs(bj) < 200]] if bj.size else []
 	labels = ["baseline"]
@@ -227,7 +217,8 @@ def plot_smoothing(
 		ax.legend(fontsize=8)
 	ax.set(title="Jerk distribution (all tracks)", xlabel="jerk (m/s³)", ylabel="count (log)")
 
-	ax = axes[1, 1]
+
+def _draw_trajectories(ax, base: Trj, smooth: Trj | None, background: np.ndarray | None) -> None:
 	ax.set_aspect("equal")
 	_draw_background(ax, background)
 	longest = sorted(base.by_vehicle, key=lambda v: -len(base.by_vehicle[v]))[:6]
@@ -244,41 +235,33 @@ def plot_smoothing(
 		ylabel="y (px)",
 	)
 
-	fig.tight_layout(rect=(0, 0, 1, 0.97))
-	fig.savefig(out / f"{stem}_smoothing.png", dpi=120)
-	plt.close(fig)
 
-
-def plot_tracking(
-	base: Trj,
-	scores: np.ndarray | None,
-	stem: str,
-	out: Path,
-	background: np.ndarray | None = None,
-) -> None:
-	veh = base.by_vehicle
-	starts = {v: a[0, 0] for v, a in veh.items()}
-	order = sorted(veh, key=lambda v: starts[v])
-	fig, axes = plt.subplots(2, 3, figsize=(18, 9))
-	fig.suptitle(f"{stem} — tracking / continuity ({len(veh)} tracks)", fontsize=13)
-
-	ax = axes[0, 0]
+def _draw_gantt(ax, veh: dict[int, np.ndarray]) -> None:
+	order = sorted(veh, key=lambda v: veh[v][0, 0])
 	for i, v in enumerate(order):
 		a = veh[v]
 		ax.hlines(i, a[0, 0], a[-1, 0], color="#1f77b4", lw=0.8)
 	ax.set(title="Track lifespans (Gantt)", xlabel="t (s)", ylabel="track (by start)")
 
-	ax = axes[0, 1]
+
+def _draw_length(ax, veh: dict[int, np.ndarray]) -> None:
 	durations = np.array([a[-1, 0] - a[0, 0] for a in veh.values()])
 	ax.hist(durations, bins=40, color="#1f77b4")
 	ax.set(title="Track-length distribution", xlabel="duration (s)", ylabel="tracks")
 
-	ax = axes[0, 2]
+
+def _draw_active(ax, base: Trj) -> None:
 	if base.timestamps.size:
 		ax.plot(base.timestamps, base.counts, color="#1f77b4", lw=1)
 	ax.set(title="Active tracks over time", xlabel="t (s)", ylabel="vehicles in frame")
 
-	ax = axes[1, 0]
+
+def _draw_birth_death(
+	ax,
+	veh: dict[int, np.ndarray],
+	bounds: tuple[int, int, int, int],
+	background: np.ndarray | None,
+) -> None:
 	ax.set_aspect("equal")
 	_draw_background(ax, background)
 	births = np.array([a[0, 1:3] for a in veh.values()])
@@ -288,31 +271,78 @@ def plot_tracking(
 		ax.scatter(births[:, 0], births[:, 1], c="#39ff14", label="birth", **marker)
 		ax.scatter(deaths[:, 0], deaths[:, 1], c="#ff1744", label="death", **marker)
 	if background is None:
-		min_x, min_y, max_x, max_y = base.bounds
+		min_x, min_y, max_x, max_y = bounds
 		ax.set_xlim(min_x, max_x)
 		ax.set_ylim(min_y, max_y)
 	ax.set(title="Track birth/death positions", xlabel="x (px)", ylabel="y (px)")
 	ax.legend(fontsize=8)
 
-	ax = axes[1, 1]
-	if scores is not None and scores.size:
-		ax.hist(scores, bins=40, color="#1f77b4")
-		ax.set(title="Detection confidence", xlabel="score", ylabel="detections")
-	else:
-		ax.text(0.5, 0.5, "no tracks sidecar\n(export.tracks off)", ha="center", va="center")
-		ax.set_axis_off()
 
-	axes[1, 2].set_axis_off()
-	fig.tight_layout(rect=(0, 0, 1, 0.97))
-	fig.savefig(out / f"{stem}_tracking.png", dpi=120)
+def _draw_confidence(ax, scores: np.ndarray) -> None:
+	ax.hist(scores, bins=40, color="#1f77b4")
+	ax.set(title="Detection confidence", xlabel="score", ylabel="detections")
+
+
+def _render(folder: Path, name: str, stem: str, draw: DrawFn, figsize: tuple[float, float]) -> None:
+	"""One graph -> one PNG. Prepends the run name to whatever title the draw set."""
+	fig, ax = plt.subplots(figsize=figsize)
+	draw(ax)
+	ax.set_title(f"{stem} — {ax.get_title()}")
+	fig.tight_layout()
+	fig.savefig(folder / f"{name}.png", dpi=120)
 	plt.close(fig)
+
+
+def generate(
+	base: Trj,
+	smooth: Trj | None,
+	scores: np.ndarray | None,
+	stem: str,
+	folder: Path,
+	accel_bound: float,
+	background: np.ndarray | None,
+) -> int:
+	"""Write one PNG per graph into ``folder``; returns the number of PNGs written."""
+	folder.mkdir(parents=True, exist_ok=True)
+	vid = _representative_track(base, smooth)
+	bt = base.by_vehicle[vid]
+	st = smooth.by_vehicle[vid] if smooth is not None and vid in smooth.by_vehicle else None
+	veh = base.by_vehicle
+	graphs: list[tuple[str, DrawFn, tuple[float, float]]] = [
+		("01_speed_vs_time", lambda ax: _draw_speed(ax, bt, st), (7.0, 5.0)),
+		("02_acceleration", lambda ax: _draw_accel(ax, bt, st, accel_bound), (7.0, 5.0)),
+		("03_jerk_distribution", lambda ax: _draw_jerk(ax, base, smooth), (7.0, 5.0)),
+		(
+			"04_trajectories",
+			lambda ax: _draw_trajectories(ax, base, smooth, background),
+			(8.0, 6.0),
+		),
+		("05_track_lifespans", lambda ax: _draw_gantt(ax, veh), (8.0, 6.0)),
+		("06_track_length", lambda ax: _draw_length(ax, veh), (7.0, 5.0)),
+		("07_active_tracks", lambda ax: _draw_active(ax, base), (9.0, 4.5)),
+		(
+			"08_birth_death",
+			lambda ax: _draw_birth_death(ax, veh, base.bounds, background),
+			(8.0, 6.0),
+		),
+	]
+	if scores is not None and scores.size:
+		graphs.append(
+			("09_detection_confidence", lambda ax: _draw_confidence(ax, scores), (7.0, 5.0))
+		)
+	for name, draw, figsize in graphs:
+		_render(folder, name, stem, draw, figsize)
+	return len(graphs)
 
 
 def main() -> int:
 	parser = argparse.ArgumentParser(description=__doc__)
 	parser.add_argument("outputs", type=Path, help="Run outputs folder (walked recursively).")
 	parser.add_argument(
-		"--out", type=Path, default=None, help="Write PNGs here (default: beside each .trj)."
+		"--out",
+		type=Path,
+		default=None,
+		help="Write per-run folders here (default: beside each .trj).",
 	)
 	parser.add_argument(
 		"--accel-bound", type=float, default=8.0, help="±plausible accel band (m/s²)."
@@ -341,13 +371,12 @@ def main() -> int:
 			continue
 		smooth = read_trj(smooth_path) if smooth_path.exists() else None
 		scores = read_track_scores(tracks_path) if tracks_path.exists() else None
-		out_dir = args.out if args.out is not None else trj_path.parent
-		out_dir.mkdir(parents=True, exist_ok=True)
+		base_dir = args.out if args.out is not None else trj_path.parent
+		folder = base_dir / stem
 		background = background_for(stem, args.video)
-		plot_smoothing(base, smooth, stem, out_dir, args.accel_bound, background)
-		plot_tracking(base, scores, stem, out_dir, background)
+		count = generate(base, smooth, scores, stem, folder, args.accel_bound, background)
 		notes = (" (+smooth)" if smooth else "") + (" (+scene)" if background is not None else "")
-		print(f"{stem}: {len(base.by_vehicle)} tracks{notes} -> {out_dir}/{stem}_*.png")
+		print(f"{stem}: {len(base.by_vehicle)} tracks{notes} -> {folder}/ ({count} png)")
 	return 0
 
 
