@@ -18,16 +18,17 @@ from types import TracebackType
 from tratrac.domain.frame import Frame
 from tratrac.domain.ports import TrajectoryExporter
 from tratrac.domain.vehicle import VehicleState
+from tratrac.infrastructure.cadence import DecimationGrid
 
 
 class DecimatingTrajectoryExporter:
 	"""``TrajectoryExporter`` wrapper that emits at most one timestep per interval.
 
 	The first frame is always forwarded; it anchors the emission grid. Subsequent
-	frames are forwarded when their timestamp reaches the next grid point
-	(``anchor + k * interval``), within half a frame so spacing snaps to the
-	nearest available frame rather than the next one. An interval at or below the
-	frame duration degrades to forwarding every frame.
+	frames are forwarded when their timestamp reaches the next grid point, within
+	half a frame so spacing snaps to the nearest available frame. An interval at or
+	below the frame duration degrades to forwarding every frame. The grid math is
+	the shared ``DecimationGrid`` (vault/18_timestep_precision.md).
 	"""
 
 	def __init__(
@@ -37,36 +38,19 @@ class DecimatingTrajectoryExporter:
 		min_interval_seconds: float,
 		fps: float,
 	) -> None:
-		if min_interval_seconds <= 0.0:
-			raise ValueError(f"min_interval_seconds must be positive, got {min_interval_seconds}.")
-		if fps <= 0.0:
-			raise ValueError(f"fps must be positive, got {fps}.")
 		self._inner = inner
-		self._interval = min_interval_seconds
-		# Half a frame: lets a frame microscopically before a grid point still count,
-		# so the emitted spacing tracks the requested interval rather than rounding up.
-		self._epsilon = 0.5 / fps
-		self._next_emit_at: float | None = None
+		self._grid = DecimationGrid(min_interval_seconds=min_interval_seconds, fps=fps)
 
 	def emit_frame(
 		self, timestamp_seconds: float, states: list[VehicleState], frame: Frame
 	) -> None:
-		if self._next_emit_at is None:
+		if self._grid.accepts(timestamp_seconds):
 			self._inner.emit_frame(timestamp_seconds, states, frame)
-			self._next_emit_at = timestamp_seconds + self._interval
-			return
-		if timestamp_seconds >= self._next_emit_at - self._epsilon:
-			self._inner.emit_frame(timestamp_seconds, states, frame)
-			# Advance the grid past this timestamp. The loop (not a single step)
-			# keeps the schedule correct when the interval is finer than the frame
-			# spacing, where it collapses to emitting every frame.
-			while self._next_emit_at <= timestamp_seconds + self._epsilon:
-				self._next_emit_at += self._interval
 
 	def __enter__(self) -> DecimatingTrajectoryExporter:
 		self._inner.__enter__()
 		# Reset the grid so the decorator is reusable across context-manager uses.
-		self._next_emit_at = None
+		self._grid.reset()
 		return self
 
 	def __exit__(
