@@ -27,9 +27,38 @@ BoT-SORT for robustness (`03_tech_stack.md`), and B trades exactly that away for
 speed. A keeps tracking quality and only changes the output's temporal density.
 
 Consequence: A gives **no compute saving** — every frame is still detected and
-tracked. If a future need is "run faster on long clips," that is a *different*
-feature (decode-time decimation in the video adapter, accepting the quality hit)
-and must be named and justified separately.
+tracked.
+
+---
+
+## Reading B Now Exists Too: `input.process_fps` (Decode-Time Decimation)
+
+The "run faster on long clips" need is now its own, separately-named feature:
+`input.process_fps` caps the **processing** cadence (`0.0` = every frame). It is
+independent of, and orthogonal to, `export.timestep_precision`.
+
+- **Where:** the **video adapter** (`OpenCvVideoSource`), not the export seam.
+  Frames off the target grid are skipped with `cv2.grab()` (advance, no decode);
+  only kept frames are `read()`/decoded. So it saves **decode *and* detection +
+  tracking** — a real speedup, unlike A.
+- **Same grid math:** it reuses the shared `DecimationGrid`
+  (`infrastructure/cadence.py`) that backs the exporter — anchored grid, half-frame
+  snap, no drift. Extracted so the two features can't diverge.
+- **Absolute indices preserved:** skipped frames still advance the absolute index,
+  so TIMESTEPs stay on the source clock, `--start`/`--end` composes, and a replay
+  transform schedule (keyed by `frame.index`) still lines up.
+- **Honest progress:** `total_frames` is "frames this run will process," so the
+  adapter reports the grid-accepted count (computed with the same grid that drives
+  yielding), not the full window length.
+- **The trade-off (the reason it's off by default):** decimating the detector's
+  input enlarges inter-frame motion, so BoT-SORT (IoU + constant-velocity model)
+  produces **more ID switches**, and ORB ego-motion sees bigger baselines (more
+  re-anchoring). This is exactly the quality hit Reading B was rejected for *as the
+  timestep feature*; here it is a deliberate, opt-in speed-for-quality knob.
+- **Stacking with A:** processing runs first, export decimation thins further. You
+  cannot export finer than you process, so the CLI **warns** when
+  `timestep_precision` is finer than `1/process_fps` (the export then effectively
+  emits at the processing rate).
 
 ---
 
