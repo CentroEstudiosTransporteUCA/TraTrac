@@ -31,7 +31,10 @@ pass 2 (offline):                export B → forward KF + RTS per track → smo
   idiom as the transform sidecar).
 - **Pass 2** is `tratrac-smooth TRACKS.csv --out final.trj [--pos-noise PX] [--jerk Q]`:
   group by track → forward+RTS smooth → reconstruct `VehicleState` → write via the reused
-  `SsamTrjExporter`.
+  `SsamTrjExporter`. With `--video CLIP --video-out OVERLAY.mp4` it also draws the *smoothed*
+  trajectories onto the clip (reusing `OverlayVideoExporter`, the same as the pipeline
+  overlay), so a smoothed run can be visualized; `--transforms TCSV` maps the smoothed
+  global-frame coords back onto the raw video for an ego-motion run.
 
 **Why raw measurements, not filter state:** pass 2 re-runs the forward pass (cheap) so the
 sidecar stays small and inspectable, and the smoother can be **re-tuned offline with no
