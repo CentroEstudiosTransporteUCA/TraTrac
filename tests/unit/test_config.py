@@ -38,7 +38,7 @@ def _complete(tmp_path: Path, **overrides: Any) -> dict[str, Any]:
 		"calibration": {"meters_per_pixel": 0.05},
 		"ego_motion": {"enabled": False},
 		"tracker": {"det_thresh": 0.1},
-		"orientation": {"smoothing_window": 5},
+		"orientation": {"method": "ema", "smoothing_window": 5},
 		"export": {
 			"out": str(tmp_path / "out.trj"),
 			"timestep_precision": 0.0,
@@ -301,7 +301,32 @@ class TestValueValidation:
 
 	def test_smoothing_window_below_two_is_an_error(self, tmp_path: Path) -> None:
 		with pytest.raises(ConfigError, match=">= 2"):
-			RunConfig.resolve(_complete(tmp_path, orientation={"smoothing_window": 1}), {})
+			RunConfig.resolve(
+				_complete(tmp_path, orientation={"method": "ema", "smoothing_window": 1}), {}
+			)
+
+	def test_kalman_method_resolves_its_params(self, tmp_path: Path) -> None:
+		run = RunConfig.resolve(
+			_complete(
+				tmp_path,
+				orientation={"method": "kalman", "kalman_pos_noise": 2.0, "kalman_jerk": 15.0},
+			),
+			{},
+		)
+		assert run.orientation.method.value == "kalman"
+		assert run.orientation.kalman_pos_noise == 2.0
+		assert run.orientation.kalman_jerk == 15.0
+
+	def test_kalman_method_requires_its_params(self, tmp_path: Path) -> None:
+		with pytest.raises(ConfigError) as excinfo:
+			RunConfig.resolve(_complete(tmp_path, orientation={"method": "kalman"}), {})
+		problems = excinfo.value.problems
+		assert "orientation.kalman_pos_noise is missing." in problems
+		assert "orientation.kalman_jerk is missing." in problems
+
+	def test_unknown_orientation_method_is_an_error(self, tmp_path: Path) -> None:
+		with pytest.raises(ConfigError, match="unknown"):
+			RunConfig.resolve(_complete(tmp_path, orientation={"method": "wat"}), {})
 
 	def test_unknown_detector_name_is_an_error(self, tmp_path: Path) -> None:
 		file_values = _complete(tmp_path)

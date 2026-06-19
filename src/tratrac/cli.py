@@ -22,10 +22,13 @@ from tratrac.application.config import (
 	ConfigError,
 	DetectorChoice,
 	DetectorConfig,
+	OrientationChoice,
+	OrientationConfig,
 	RunConfig,
 )
 from tratrac.application.exclusion import to_global_polygons
 from tratrac.application.orientation import EmaOrientationEstimator
+from tratrac.application.orientation_kalman import KalmanOrientationEstimator
 from tratrac.application.pipeline import TrajectoryPipeline
 from tratrac.domain.exclusion import ExclusionZones
 from tratrac.domain.frame import VideoMetadata
@@ -194,11 +197,29 @@ def process(
 		float | None,
 		typer.Option("--det-thresh", help="Tracker detection threshold (tracker.det_thresh)."),
 	] = None,
+	orientation: Annotated[
+		OrientationChoice | None,
+		typer.Option("--orientation", help="Kinematics estimator (orientation.method)."),
+	] = None,
 	smoothing_window: Annotated[
 		int | None,
 		typer.Option(
 			"--smoothing-window",
 			help="Orientation EMA window, >= 2 (orientation.smoothing_window).",
+		),
+	] = None,
+	kalman_pos_noise: Annotated[
+		float | None,
+		typer.Option(
+			"--kalman-pos-noise",
+			help="Kalman measurement-noise std in px (orientation.kalman_pos_noise).",
+		),
+	] = None,
+	kalman_jerk: Annotated[
+		float | None,
+		typer.Option(
+			"--kalman-jerk",
+			help="Kalman process jerk density; higher = more responsive (orientation.kalman_jerk).",
 		),
 	] = None,
 	timestep_precision: Annotated[
@@ -297,7 +318,10 @@ def process(
 		"ego_motion.min_anchor_overlap": min_anchor_overlap,
 		"ego_motion.transforms": transforms,
 		"tracker.det_thresh": det_thresh,
+		"orientation.method": orientation.value if orientation is not None else None,
 		"orientation.smoothing_window": smoothing_window,
+		"orientation.kalman_pos_noise": kalman_pos_noise,
+		"orientation.kalman_jerk": kalman_jerk,
 		"export.timestep_precision": timestep_precision,
 		"export.video_out": video_out,
 		"export.video_trail": video_trail,
@@ -474,9 +498,8 @@ def process(
 					),
 				]
 			)
-		orientation: OrientationEstimator = EmaOrientationEstimator(
-			smoothing_window=run.orientation.smoothing_window,
-			meters_per_pixel=scale,
+		orientation_estimator: OrientationEstimator = _build_orientation(
+			run.orientation, scale=scale
 		)
 		with (
 			_timing_sink(run.options.timing_csv) as sink,
@@ -486,7 +509,7 @@ def process(
 			if sink is not None:
 				det = TimedDetector(det, sink)
 				tracker = TimedTracker(tracker, sink)
-				orientation = TimedOrientation(orientation, sink)
+				orientation_estimator = TimedOrientation(orientation_estimator, sink)
 				exporter = TimedExporter(exporter, sink)
 			# Persist raw tracked measurements ("export B") by teeing the tracker output
 			# (pipeline untouched). Outermost wrap, so the TRACK timing measures only the
@@ -505,7 +528,7 @@ def process(
 				detector=det,
 				tracker=tracker,
 				exporter=exporter,
-				orientation=orientation,
+				orientation=orientation_estimator,
 				reporter=ConsoleProgressReporter(),
 				detection_observer=detection_observer,
 				detection_mask=detection_mask,
@@ -585,6 +608,17 @@ def _open_video(
 		except ValueError as exc:
 			raise typer.BadParameter(str(exc)) from exc
 		yield source
+
+
+def _build_orientation(config: OrientationConfig, *, scale: float) -> OrientationEstimator:
+	"""Select the kinematics estimator: EMA finite-difference or forward Kalman."""
+	if config.method is OrientationChoice.KALMAN:
+		return KalmanOrientationEstimator(
+			meters_per_pixel=scale,
+			pos_noise=config.kalman_pos_noise,
+			jerk=config.kalman_jerk,
+		)
+	return EmaOrientationEstimator(smoothing_window=config.smoothing_window, meters_per_pixel=scale)
 
 
 def _build_detector(detector: DetectorConfig, *, device: str) -> Detector:

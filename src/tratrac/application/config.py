@@ -143,9 +143,28 @@ class TrackerConfig:
 	det_thresh: float
 
 
+class OrientationChoice(StrEnum):
+	"""Kinematics estimator: EMA finite-difference (default) or forward Kalman.
+
+	``ema`` is the original windowed finite-difference estimator. ``kalman`` runs a
+	streaming constant-acceleration forward filter (de-jitters the live ``.trj``; the
+	offline ``tratrac-smooth`` RTS pass is preferred when the whole clip is available).
+	See vault/22_smoothing.md.
+	"""
+
+	EMA = "ema"
+	KALMAN = "kalman"
+
+
 @dataclass(frozen=True, slots=True)
 class OrientationConfig:
+	"""Kinematics config. ``smoothing_window`` matters only for ``ema``; the Kalman
+	parameters only for ``kalman`` (the unused set holds ignored placeholders)."""
+
+	method: OrientationChoice
 	smoothing_window: int
+	kalman_pos_noise: float
+	kalman_jerk: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -240,9 +259,7 @@ class RunConfig:
 		det_thresh = resolver.required_float("tracker.det_thresh")
 		_check_range(det_thresh, 0.0, 1.0, "tracker.det_thresh", resolver)
 
-		smoothing_window = resolver.required_int("orientation.smoothing_window")
-		if resolver.present("orientation.smoothing_window") and smoothing_window < 2:
-			resolver.problems.append("orientation.smoothing_window must be >= 2.")
+		orientation = _resolve_orientation(resolver)
 
 		out = resolver.required_path("export.out")
 		timestep_precision = resolver.required_float("export.timestep_precision")
@@ -280,7 +297,7 @@ class RunConfig:
 			calibration=calibration,
 			ego_motion=ego_motion,
 			tracker=TrackerConfig(det_thresh=det_thresh),
-			orientation=OrientationConfig(smoothing_window=smoothing_window),
+			orientation=orientation,
 			export=ExportConfig(
 				out=out,
 				timestep_precision=timestep_precision,
@@ -553,6 +570,37 @@ def _resolve_ego_motion(resolver: _Resolver) -> EgoMotionConfig:
 		ransac_threshold=ransac_threshold,
 		min_anchor_overlap=min_anchor_overlap,
 		transforms=None,
+	)
+
+
+def _resolve_orientation(resolver: _Resolver) -> OrientationConfig:
+	"""Resolve the kinematics estimator. ``method`` is always required; ``smoothing_window``
+	is required only for ``ema`` and the Kalman parameters only for ``kalman``."""
+	name = resolver.required_str("orientation.method")
+	try:
+		method = OrientationChoice(name)
+	except ValueError:
+		if name:  # empty already reported as missing
+			valid = ", ".join(choice.value for choice in OrientationChoice)
+			resolver.problems.append(f"orientation.method {name!r} is unknown; valid: {valid}.")
+		method = OrientationChoice.EMA
+
+	if method is OrientationChoice.KALMAN:
+		pos_noise = resolver.required_float("orientation.kalman_pos_noise")
+		if resolver.present("orientation.kalman_pos_noise") and pos_noise <= 0.0:
+			resolver.problems.append("orientation.kalman_pos_noise must be positive.")
+		jerk = resolver.required_float("orientation.kalman_jerk")
+		if resolver.present("orientation.kalman_jerk") and jerk <= 0.0:
+			resolver.problems.append("orientation.kalman_jerk must be positive.")
+		return OrientationConfig(
+			method=method, smoothing_window=0, kalman_pos_noise=pos_noise, kalman_jerk=jerk
+		)
+
+	smoothing_window = resolver.required_int("orientation.smoothing_window")
+	if resolver.present("orientation.smoothing_window") and smoothing_window < 2:
+		resolver.problems.append("orientation.smoothing_window must be >= 2.")
+	return OrientationConfig(
+		method=method, smoothing_window=smoothing_window, kalman_pos_noise=0.0, kalman_jerk=0.0
 	)
 
 

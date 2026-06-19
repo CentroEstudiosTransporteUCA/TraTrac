@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from tratrac.application.kalman import smooth_track
+from tratrac.application.kalman import SmoothedSample, smooth_track
 from tratrac.domain.geometry import Dimensions, Heading, Point2D, Vector2D
 from tratrac.domain.vehicle import VehicleState
 
@@ -56,36 +56,64 @@ def smooth_to_states(
 	)
 	states: list[VehicleState] = []
 	last_heading: Heading | None = None
-	for sample, point in zip(samples, smoothed, strict=True):
-		velocity = Vector2D(point.vx * scale, point.vy * scale)
-		speed = velocity.magnitude
-		if speed >= _VELOCITY_EPSILON:
-			last_heading = velocity.normalized()
-			heading = last_heading
-		else:
-			heading = last_heading or _major_axis_heading(sample.width, sample.height)
-		# Longitudinal acceleration = d|v|/dt = (v·a)/|v| (the SSAM Acceleration field).
-		accel_x, accel_y = point.ax * scale, point.ay * scale
-		acceleration = (
-			(velocity.dx * accel_x + velocity.dy * accel_y) / speed
-			if speed >= _VELOCITY_EPSILON
-			else 0.0
+	for sample, kinematics in zip(samples, smoothed, strict=True):
+		state, last_heading = build_state(
+			track_id=track_id,
+			timestamp_seconds=sample.timestamp_seconds,
+			kinematics=kinematics,
+			width=sample.width,
+			height=sample.height,
+			scale=scale,
+			last_heading=last_heading,
 		)
-		states.append(
-			VehicleState(
-				vehicle_id=track_id,
-				timestamp_seconds=sample.timestamp_seconds,
-				centroid=Point2D(point.px * scale, point.py * scale),
-				heading=heading,
-				dimensions=Dimensions(
-					length=max(sample.width, sample.height) * scale,
-					width=min(sample.width, sample.height) * scale,
-				),
-				velocity=velocity,
-				acceleration=acceleration,
-			)
-		)
+		states.append(state)
 	return states
+
+
+def build_state(
+	*,
+	track_id: int,
+	timestamp_seconds: float,
+	kinematics: SmoothedSample,
+	width: float,
+	height: float,
+	scale: float,
+	last_heading: Heading | None,
+) -> tuple[VehicleState, Heading | None]:
+	"""Reconstruct a ``VehicleState`` from one smoothed sample + the source bbox size.
+
+	Shared by the offline post-pass and the inline forward filter. Returns the state and
+	the heading to remember for the next frame's low-speed fallback (only updated while
+	the vehicle is actually moving). Pixel kinematics are scaled to metric by ``scale``.
+	"""
+	velocity = Vector2D(kinematics.vx * scale, kinematics.vy * scale)
+	speed = velocity.magnitude
+	if speed >= _VELOCITY_EPSILON:
+		heading: Heading = velocity.normalized()
+		remembered: Heading | None = heading
+	else:
+		heading = last_heading or _major_axis_heading(width, height)
+		remembered = last_heading
+	# Longitudinal acceleration = d|v|/dt = (v·a)/|v| (the SSAM Acceleration field).
+	accel_x, accel_y = kinematics.ax * scale, kinematics.ay * scale
+	acceleration = (
+		(velocity.dx * accel_x + velocity.dy * accel_y) / speed
+		if speed >= _VELOCITY_EPSILON
+		else 0.0
+	)
+	state = VehicleState(
+		vehicle_id=track_id,
+		timestamp_seconds=timestamp_seconds,
+		centroid=Point2D(kinematics.px * scale, kinematics.py * scale),
+		heading=heading,
+		dimensions=Dimensions(
+			length=max(width, height) * scale,
+			width=min(width, height) * scale,
+		),
+		velocity=velocity,
+		acceleration=acceleration,
+	)
+	return state, remembered
 
 
 def _major_axis_heading(width: float, height: float) -> Heading:
