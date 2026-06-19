@@ -61,3 +61,22 @@ pipeline, exporter, or test changes outside the new adapter and its own tests.
 > The MVP1.9 ORB slice has landed; `06_mvp2.md` still specifies SuperPoint +
 > LightGlue from the start — its stabilization box is now an *upgrade* of MVP1.9's
 > ORB adapter, not a from-scratch addition.
+
+---
+
+### 2. Kinematics: EMA finite-difference → Kalman/RTS smoothing
+
+| | |
+| --- | --- |
+| **Seam** | `OrientationEstimator` port (the ORIENT step) |
+| **Ships with** | `EmaOrientationEstimator` — raw centroid + windowed finite differences |
+| **Target** | constant-acceleration **Kalman/RTS** smoother (`application/kalman.py`) |
+| **Trigger** | acceleration/jerk noise in the exported `.trj` (the standing accel-noise issue) |
+
+The offline path **already shipped** as a two-pass design (`22_smoothing.md`):
+`export.tracks` writes raw observations and `tratrac-smooth` runs forward+RTS into a
+de-jittered `.trj`. What remains optional/deferred is **Stage 4** — wiring the inline
+forward `KalmanOrientationEstimator` behind the port (`orientation.method = kalman`) so
+the *streaming* `.trj` is filtered too (the real-time path). Clean swap: the port returns
+`VehicleState` per frame; nothing downstream knows whether kinematics came from EMA, a
+forward Kalman, or the RTS post-pass.

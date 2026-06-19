@@ -28,6 +28,7 @@ from tratrac.application.exclusion import to_global_polygons
 from tratrac.application.orientation import EmaOrientationEstimator
 from tratrac.application.pipeline import TrajectoryPipeline
 from tratrac.domain.exclusion import ExclusionZones
+from tratrac.domain.frame import VideoMetadata
 from tratrac.domain.geometry import Transform2D
 from tratrac.domain.ports import (
 	DetectionMask,
@@ -38,6 +39,7 @@ from tratrac.domain.ports import (
 	StabilizationTransformSource,
 	TimingSink,
 	Tracker,
+	TrackSink,
 	TrajectoryExporter,
 	TransformSink,
 )
@@ -59,6 +61,8 @@ from tratrac.infrastructure.timing.decorators import (
 	TimedTracker,
 )
 from tratrac.infrastructure.tracking.boxmot_bot_sort import BoxmotBotSortTracker
+from tratrac.infrastructure.tracking.recording import RecordingTracker
+from tratrac.infrastructure.tracks.csv import CsvTrackSink
 from tratrac.infrastructure.transform.csv import CsvTransformSink, read_transforms
 from tratrac.infrastructure.transform.recording import RecordingEgoMotionEstimator
 from tratrac.infrastructure.video.ego_motion_orb import OrbEgoMotionEstimator
@@ -228,6 +232,15 @@ def process(
 			"(export.transform_csv).",
 		),
 	] = None,
+	tracks: Annotated[
+		Path | None,
+		typer.Option(
+			"--tracks",
+			dir_okay=False,
+			help='Track-observation sidecar for the offline tratrac-smooth pass; "" disables '
+			"(export.tracks).",
+		),
+	] = None,
 	start: Annotated[
 		str | None,
 		typer.Option(
@@ -289,6 +302,7 @@ def process(
 		"export.video_out": video_out,
 		"export.video_trail": video_trail,
 		"export.transform_csv": transform_csv,
+		"export.tracks": tracks,
 		"window.start": start,
 		"window.end": end,
 		"analysis.exclusion_zones": exclusion_zones,
@@ -377,6 +391,8 @@ def process(
 				"processing rate.",
 				err=True,
 			)
+	if run.export.tracks is not None and run.export.tracks.resolve() == run.export.out.resolve():
+		raise typer.BadParameter("export.tracks must differ from export.out.")
 	_prepare_output_path(run.export.out, force=run.options.force)
 	if run.options.timing_csv is not None:
 		_prepare_output_path(run.options.timing_csv, force=run.options.force)
@@ -384,6 +400,8 @@ def process(
 		_prepare_output_path(run.export.video_out, force=run.options.force)
 	if run.export.transform_csv is not None:
 		_prepare_output_path(run.export.transform_csv, force=run.options.force)
+	if run.export.tracks is not None:
+		_prepare_output_path(run.export.tracks, force=run.options.force)
 
 	with _open_video(
 		run.input.video,
@@ -463,12 +481,18 @@ def process(
 		with (
 			_timing_sink(run.options.timing_csv) as sink,
 			_transform_sink(run.export.transform_csv) as transform_sink,
+			_track_sink(run.export.tracks, source.metadata, scale) as track_sink,
 		):
 			if sink is not None:
 				det = TimedDetector(det, sink)
 				tracker = TimedTracker(tracker, sink)
 				orientation = TimedOrientation(orientation, sink)
 				exporter = TimedExporter(exporter, sink)
+			# Persist raw tracked measurements ("export B") by teeing the tracker output
+			# (pipeline untouched). Outermost wrap, so the TRACK timing measures only the
+			# real tracker. Feeds the offline tratrac-smooth pass (vault/22).
+			if track_sink is not None:
+				tracker = RecordingTracker(tracker, track_sink)
 			# Persist the per-frame transform by decorating the estimator (the
 			# pipeline stays untouched). The concrete estimator above keeps serving the
 			# overlay's transform_source and the DetectionObserver; the pipeline drives
@@ -627,6 +651,18 @@ def _transform_sink(path: Path | None) -> Iterator[TransformSink | None]:
 		yield None
 		return
 	with CsvTransformSink(path) as sink:
+		yield sink
+
+
+@contextmanager
+def _track_sink(
+	path: Path | None, metadata: VideoMetadata, scale: float
+) -> Iterator[TrackSink | None]:
+	"""Yield a CSV track-observation sink when a path is given, else ``None`` (off)."""
+	if path is None:
+		yield None
+		return
+	with CsvTrackSink(path, metadata, scale=scale) as sink:
 		yield sink
 
 

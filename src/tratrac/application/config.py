@@ -162,6 +162,9 @@ class ExportConfig:
 	# with stabilization off every transform is the identity, so there is nothing to
 	# record. See vault/05_75_mvp1_9.md.
 	transform_csv: Path | None
+	# Optional track-observation sidecar ("export B"): raw tracked measurements for the
+	# offline ``tratrac-smooth`` Kalman/RTS pass. ``None`` = off. See vault/22_smoothing.md.
+	tracks: Path | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -246,6 +249,7 @@ class RunConfig:
 		if timestep_precision < 0.0:
 			resolver.problems.append("export.timestep_precision must be >= 0 (0 = every frame).")
 		video_out, video_trail = _resolve_video(resolver)
+		tracks = resolver.toggleable_path("export.tracks")
 		transform_csv = resolver.toggleable_path("export.transform_csv")
 		if transform_csv is not None and not ego_motion.enabled:
 			resolver.problems.append(
@@ -283,6 +287,7 @@ class RunConfig:
 				video_out=video_out,
 				video_trail=video_trail,
 				transform_csv=transform_csv,
+				tracks=tracks,
 			),
 			window=window,
 			analysis=AnalysisConfig(exclusion_zones=exclusion_zones),
