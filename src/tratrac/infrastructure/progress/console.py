@@ -1,15 +1,21 @@
-"""Console progress reporter: renders progress events to a text stream.
+"""Console progress reporter: renders progress events as a tqdm progress bar.
 
-An infrastructure adapter for the ``ProgressReporter`` port. Writes a single
-in-place updating line to stderr (so it never pollutes stdout, where the CLI
-prints its final summary), throttled to stay readable on long videos.
+An infrastructure adapter for the ``ProgressReporter`` port. Drives a single tqdm
+bar from the pipeline's event stream — created on ``ProcessingStarted`` (its total
+is the number of frames this run will process), advanced on each ``FrameProcessed``
+with the active-track count in the postfix, and closed on finish/failure. Renders
+to stderr by default so it never pollutes stdout, where the CLI prints its final
+summary. tqdm throttles its own redraws, so no manual rate-limiting is needed.
+
+The tqdm bar is created through an injected ``bar_factory`` seam so the reporter is
+unit-testable without driving real terminal output. See vault/14_progress_reporting.md.
 """
 
 from __future__ import annotations
 
 import sys
-import time
-from typing import TextIO
+from collections.abc import Callable
+from typing import Any, Protocol, TextIO
 
 from tratrac.domain.progress import (
 	FrameProcessed,
@@ -20,22 +26,37 @@ from tratrac.domain.progress import (
 )
 
 
+class _Bar(Protocol):
+	"""The slice of the tqdm API this reporter drives (the seam for testing)."""
+
+	def update(self, n: int) -> Any: ...
+
+	def set_postfix(self, *args: Any, **kwargs: Any) -> Any: ...
+
+	def close(self) -> Any: ...
+
+
+BarFactory = Callable[..., _Bar]
+
+
+def _tqdm_bar(**kwargs: Any) -> _Bar:
+	"""Default factory: a real tqdm bar. Imported lazily so tests can inject a fake."""
+	from tqdm import tqdm
+
+	bar: _Bar = tqdm(**kwargs)
+	return bar
+
+
 class ConsoleProgressReporter:
-	"""Renders progress to a stream, updating one line in place.
+	"""Renders progress as a tqdm bar driven by the progress-event stream."""
 
-	``min_interval_seconds`` throttles per-frame redraws by wall-clock time; the
-	final frame (``fraction >= 1.0``) and the start/finish/failure events always
-	render.
-	"""
-
-	def __init__(self, *, stream: TextIO | None = None, min_interval_seconds: float = 0.1) -> None:
-		if min_interval_seconds < 0.0:
-			raise ValueError(f"min_interval_seconds must be >= 0, got {min_interval_seconds}.")
+	def __init__(
+		self, *, stream: TextIO | None = None, bar_factory: BarFactory = _tqdm_bar
+	) -> None:
 		self._stream = stream if stream is not None else sys.stderr
-		self._min_interval = min_interval_seconds
-		# -inf guarantees the first frame always draws regardless of the clock.
-		self._last_draw = float("-inf")
-		self._line_open = False
+		self._bar_factory = bar_factory
+		self._bar: _Bar | None = None
+		self._advanced = 0  # frames already pushed into the bar (to compute the delta)
 
 	def receive(self, event: ProgressEvent) -> None:
 		match event:
@@ -44,7 +65,7 @@ class ConsoleProgressReporter:
 			case FrameProcessed():
 				self._on_frame(event)
 			case ProcessingFinished():
-				self._on_finished(event)
+				self._close()
 			case ProcessingFailed():
 				self._on_failed(event)
 			case _:
@@ -53,35 +74,32 @@ class ConsoleProgressReporter:
 
 	def _on_started(self, event: ProcessingStarted) -> None:
 		meta = event.metadata
-		self._write(
-			f"Processing {meta.total_frames} frames "
-			f"({meta.width}x{meta.height} @ {meta.fps:.1f} fps)\n"
+		self._advanced = 0
+		self._bar = self._bar_factory(
+			total=meta.total_frames if meta.total_frames > 0 else None,
+			desc="Processing",
+			unit="frame",
+			file=self._stream,
+			dynamic_ncols=True,
 		)
 
 	def _on_frame(self, event: FrameProcessed) -> None:
-		now = time.monotonic()
-		if event.fraction < 1.0 and now - self._last_draw < self._min_interval:
+		if self._bar is None:
 			return
-		self._last_draw = now
-		self._write(
-			f"\r{event.percent:5.1f}% | frame {event.frames_done}/{event.total_frames} "
-			f"| t={event.timestamp_seconds:7.1f}s | {event.active_tracks} tracked"
-		)
-		self._line_open = True
-
-	def _on_finished(self, event: ProcessingFinished) -> None:
-		self._close_line()
-		self._write(f"Done: {event.frames_processed} frames processed.\n")
+		delta = event.frames_done - self._advanced
+		if delta <= 0:
+			return
+		self._advanced = event.frames_done
+		# Postfix without an immediate redraw; update() does the throttled refresh.
+		self._bar.set_postfix(tracks=event.active_tracks, refresh=False)
+		self._bar.update(delta)
 
 	def _on_failed(self, event: ProcessingFailed) -> None:
-		self._close_line()
-		self._write(f"Failed at frame {event.frame_index}: {event.error}\n")
-
-	def _close_line(self) -> None:
-		if self._line_open:
-			self._write("\n")
-			self._line_open = False
-
-	def _write(self, text: str) -> None:
-		self._stream.write(text)
+		self._close()
+		self._stream.write(f"Failed at frame {event.frame_index}: {event.error}\n")
 		self._stream.flush()
+
+	def _close(self) -> None:
+		if self._bar is not None:
+			self._bar.close()
+			self._bar = None
