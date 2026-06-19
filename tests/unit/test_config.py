@@ -45,6 +45,7 @@ def _complete(tmp_path: Path, **overrides: Any) -> dict[str, Any]:
 			"video_out": "",
 			"video_trail": 0,
 			"transform_csv": "",
+			"tracks": "",
 		},
 		"window": {"start": "", "end": ""},
 		"analysis": {"exclusion_zones": ""},
@@ -395,6 +396,21 @@ class TestTransformCsv:
 		file_values["export"]["video_out"] = str(tmp_path / "overlay.mp4")
 		file_values["export"]["video_trail"] = -1
 		with pytest.raises(ConfigError, match="video_trail must be"):
+			RunConfig.resolve(file_values, {})
+
+	def test_tracks_off_resolves_to_none(self, tmp_path: Path) -> None:
+		assert RunConfig.resolve(_complete(tmp_path), {}).export.tracks is None  # "" disables
+
+	def test_tracks_path_resolves(self, tmp_path: Path) -> None:
+		file_values = _complete(tmp_path)
+		file_values["export"]["tracks"] = str(tmp_path / "tracks.csv")
+		run = RunConfig.resolve(file_values, {})
+		assert run.export.tracks == tmp_path / "tracks.csv"
+
+	def test_tracks_missing_key_is_an_error(self, tmp_path: Path) -> None:
+		file_values = _complete(tmp_path)
+		del file_values["export"]["tracks"]
+		with pytest.raises(ConfigError, match="tracks is missing"):
 			RunConfig.resolve(file_values, {})
 
 	def test_cli_video_out_override_enables_overlay(self, tmp_path: Path) -> None:

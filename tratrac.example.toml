@@ -61,6 +61,8 @@ video_out = ""                    # "" = no overlay video; else an .mp4 of frame
 video_trail = 0                   # overlay trail length in frames; 0 = whole path (only used when video_out set)
 transform_csv = ""                # "" = off; else a per-frame ego-motion transform CSV. Requires ego_motion.enabled
                                   # (lets scripts/render_violations.py map global-frame positions back onto the raw video)
+tracks = ""                       # "" = off; else a track-observation sidecar (raw measurements, "export B")
+                                  # for the offline `tratrac-smooth` Kalman/RTS de-jitter pass. See vault/22.
 
 [window]
 start = ""                        # "" = clip start; else HH:MM:SS(.ms) / MM:SS / SS
