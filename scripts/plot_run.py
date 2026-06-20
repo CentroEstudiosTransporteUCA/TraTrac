@@ -14,12 +14,17 @@ into a per-run folder ``<stem>/``:
 The `.trj` is parsed inline (SSAM v1.04): positions are in image pixels; speed/accel are
 metric (m/s, m/s^2) when the run had a real GSD scale.
 
-Pass ``--video FILE`` (or a folder of clips, matched to each run by name prefix) to draw
-a frame of the filmed scene behind the trajectory and birth/death panels.
+For the scene behind the trajectory and birth/death panels:
+  - ``--video FILE`` (or a folder, prefix-matched) draws one still frame — fine for a
+    static camera.
+  - ``--scout-dir DIR`` draws a **mosaic of the whole swept area**: the scout's
+    ``frame_*.png`` anchors warped by the run's ``<stem>_transforms.csv`` into the .trj's
+    global frame, with transparent gaps where no frame covered. Use this for moving-drone
+    runs whose trajectories span more than one frame.
 
 Usage:
     uv run python scripts/plot_run.py OUTPUTS_DIR [--out DIR] [--accel-bound 8.0]
-        [--video CLIP_OR_FOLDER]
+        [--video CLIP_OR_FOLDER] [--scout-dir SCOUT_OR_PARENT]
 """
 
 from __future__ import annotations
@@ -109,14 +114,119 @@ def read_track_scores(path: Path) -> np.ndarray:
 
 
 _VIDEO_SUFFIXES = {".mp4", ".mov", ".avi", ".mkv", ".m4v"}
+Pose = tuple[float, float, float, float, float, float]  # a, b, c, d, tx, ty
 
 
-def background_for(stem: str, video_arg: Path | None) -> np.ndarray | None:
-	"""Grab one RGB frame of the clip for this run (a file, or the best match in a folder).
+@dataclass
+class Background:
+	"""An image to sit behind a spatial panel, already placed in the .trj's coordinates.
 
-	Folder match is by name prefix up to the first underscore (``cruce_ema`` -> ``cruce_*``),
-	which lines a multi-config outputs tree up with a ``resources/`` video folder.
+	``image`` is drawn with ``imshow(extent=..., origin=...)``; ``clip`` forces the axes
+	to the image bounds (single frame) or lets them autoscale to also fit the data (the
+	mosaic, which may be smaller than the trajectories' full extent).
 	"""
+
+	image: np.ndarray
+	extent: tuple[float, float, float, float]  # left, right, bottom, top (trj coords)
+	origin: str
+	clip: bool
+
+
+def _read_transforms(path: Path) -> dict[int, Pose]:
+	"""Per-frame ego-motion poses (frame -> a,b,c,d,tx,ty) from a run's transform CSV."""
+	out: dict[int, Pose] = {}
+	with path.open(newline="") as handle:
+		for row in csv.DictReader(handle):
+			out[int(row["frame"])] = (
+				float(row["a"]),
+				float(row["b"]),
+				float(row["c"]),
+				float(row["d"]),
+				float(row["tx"]),
+				float(row["ty"]),
+			)
+	return out
+
+
+def _nearest_pose(transforms: dict[int, Pose], index: int) -> Pose | None:
+	"""The pose at ``index``, or the closest available frame's (anchors may be skipped)."""
+	if not transforms:
+		return None
+	if index in transforms:
+		return transforms[index]
+	return transforms[min(transforms, key=lambda k: abs(k - index))]
+
+
+def _anchor_frames(scout_dir: Path) -> list[tuple[int, Path]]:
+	"""(frame_index, png) pairs from a scout dir's ``frame_<index>.png`` anchors."""
+	anchors: list[tuple[int, Path]] = []
+	for png in sorted(scout_dir.glob("frame_*.png")):
+		try:
+			anchors.append((int(png.stem.split("_")[1]), png))
+		except (IndexError, ValueError):
+			continue
+	return anchors
+
+
+def _scout_dir_for(stem: str, scout_arg: Path | None) -> Path | None:
+	"""The scout dir for this run: ``scout_arg`` itself, or its prefix-matched subdir."""
+	if scout_arg is None or not scout_arg.is_dir():
+		return None
+	if any(scout_arg.glob("frame_*.png")):
+		return scout_arg
+	token = stem.split("_")[0]
+	for sub in sorted(scout_arg.iterdir()):
+		if sub.is_dir() and sub.name.split("_")[0] == token and any(sub.glob("frame_*.png")):
+			return sub
+	return None
+
+
+def _build_mosaic(
+	anchors: list[tuple[int, Path]], transforms: dict[int, Pose], h_raw: int, max_dim: int = 4000
+) -> Background | None:
+	"""Warp each anchor frame by the run's pose into one RGBA canvas (transparent gaps).
+
+	The result is in the .trj's global frame (the run's transforms define it), flipped to
+	the .trj's y-up convention via the extent, so trajectories overlay directly.
+	"""
+	placements: list[tuple[np.ndarray, Pose]] = []
+	xs: list[float] = []
+	ys: list[float] = []
+	for index, png in anchors:
+		pose = _nearest_pose(transforms, index)
+		bgr = cv2.imread(str(png))
+		if pose is None or bgr is None:
+			continue
+		a, b, c, d, tx, ty = pose
+		img = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+		h, w = img.shape[:2]
+		for x, y in ((0, 0), (w, 0), (0, h), (w, h)):
+			xs.append(a * x + b * y + tx)
+			ys.append(c * x + d * y + ty)
+		placements.append((img, pose))
+	if not placements:
+		return None
+	gx0, gx1 = int(np.floor(min(xs))), int(np.ceil(max(xs)))
+	gy0, gy1 = int(np.floor(min(ys))), int(np.ceil(max(ys)))
+	width, height = max(1, gx1 - gx0), max(1, gy1 - gy0)
+	scale = min(1.0, max_dim / max(width, height))  # cap canvas resolution; extent is unchanged
+	cw, ch = max(1, round(width * scale)), max(1, round(height * scale))
+	canvas = np.zeros((ch, cw, 4), dtype=np.uint8)
+	for img, (a, b, c, d, tx, ty) in placements:
+		matrix = np.array(
+			[[a * scale, b * scale, (tx - gx0) * scale], [c * scale, d * scale, (ty - gy0) * scale]]
+		)
+		warped = cv2.warpAffine(img, matrix, (cw, ch))
+		mask = cv2.warpAffine(np.full(img.shape[:2], 255, np.uint8), matrix, (cw, ch))
+		covered = mask > 0
+		canvas[covered, :3] = warped[covered]
+		canvas[covered, 3] = 255
+	extent = (float(gx0), float(gx1), float(h_raw - gy1), float(h_raw - gy0))
+	return Background(canvas, extent, "upper", clip=False)
+
+
+def _single_frame(stem: str, video_arg: Path | None) -> Background | None:
+	"""One frame of the clip (a file, or the prefix-matched video in a folder)."""
 	if video_arg is None:
 		return None
 	if video_arg.is_file():
@@ -138,24 +248,40 @@ def background_for(stem: str, video_arg: Path | None) -> np.ndarray | None:
 	capture.release()
 	if not ok:
 		return None
-	rgb: np.ndarray = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-	return rgb
+	rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+	height, width = rgb.shape[:2]
+	return Background(rgb[::-1], (0.0, float(width), 0.0, float(height)), "lower", clip=True)
 
 
-def _draw_background(ax, frame: np.ndarray | None) -> None:
-	"""Place the filmed scene behind a spatial panel.
+def background_for(
+	stem: str,
+	video_arg: Path | None,
+	scout_arg: Path | None,
+	transforms_path: Path | None,
+	h_raw: int,
+) -> Background | None:
+	"""Build the scene background: a scout-anchor mosaic if available, else a single frame.
 
-	The frame is flipped vertically and drawn with ``origin='lower'`` so it lines up with
-	the .trj's y-up image coordinates (the exporter stores ``height - y``).
+	The mosaic needs scout anchor PNGs (``--scout-dir``) plus the run's own transform CSV
+	(``<stem>_transforms.csv``); together they place the swept area in the .trj's frame.
 	"""
-	if frame is None:
+	scout_dir = _scout_dir_for(stem, scout_arg)
+	if scout_dir is not None and transforms_path is not None and transforms_path.exists():
+		mosaic = _build_mosaic(_anchor_frames(scout_dir), _read_transforms(transforms_path), h_raw)
+		if mosaic is not None:
+			return mosaic
+	return _single_frame(stem, video_arg)
+
+
+def _draw_background(ax, background: Background | None) -> None:
+	"""Place the scene (single frame or scout mosaic) behind a spatial panel."""
+	if background is None:
 		return
-	height, width = frame.shape[:2]
-	ax.imshow(
-		frame[::-1], extent=(0.0, float(width), 0.0, float(height)), origin="lower", alpha=0.55
-	)
-	ax.set_xlim(0, width)
-	ax.set_ylim(0, height)
+	ax.imshow(background.image, extent=background.extent, origin=background.origin, alpha=0.55)
+	if background.clip:
+		left, right, bottom, top = background.extent
+		ax.set_xlim(left, right)
+		ax.set_ylim(bottom, top)
 
 
 def _all_jerks(trj: Trj) -> np.ndarray:
@@ -218,7 +344,7 @@ def _draw_jerk(ax, base: Trj, smooth: Trj | None) -> None:
 	ax.set(title="Jerk distribution (all tracks)", xlabel="jerk (m/s³)", ylabel="count (log)")
 
 
-def _draw_trajectories(ax, base: Trj, smooth: Trj | None, background: np.ndarray | None) -> None:
+def _draw_trajectories(ax, base: Trj, smooth: Trj | None, background: Background | None) -> None:
 	ax.set_aspect("equal")
 	_draw_background(ax, background)
 	longest = sorted(base.by_vehicle, key=lambda v: -len(base.by_vehicle[v]))[:6]
@@ -260,7 +386,7 @@ def _draw_birth_death(
 	ax,
 	veh: dict[int, np.ndarray],
 	bounds: tuple[int, int, int, int],
-	background: np.ndarray | None,
+	background: Background | None,
 ) -> None:
 	ax.set_aspect("equal")
 	_draw_background(ax, background)
@@ -300,7 +426,7 @@ def generate(
 	stem: str,
 	folder: Path,
 	accel_bound: float,
-	background: np.ndarray | None,
+	background: Background | None,
 ) -> int:
 	"""Write one PNG per graph into ``folder``; returns the number of PNGs written."""
 	folder.mkdir(parents=True, exist_ok=True)
@@ -353,6 +479,13 @@ def main() -> int:
 		default=None,
 		help="Clip (or folder of clips, matched by name prefix) drawn behind the spatial panels.",
 	)
+	parser.add_argument(
+		"--scout-dir",
+		type=Path,
+		default=None,
+		help="Scout dir (or parent of per-clip dirs) of frame_*.png anchors; warped by the "
+		"run's <stem>_transforms.csv into a swept-area mosaic background.",
+	)
 	args = parser.parse_args()
 
 	if not args.outputs.exists():
@@ -371,11 +504,14 @@ def main() -> int:
 			continue
 		smooth = read_trj(smooth_path) if smooth_path.exists() else None
 		scores = read_track_scores(tracks_path) if tracks_path.exists() else None
+		transforms_path = trj_path.with_name(f"{stem}_transforms.csv")
+		transforms = transforms_path if transforms_path.exists() else None
 		base_dir = args.out if args.out is not None else trj_path.parent
 		folder = base_dir / stem
-		background = background_for(stem, args.video)
+		background = background_for(stem, args.video, args.scout_dir, transforms, base.bounds[3])
 		count = generate(base, smooth, scores, stem, folder, args.accel_bound, background)
-		notes = (" (+smooth)" if smooth else "") + (" (+scene)" if background is not None else "")
+		scene = "" if background is None else (" (+mosaic)" if not background.clip else " (+scene)")
+		notes = (" (+smooth)" if smooth else "") + scene
 		print(f"{stem}: {len(base.by_vehicle)} tracks{notes} -> {folder}/ ({count} png)")
 	return 0
 
