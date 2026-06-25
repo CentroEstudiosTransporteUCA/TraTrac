@@ -11,13 +11,17 @@ import numpy as np
 from tratrac.application.pipeline import TrajectoryPipeline
 from tratrac.domain.detection import Detection, TrackedDetection, VehicleClass
 from tratrac.domain.frame import Frame, VideoMetadata
-from tratrac.domain.geometry import BoundingBox
+from tratrac.domain.geometry import BoundingBox, Transform2D
 from tratrac.domain.timing import PipelineStep, StepTiming
 from tratrac.infrastructure.timing.csv import CsvTimingSink
 from tratrac.infrastructure.timing.decorators import (
 	StepStopwatch,
+	TimedDetectionObserver,
 	TimedDetector,
+	TimedEgoMotion,
+	TimedStabilizer,
 	TimedTracker,
+	TimedTrackSink,
 )
 
 
@@ -149,24 +153,106 @@ class TestTimedTracker:
 		assert sink.records == [StepTiming(PipelineStep.TRACK, 0, 0.25)]
 
 
+class TestTimedDetectionObserver:
+	def test_forwards_and_records_observe(self) -> None:
+		seen: list[list[Detection]] = []
+		sink = _RecordingSink()
+		timed = TimedDetectionObserver(
+			type("_Obs", (), {"observe": lambda _self, d: seen.append(d)})(),
+			sink,
+			clock=_StubClock([0.0, 0.01]),
+		)
+		timed.observe([_det()])
+		assert len(seen) == 1
+		assert sink.records == [StepTiming(PipelineStep.OBSERVE, 0, 0.01)]
+
+
+class TestTimedEgoMotion:
+	def test_forwards_result_and_records_ego_motion(self) -> None:
+		transform = Transform2D(a=1.0, b=0.0, tx=5.0, c=0.0, d=1.0, ty=0.0)
+		sink = _RecordingSink()
+		timed = TimedEgoMotion(
+			type("_Ego", (), {"estimate": lambda _self, _f: transform})(),
+			sink,
+			clock=_StubClock([0.0, 0.3]),
+		)
+		assert timed.estimate(_frame()) is transform
+		assert sink.records == [StepTiming(PipelineStep.EGOMOTION, 0, 0.3)]
+
+
+class TestTimedStabilizer:
+	def test_forwards_result_and_records_stabilize(self) -> None:
+		result = [_det()]
+		sink = _RecordingSink()
+		timed = TimedStabilizer(
+			type("_Stab", (), {"stabilize": lambda _self, _d, _t: result})(),
+			sink,
+			clock=_StubClock([0.0, 0.02]),
+		)
+		assert timed.stabilize([], Transform2D.identity()) is result
+		assert sink.records == [StepTiming(PipelineStep.STABILIZE, 0, 0.02)]
+
+
+class _RecordingTrackSink:
+	def __init__(self) -> None:
+		self.recorded: list[int] = []
+		self.entered = False
+		self.exited = False
+
+	def record(self, frame_index: int, tracked: list[TrackedDetection]) -> None:
+		self.recorded.append(frame_index)
+
+	def __enter__(self) -> _RecordingTrackSink:
+		self.entered = True
+		return self
+
+	def __exit__(
+		self,
+		exc_type: type[BaseException] | None,
+		exc_val: BaseException | None,
+		exc_tb: TracebackType | None,
+	) -> None:
+		self.exited = True
+
+
+class TestTimedTrackSink:
+	def test_times_record_and_delegates_context_manager(self) -> None:
+		inner = _RecordingTrackSink()
+		sink = _RecordingSink()
+		timed = TimedTrackSink(inner, sink, clock=_StubClock([0.0, 0.001]))
+		with timed:
+			timed.record(5, [])
+		assert inner.recorded == [5]
+		assert inner.entered
+		assert inner.exited
+		assert sink.records == [StepTiming(PipelineStep.RECORD, 0, 0.001)]
+
+
 class TestCsvTimingSink:
 	def test_writes_one_wide_row_per_frame(self, tmp_path: Path) -> None:
 		path = tmp_path / "timings.csv"
 		with CsvTimingSink(path) as sink:
 			for ordinal in (0, 1):
 				sink.record(StepTiming(PipelineStep.DETECT, ordinal, 0.5))
+				sink.record(StepTiming(PipelineStep.OBSERVE, ordinal, 0.01))
+				sink.record(StepTiming(PipelineStep.EGOMOTION, ordinal, 0.3))
+				sink.record(StepTiming(PipelineStep.STABILIZE, ordinal, 0.02))
 				sink.record(StepTiming(PipelineStep.TRACK, ordinal, 0.25))
+				sink.record(StepTiming(PipelineStep.RECORD, ordinal, 0.001))
 		lines = path.read_text().splitlines()
-		assert lines[0] == "frame,detect,track"
-		assert lines[1] == "0,0.5,0.25"
-		assert lines[2] == "1,0.5,0.25"
+		assert lines[0] == "frame,detect,observe,ego_motion,stabilize,track,record"
+		assert lines[1] == "0,0.5,0.01,0.3,0.02,0.25,0.001"
+		assert lines[2] == "1,0.5,0.01,0.3,0.02,0.25,0.001"
 
-	def test_partial_final_frame_flushes_with_blanks_on_close(self, tmp_path: Path) -> None:
+	def test_stabilization_only_steps_blank_on_a_non_stabilized_run(self, tmp_path: Path) -> None:
+		# detect/track/record present; observe/ego_motion/stabilize blank.
 		path = tmp_path / "partial.csv"
 		with CsvTimingSink(path) as sink:
 			sink.record(StepTiming(PipelineStep.DETECT, 0, 0.5))
+			sink.record(StepTiming(PipelineStep.TRACK, 0, 0.25))
+			sink.record(StepTiming(PipelineStep.RECORD, 0, 0.001))
 		lines = path.read_text().splitlines()
-		assert lines[1] == "0,0.5,"
+		assert lines[1] == "0,0.5,,,,0.25,0.001"
 
 
 class TestDecoratedPipeline:
