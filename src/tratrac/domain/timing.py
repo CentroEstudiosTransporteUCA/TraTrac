@@ -15,7 +15,11 @@ class PipelineStep(StrEnum):
 	"""The per-frame pipeline steps that can be timed."""
 
 	DETECT = "detect"
+	OBSERVE = "observe"
+	EGOMOTION = "ego_motion"
+	STABILIZE = "stabilize"
 	TRACK = "track"
+	RECORD = "record"
 
 
 @dataclass(frozen=True, slots=True)

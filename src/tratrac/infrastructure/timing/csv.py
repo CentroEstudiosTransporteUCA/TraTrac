@@ -1,9 +1,11 @@
-"""CSV timing sink: one wide row per frame (frame, detect, track).
+"""CSV timing sink: one wide row per frame (frame, detect, observe, ego_motion,
+stabilize, track, record).
 
 Buffers a frame's step timings and flushes the row when the frame ordinal
 advances — safe because every step runs once per frame, so a frame's records
-arrive consecutively. The last frame (and any partial frame from a mid-step
-crash) flushes on close. See vault/15_step_timing.md.
+arrive consecutively. The stabilization-only steps (observe, ego_motion, stabilize)
+are blank on a non-stabilized run. The last frame (and any partial frame from a
+mid-step crash) flushes on close. See vault/15_step_timing.md.
 """
 
 from __future__ import annotations
@@ -17,7 +19,11 @@ from tratrac.domain.timing import PipelineStep, StepTiming
 
 _STEP_ORDER = (
 	PipelineStep.DETECT,
+	PipelineStep.OBSERVE,
+	PipelineStep.EGOMOTION,
+	PipelineStep.STABILIZE,
 	PipelineStep.TRACK,
+	PipelineStep.RECORD,
 )
 
 
