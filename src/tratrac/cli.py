@@ -31,14 +31,17 @@ from tratrac.application.config import (
 	RunConfig,
 )
 from tratrac.application.pipeline import TrajectoryPipeline
+from tratrac.application.stabilization import EgoMotionStabilizer
 from tratrac.domain.geometry import Transform2D
 from tratrac.domain.ports import (
 	AnchorSink,
 	DetectionObserver,
+	DetectionStabilizer,
 	Detector,
 	EgoMotionEstimator,
 	TimingSink,
 	Tracker,
+	TrackSink,
 	TransformSink,
 )
 from tratrac.infrastructure.anchors.recording import AnchorRecordingEgoMotionEstimator
@@ -48,7 +51,14 @@ from tratrac.infrastructure.detection.rt_detr import RtDetrDetector
 from tratrac.infrastructure.detection.yolov8_visdrone import YoloV8VisDroneDetector
 from tratrac.infrastructure.progress.console import ConsoleProgressReporter
 from tratrac.infrastructure.timing.csv import CsvTimingSink
-from tratrac.infrastructure.timing.decorators import TimedDetector, TimedTracker
+from tratrac.infrastructure.timing.decorators import (
+	TimedDetectionObserver,
+	TimedDetector,
+	TimedEgoMotion,
+	TimedStabilizer,
+	TimedTracker,
+	TimedTrackSink,
+)
 from tratrac.infrastructure.tracking.boxmot_bot_sort import BoxmotBotSortTracker
 from tratrac.infrastructure.tracks.parquet import ParquetTrackSink
 from tratrac.infrastructure.transform.csv import CsvTransformSink
@@ -326,27 +336,44 @@ def process(
 			det_thresh=run.tracker.det_thresh,
 			compensate_camera_motion=not run.ego_motion.enabled,
 		)
+		# Map detections into the global frame when ego-motion is on; the pipeline's Null
+		# default (pass-through) handles a non-stabilized run.
+		stabilizer: DetectionStabilizer | None = (
+			EgoMotionStabilizer() if run.ego_motion.enabled else None
+		)
 		with (
 			_timing_sink(run.options.timing_csv) as sink,
 			_transform_sink(run.export.transform_csv) as transform_sink,
 			_anchor_sink(run.export.anchors_dir, video_label=str(run.input.video)) as anchor_sink,
 		):
+			# Per-step timing wraps each port once per frame (vault/15). detect/track/record
+			# always run; observe/ego-motion/stabilize only on a stabilized run.
 			if sink is not None:
 				det = TimedDetector(det, sink)
 				tracker = TimedTracker(tracker, sink)
-			# Decorate the estimator to tee the per-frame transform and/or export anchors;
-			# the pipeline stays untouched. The concrete ORB above keeps serving the
-			# DetectionObserver and the anchor queue.
+				if detection_observer is not None:
+					detection_observer = TimedDetectionObserver(detection_observer, sink)
+				if ego_motion is not None:
+					ego_motion = TimedEgoMotion(ego_motion, sink)  # innermost: times the ORB work
+				if stabilizer is not None:
+					stabilizer = TimedStabilizer(stabilizer, sink)
+			# Tee the per-frame transform and/or export anchors; these wrap *outside*
+			# TimedEgoMotion so their I/O is not counted as ego-motion time. The pipeline
+			# stays untouched; the concrete ORB keeps serving the observer + anchor queue.
 			pipeline_ego_motion: EgoMotionEstimator | None = ego_motion
-			if transform_sink is not None and ego_motion is not None:
-				pipeline_ego_motion = RecordingEgoMotionEstimator(ego_motion, transform_sink)
+			if transform_sink is not None and pipeline_ego_motion is not None:
+				pipeline_ego_motion = RecordingEgoMotionEstimator(
+					pipeline_ego_motion, transform_sink
+				)
 			if anchor_sink is not None and pipeline_ego_motion is not None:
 				pipeline_ego_motion = AnchorRecordingEgoMotionEstimator(
 					pipeline_ego_motion, anchor_poses, anchor_sink
 				)
 			# The track record is the run's output. The pipeline owns its lifecycle
 			# (open on enter, close on exit), so it is passed unopened.
-			track_sink = ParquetTrackSink(run.export.out, source.metadata, scale=scale)
+			track_sink: TrackSink = ParquetTrackSink(run.export.out, source.metadata, scale=scale)
+			if sink is not None:
+				track_sink = TimedTrackSink(track_sink, sink)
 			pipeline = TrajectoryPipeline(
 				video=source,
 				detector=det,
@@ -354,6 +381,7 @@ def process(
 				sink=track_sink,
 				reporter=ConsoleProgressReporter(),
 				detection_observer=detection_observer,
+				stabilizer=stabilizer,
 				ego_motion=pipeline_ego_motion,
 			)
 			n_frames = pipeline.run()
