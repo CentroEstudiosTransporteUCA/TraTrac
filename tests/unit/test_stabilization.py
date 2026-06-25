@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-from tratrac.application.stabilization import apply_transform
+from tratrac.application.stabilization import (
+	EgoMotionStabilizer,
+	NullDetectionStabilizer,
+	apply_transform,
+)
 from tratrac.domain.detection import Detection, VehicleClass
 from tratrac.domain.geometry import BoundingBox, Transform2D
 
@@ -47,3 +51,17 @@ def test_preserves_score_and_class() -> None:
 	out = apply_transform(det, Transform2D.identity())
 	assert out.score == det.score
 	assert out.vehicle_class is det.vehicle_class
+
+
+class TestEgoMotionStabilizer:
+	def test_maps_every_detection_through_the_pose(self) -> None:
+		shift = Transform2D(a=1.0, b=0.0, tx=10.0, c=0.0, d=1.0, ty=0.0)
+		out = EgoMotionStabilizer().stabilize([_detection(0.0, 0.0, 4.0, 2.0)], shift)
+		assert out[0].bbox.center.x == pytest.approx(12.0)  # (0+2) + 10
+
+
+class TestNullDetectionStabilizer:
+	def test_returns_detections_unchanged_ignoring_the_pose(self) -> None:
+		dets = [_detection(0.0, 0.0, 4.0, 2.0)]
+		shift = Transform2D(a=1.0, b=0.0, tx=10.0, c=0.0, d=1.0, ty=0.0)
+		assert NullDetectionStabilizer().stabilize(dets, shift) is dets  # same list, untouched

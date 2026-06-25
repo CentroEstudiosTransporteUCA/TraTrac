@@ -41,3 +41,22 @@ def apply_transform(detection: Detection, transform: Transform2D) -> Detection:
 		score=detection.score,
 		vehicle_class=detection.vehicle_class,
 	)
+
+
+class EgoMotionStabilizer:
+	"""``DetectionStabilizer`` that maps each detection into the global frame via the pose.
+
+	The concrete stabilize step for a `--stabilize` run. A first-class collaborator (rather
+	than an inline loop) so it sits behind the ``DetectionStabilizer`` port and is timeable
+	like the other steps (vault/15_step_timing.md)."""
+
+	def stabilize(self, detections: list[Detection], transform: Transform2D) -> list[Detection]:
+		return [apply_transform(detection, transform) for detection in detections]
+
+
+class NullDetectionStabilizer:
+	"""``DetectionStabilizer`` Null Object: pass detections through unchanged (no ego-motion)."""
+
+	def stabilize(self, detections: list[Detection], transform: Transform2D) -> list[Detection]:
+		del transform  # Null Object: no pose to apply
+		return detections

@@ -77,6 +77,17 @@ class DetectionObserver(Protocol):
 	def observe(self, detections: list[Detection]) -> None: ...
 
 
+class DetectionStabilizer(Protocol):
+	"""Maps a frame's detections into the global stabilization frame via its ego-motion pose.
+
+	Applied after ego-motion estimation, before tracking, so the tracker associates
+	ego-motion-free boxes. The Null Object (no stabilization) returns the detections
+	unchanged. A port so the step is decoratable/timeable like the others (vault/15).
+	"""
+
+	def stabilize(self, detections: list[Detection], transform: Transform2D) -> list[Detection]: ...
+
+
 class Tracker(Protocol):
 	"""Assigns stable identities to detections across frames."""
 
