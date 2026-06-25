@@ -132,10 +132,6 @@ class EgoMotionConfig:
 	# Minimum fraction of the keyframe anchor still visible before re-anchoring
 	# (see vault/05_75_mvp1_9.md). Only meaningful when ``enabled``.
 	min_anchor_overlap: float
-	# Optional path to a scout's transform CSV to REPLAY instead of recomputing ORB
-	# (vault/21_exclusion_zones.md). ``None`` = compute live. When set, the ORB
-	# parameters above are unused. Only meaningful when ``enabled``.
-	transforms: Path | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,13 +142,17 @@ class TrackerConfig:
 @dataclass(frozen=True, slots=True)
 class ExportConfig:
 	# The run's primary output: the track record (raw tracked measurements). The
-	# offline ``tratrac-smooth`` pass reads it to produce the SSAM ``.trj`` (vault/22).
+	# offline ``tratrac-postprocess`` pass reads it to produce the SSAM ``.trj`` (vault/22).
 	out: Path
 	# Optional per-frame ego-motion transform CSV (current frame -> global). ``None``
 	# = off. Only meaningful when ego-motion is enabled (``resolve`` enforces this):
 	# with stabilization off every transform is the identity, so there is nothing to
 	# record. See vault/05_75_mvp1_9.md.
 	transform_csv: Path | None
+	# Optional directory for the run's keyframe-anchor PNGs + manifest (the frames an
+	# operator draws exclusion zones on). ``None`` = off. Only meaningful when ego-motion
+	# is enabled (no anchors without live ORB). See vault/21_exclusion_zones.md.
+	anchors_dir: Path | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,16 +161,6 @@ class WindowConfig:
 
 	start_seconds: float | None
 	end_seconds: float | None
-
-
-@dataclass(frozen=True, slots=True)
-class AnalysisConfig:
-	"""What the run analyzes. ``exclusion_zones`` is a sidecar JSON path of
-	image-space polygons whose detections are dropped before tracking (and masked
-	out of ORB ego-motion features); ``None`` = no exclusions. See
-	vault/21_exclusion_zones.md."""
-
-	exclusion_zones: Path | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -191,7 +181,6 @@ class RunConfig:
 	tracker: TrackerConfig
 	export: ExportConfig
 	window: WindowConfig
-	analysis: AnalysisConfig
 	options: RunOptionsConfig
 
 	@classmethod
@@ -234,14 +223,18 @@ class RunConfig:
 				"export.transform_csv requires ego_motion.enabled = true; with stabilization "
 				'off every transform is the identity, so there is nothing to record (use "").'
 			)
+		anchors_dir = resolver.toggleable_path("export.anchors_dir")
+		if anchors_dir is not None and not ego_motion.enabled:
+			resolver.problems.append(
+				"export.anchors_dir requires ego_motion.enabled = true; a static run has no "
+				'keyframe anchors (use "").'
+			)
 
 		window = WindowConfig(
 			start_seconds=_resolve_window_bound(resolver, "window.start"),
 			end_seconds=_resolve_window_bound(resolver, "window.end"),
 		)
 		_validate_window(window, resolver)
-
-		exclusion_zones = resolver.toggleable_path("analysis.exclusion_zones")
 
 		force = resolver.required_bool("run.force")
 		timing_csv = resolver.toggleable_path("run.timing_csv")
@@ -261,9 +254,9 @@ class RunConfig:
 			export=ExportConfig(
 				out=out,
 				transform_csv=transform_csv,
+				anchors_dir=anchors_dir,
 			),
 			window=window,
-			analysis=AnalysisConfig(exclusion_zones=exclusion_zones),
 			options=RunOptionsConfig(force=force, timing_csv=timing_csv),
 		)
 
@@ -478,7 +471,7 @@ def _resolve_ego_motion(resolver: _Resolver) -> EgoMotionConfig:
 	enabled = resolver.required_bool("ego_motion.enabled")
 	if not enabled:
 		# Disabled (or the toggle itself was missing — already reported): the ORB
-		# parameters and replay source are irrelevant. Placeholder zeros/None.
+		# parameters are irrelevant. Placeholder zeros.
 		return EgoMotionConfig(
 			enabled=False,
 			n_features=0,
@@ -486,21 +479,6 @@ def _resolve_ego_motion(resolver: _Resolver) -> EgoMotionConfig:
 			min_matches=0,
 			ransac_threshold=0.0,
 			min_anchor_overlap=0.0,
-			transforms=None,
-		)
-
-	# Replay a recorded schedule instead of computing ORB: the ORB parameters are
-	# then unused (the poses are read back from the CSV). ``""`` = compute live.
-	transforms = resolver.toggleable_path("ego_motion.transforms")
-	if transforms is not None:
-		return EgoMotionConfig(
-			enabled=True,
-			n_features=0,
-			match_ratio=0.0,
-			min_matches=0,
-			ransac_threshold=0.0,
-			min_anchor_overlap=0.0,
-			transforms=transforms,
 		)
 
 	n_features = resolver.required_int("ego_motion.n_features")
@@ -525,7 +503,6 @@ def _resolve_ego_motion(resolver: _Resolver) -> EgoMotionConfig:
 		min_matches=min_matches,
 		ransac_threshold=ransac_threshold,
 		min_anchor_overlap=min_anchor_overlap,
-		transforms=None,
 	)
 
 

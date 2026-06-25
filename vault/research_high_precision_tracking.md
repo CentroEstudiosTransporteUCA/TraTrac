@@ -73,7 +73,7 @@ Highways…* **IEEE 21st ITSC.** <https://arxiv.org/pdf/1810.05642> — *code/da
   you can afford the backward pass an EMA/forward-Kalman can't; (2) *why a constant-accel
   motion model* — it encodes vehicle physics, so it suppresses noise without inventing
   motion; (3) their result: positioning error down to **~1 px (~10 cm)**.
-- **Why it matters to your delivery:** this is exactly the smoother `tratrac-smooth` runs
+- **Why it matters to your delivery:** this is exactly the smoother `tratrac-postprocess` runs
   over the track record to build the `.trj` (the old in-pipeline EMA was removed). Understand RTS here and you can
   defend a real improvement to your trajectory quality — and explain the trade-off (offline
   vs causal).
@@ -218,7 +218,7 @@ not acceleration, why you mask vehicles during stabilization, and what accuracy 
 
 ## 8. What this implies for TraTrac (proposals — your call, not decided)
 
-- **Smoothing:** **shipped** — `tratrac-smooth` runs an RTS / constant-acceleration
+- **Smoothing:** **shipped** — `tratrac-postprocess` runs an RTS / constant-acceleration
   position-domain smoother over the track record before deriving kinematics (the in-pipeline
   EMA was removed in the export inversion). Offline zero-phase fits the batch export.
 - **Stabilization:** **mask detections out of ORB keypoint extraction** in

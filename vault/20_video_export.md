@@ -26,7 +26,7 @@ pulled out:
 - `tratrac-render` does the drawing as a separate step, reusing the *same*
   `OverlayVideoExporter` drawing engine. Only the **driver** changed: the vehicle
   states come from reading a `.trj`, not from live tracking.
-- `tratrac-smooth` likewise dropped its in-process `--video-out`; to visualize a
+- `tratrac-postprocess` likewise dropped its in-process `--video-out`; to visualize a
   smoothed run, render its smoothed `.trj` with `tratrac-render` like any other.
 
 This makes rendering a normal downstream step alongside `validate_trj` / `plot_run`,

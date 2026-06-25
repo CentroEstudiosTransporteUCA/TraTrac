@@ -186,7 +186,7 @@ MVP1 emits **valid v1.04** (no Z, no multi-plane). Concrete choices:
 
 MVP2 replaces Scale + coordinates with real metric values from a single homography; MVP3 introduces v3.0 with Z when multi-homography lands.
 
-**CLI policy (MVP1.75+):** the `tratrac` CLI no longer *defaults* to Scale = 1.0. It requires explicit calibration (`--meters-per-pixel`, or `--drone-model` + `--altitude`/`.SRT`) and exits with an error otherwise, so it cannot silently emit physically meaningless metric values. The scale=1.0 pixel mode described above remains available at the **library** level (`SsamTrjExporter` and the `tratrac-smooth` reconstruction accept any `scale`) for callers that knowingly want it.
+**CLI policy (MVP1.75+):** the `tratrac` CLI no longer *defaults* to Scale = 1.0. It requires explicit calibration (`--meters-per-pixel`, or `--drone-model` + `--altitude`/`.SRT`) and exits with an error otherwise, so it cannot silently emit physically meaningless metric values. The scale=1.0 pixel mode described above remains available at the **library** level (`SsamTrjExporter` and the `tratrac-postprocess` reconstruction accept any `scale`) for callers that knowingly want it.
 
 ---
 

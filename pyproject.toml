@@ -23,8 +23,7 @@ dependencies = [
 
 [project.scripts]
 tratrac = "tratrac.cli:app"
-tratrac-scout = "tratrac.cli_scout:app"
-tratrac-smooth = "tratrac.cli_smooth:app"
+tratrac-postprocess = "tratrac.cli_postprocess:app"
 tratrac-render = "tratrac.cli_render:app"
 
 [build-system]

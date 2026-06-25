@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 
@@ -278,3 +278,26 @@ def _intersect_y(a: Point2D, b: Point2D, y: float) -> Point2D:
 	"""Point where segment a→b crosses the horizontal line Y = ``y``."""
 	t = (y - a.y) / (b.y - a.y)
 	return Point2D(a.x + t * (b.x - a.x), y)
+
+
+def point_in_polygon(point: Point2D, polygon: Sequence[Point2D]) -> bool:
+	"""Whether ``point`` lies inside ``polygon`` (even-odd ray casting).
+
+	Frame-agnostic like the other helpers; works for concave polygons. Boundary cases
+	are not specially handled — sufficient for testing trajectory centroids against ROI
+	polygons (see vault/21_exclusion_zones.md). A polygon of fewer than 3 vertices
+	contains nothing.
+	"""
+	n = len(polygon)
+	if n < 3:
+		return False
+	inside = False
+	j = n - 1
+	for i in range(n):
+		vi, vj = polygon[i], polygon[j]
+		if (vi.y > point.y) != (vj.y > point.y):
+			x_cross = (vj.x - vi.x) * (point.y - vi.y) / (vj.y - vi.y) + vi.x
+			if point.x < x_cross:
+				inside = not inside
+		j = i
+	return inside

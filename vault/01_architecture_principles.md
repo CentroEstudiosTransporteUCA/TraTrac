@@ -69,7 +69,7 @@ Containing:
 
 The perception pipeline produces **only B** — the canonical internal record (raw
 tracked measurements today; the richer fields above as later MVPs add them). **A
-(the SSAM `.trj`) is derived post-hoc** from B by `tratrac-smooth`, which runs the
+(the SSAM `.trj`) is derived post-hoc** from B by `tratrac-postprocess`, which runs the
 trajectory smoother and reconstructs kinematics. The pipeline never computes
 kinematics inline and never re-ingests A. This keeps A a pure, lossy *export* and B
 the single source of truth, and lets the `.trj` be re-derived/re-tuned offline with
