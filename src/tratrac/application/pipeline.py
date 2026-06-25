@@ -1,21 +1,24 @@
 """Pipeline orchestrator: wires VideoSource -> Detector -> Tracker -> TrackSink.
 
-Perception only: it detects, (optionally) removes ego-motion, masks, and tracks, then
-records the raw tracked measurements to a ``TrackSink`` — the canonical run output
-("export B", vault/01). Kinematics (orientation/speed/accel) and the SSAM ``.trj`` are
-**not** produced here; they are derived offline by ``tratrac-smooth`` from the record
-(vault/22). Keeping the pipeline to raw measurements is what lets the smoother de-jitter
-position instead of re-smoothing already-derived kinematics.
+Perception only. The per-frame steps are detect → observe → ego-motion → stabilize →
+track → record (each a port, so each is independently timeable — vault/15): it detects,
+hands the detections to any observer, (optionally) estimates ego-motion and stabilizes the
+detection coordinates, tracks, then records the raw tracked measurements to a ``TrackSink``
+— the canonical run output ("export B", vault/01). Kinematics (orientation/speed/accel) and
+the SSAM ``.trj`` are **not** produced here; they are derived offline by
+``tratrac-postprocess`` from the record (vault/22). Keeping the pipeline to raw measurements
+is what lets the smoother de-jitter position instead of re-smoothing derived kinematics.
 """
 
 from __future__ import annotations
 
 from tratrac.application.detection_observer import NullDetectionObserver
 from tratrac.application.progress import NullProgressReporter
-from tratrac.application.stabilization import apply_transform
+from tratrac.application.stabilization import NullDetectionStabilizer
 from tratrac.domain.geometry import Transform2D
 from tratrac.domain.ports import (
 	DetectionObserver,
+	DetectionStabilizer,
 	Detector,
 	EgoMotionEstimator,
 	ProgressReporter,
@@ -43,6 +46,7 @@ class TrajectoryPipeline:
 		sink: TrackSink,
 		reporter: ProgressReporter | None = None,
 		detection_observer: DetectionObserver | None = None,
+		stabilizer: DetectionStabilizer | None = None,
 		ego_motion: EgoMotionEstimator | None = None,
 	) -> None:
 		self._video = video
@@ -63,6 +67,9 @@ class TrajectoryPipeline:
 		# Same Null Object treatment: the masked-ORB stabilizer subscribes here to
 		# reuse each frame's detections; every other run gets the silent default.
 		self._detection_observer: DetectionObserver = detection_observer or NullDetectionObserver()
+		# Maps detections into the global frame when ego-motion is on; Null Object
+		# (pass-through) otherwise. A port so the step is timeable (vault/15).
+		self._stabilizer: DetectionStabilizer = stabilizer or NullDetectionStabilizer()
 
 	def run(self) -> int:
 		"""Process every frame from the (already-open) video.
@@ -92,10 +99,9 @@ class TrajectoryPipeline:
 						if self._ego_motion is not None
 						else Transform2D.identity()
 					)
-					if self._ego_motion is not None:
-						# Stabilize coordinates, not pixels: map each detection into the
-						# global frame so the tracker associates ego-motion-free boxes.
-						detections = [apply_transform(d, transform) for d in detections]
+					# Stabilize coordinates, not pixels: map each detection into the global
+					# frame so the tracker associates ego-motion-free boxes. Null = no-op.
+					detections = self._stabilizer.stabilize(detections, transform)
 					tracked = self._tracker.update(frame, detections)
 					# Record the raw measurements; this is the run's output.
 					self._sink.record(frame.index, tracked)

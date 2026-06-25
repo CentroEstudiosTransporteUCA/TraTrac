@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 from tratrac.application.pipeline import TrajectoryPipeline
+from tratrac.application.stabilization import EgoMotionStabilizer
 from tratrac.domain.detection import Detection, TrackedDetection, VehicleClass
 from tratrac.domain.frame import Frame, VideoMetadata
 from tratrac.domain.geometry import BoundingBox, Transform2D
@@ -196,6 +197,7 @@ class TestStabilization:
 			detector=_FixedDetector([[_det(0.0)]]),
 			tracker=tracker,
 			sink=_CapturingSink(),
+			stabilizer=EgoMotionStabilizer(),
 			ego_motion=ego,
 		)
 		pipeline.run()
