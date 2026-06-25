@@ -69,23 +69,33 @@ the point back onto the raw frame via `transform_source().inverse()`. For
 `tratrac-render` that per-frame transform comes from the run's `--transforms` CSV
 (identity when omitted / stabilization was off). Trails are stored in stabilized
 coordinates and mapped through the *current* inverse each frame, showing the world
-path from the current camera pose. `scripts/render_violations.py` is the sibling
-overlay tool, marking validator violations on top of this (or any) video.
+path from the current camera pose. Validator violation marks (`--violations`) ride the
+same transform, so they land in the same raw-frame space as the trajectories.
+
+## Violations in the same pass
+
+`tratrac-render --violations CSV` (a `validate_trj.py` violations CSV, optionally
+filtered by `--checks`) marks each non-compliant instance in red **in the same render
+pass** as the trajectories — one encode, "frame + trajectories + violations". It reuses
+`OverlayVideoExporter`'s `annotate` seam (a generic post-draw hook
+`(canvas, frame_index, to_raw)`): the CLI buckets violation rows onto absolute frames by
+`round(timestamp_s * fps)` and the hook draws each frame's marks on top of the
+trajectories, mapped to raw via the same `to_raw`. This replaced the old standalone
+`scripts/render_violations.py`, which required a second encode over the overlay.
 
 ## Components
 
-- `infrastructure/export/overlay_video.py` — `OverlayVideoExporter`
-  (`TrajectoryExporter`). Owns per-track trail accumulation (`trail_length` 0 =
-  whole path, N = rolling window of N frames); only currently-visible tracks are
-  drawn so dead tracks stop ghosting. cv2 lives behind injected seams
-  (`open_writer`, `draw`) plus the `transform_source` seam, so the orchestration
-  (frame copy, trails, coordinate mapping, lifecycle) is unit-testable without cv2
-  or a codec. Unchanged by the move — only its caller changed.
-- `cli_render.py` — `tratrac-render`. Reads the `.trj` (`read_trj`) and the optional
-  transforms CSV, buckets states onto absolute video frames by
-  `round(timestamp * fps)` (fps from the **clip** — the `.trj` carries time but not
-  fps — the same alignment `render_violations.py` uses), and drives a single
-  `OverlayVideoExporter`. It opens the clip **windowed to the `.trj`'s covered span**
+- `infrastructure/export/overlay_video.py` — `OverlayVideoExporter` (a standalone
+  renderer). Owns per-track trail accumulation (`trail_length` 0 = whole path, N =
+  rolling window of N frames); only currently-visible tracks are drawn so dead tracks
+  stop ghosting. cv2 lives behind injected seams (`open_writer`, `draw`, `annotate`)
+  plus the `transform_source` seam, so the orchestration (frame copy, trails, coordinate
+  mapping, lifecycle) is unit-testable without cv2 or a codec.
+- `cli_render.py` — `tratrac-render`. Reads the `.trj` (`read_trj`), the optional
+  transforms CSV, and the optional violations CSV, buckets states (and violation marks)
+  onto absolute video frames by `round(timestamp * fps)` (fps from the **clip** — the
+  `.trj` carries time but not fps), and drives a single `OverlayVideoExporter`. It opens
+  the clip **windowed to the `.trj`'s covered span**
   (the absolute-seconds TIMESTEPs bound `start_seconds`/`end_seconds`, plus a small tail
   buffer), so a short analysis window on a long clip renders only that span instead of
   re-encoding the whole video. An empty `.trj` renders nothing.

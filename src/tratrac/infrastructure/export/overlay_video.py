@@ -53,6 +53,15 @@ OpenWriterFn = Callable[[Path, VideoMetadata], FrameWriter]
 # to map stabilized coordinates back onto the raw frame it is drawing on.
 TransformSource = Callable[[], Transform2D]
 DrawFn = Callable[[NDArray[np.uint8], list[VehicleState], float, TrailsView, Transform2D], None]
+# Optional post-draw hook: (canvas, frame index, global->raw transform). Runs after the
+# trajectory draw, before the frame is written, so callers can annotate on top (e.g.
+# tratrac-render drawing validator violation marks). The transform is the same one the
+# trajectories were mapped with, so annotations land in the same raw-frame space.
+AnnotateFn = Callable[[NDArray[np.uint8], int, Transform2D], None]
+
+
+def _no_annotate(canvas: NDArray[np.uint8], frame_index: int, to_raw: Transform2D) -> None:
+	"""Default annotation hook: draw nothing."""
 
 
 class OverlayVideoExporter:
@@ -75,6 +84,7 @@ class OverlayVideoExporter:
 		transform_source: TransformSource | None = None,
 		open_writer: OpenWriterFn | None = None,
 		draw: DrawFn | None = None,
+		annotate: AnnotateFn | None = None,
 	) -> None:
 		if scale <= 0.0:
 			raise ValueError(f"Scale must be positive, got {scale}.")
@@ -94,6 +104,7 @@ class OverlayVideoExporter:
 			open_writer if open_writer is not None else _cv2_open_writer
 		)
 		self._draw: DrawFn = draw if draw is not None else _cv2_draw
+		self._annotate: AnnotateFn = annotate if annotate is not None else _no_annotate
 		self._writer: FrameWriter | None = None
 		self._trails: dict[int, deque[tuple[int, int]]] = {}
 
@@ -137,6 +148,9 @@ class OverlayVideoExporter:
 			# keeps only currently-visible tracks (dead tracks stop ghosting).
 			visible[state.vehicle_id] = list(trail)
 		self._draw(canvas, states, self._scale, visible, to_raw)
+		# Post-draw annotations (e.g. violation marks) land on top of the trajectories,
+		# in the same raw-frame space (mapped via the same to_raw).
+		self._annotate(canvas, frame.index, to_raw)
 		writer.write(canvas)
 
 	def _new_trail(self) -> deque[tuple[int, int]]:

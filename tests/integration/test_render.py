@@ -1,8 +1,9 @@
-"""Integration: tratrac-render draws a .trj's trajectories onto its source clip.
+"""Integration: tratrac-render draws a .trj's trajectories (and optional violations).
 
 Writes a tiny synthetic video + a matching .trj (via SsamTrjExporter, no detector,
 no network), runs the renderer, and checks the overlay .mp4 comes out readable at the
-source size. Skips if the local OpenCV can't write the fixture.
+source size, that it windows to the .trj span, and that --violations marks draw in the
+same pass. Skips if the local OpenCV can't write the fixture.
 """
 
 from __future__ import annotations
@@ -101,6 +102,55 @@ def test_renders_only_the_trj_span_not_the_whole_clip(
 	cap.release()
 	# Windowed to the ~4 covered frames plus a small tail buffer — well under the full clip.
 	assert 4 <= written < _N
+
+
+def test_violations_are_drawn_in_the_same_pass(
+	synthetic_video: Path, trj_file: Path, tmp_path: Path
+) -> None:
+	viol = tmp_path / "viol.csv"
+	# Two distinct (frame, vehicle) instances -> two collapsed marks.
+	viol.write_text(
+		"timestamp_s,vehicle_id,check,centroid_x,centroid_y\n"
+		"0.2,1,speed,11.0,22.0\n"
+		"0.3,1,accel,14.0,22.0\n"
+	)
+	out = tmp_path / "combined.mp4"
+	result = CliRunner().invoke(
+		app,
+		[
+			str(synthetic_video),
+			"--trj",
+			str(trj_file),
+			"--violations",
+			str(viol),
+			"--out",
+			str(out),
+		],
+	)
+	assert result.exit_code == 0, result.output
+	assert "2 violation marks" in result.output
+	assert out.stat().st_size > 0
+
+
+def test_violations_csv_missing_columns_errors(
+	synthetic_video: Path, trj_file: Path, tmp_path: Path
+) -> None:
+	bad = tmp_path / "bad.csv"
+	bad.write_text("timestamp_s,vehicle_id\n0.2,1\n")
+	result = CliRunner().invoke(
+		app,
+		[
+			str(synthetic_video),
+			"--trj",
+			str(trj_file),
+			"--violations",
+			str(bad),
+			"--out",
+			str(tmp_path / "x.mp4"),
+		],
+	)
+	assert result.exit_code != 0
+	assert "missing columns" in result.output
 
 
 def test_existing_out_needs_force(synthetic_video: Path, trj_file: Path, tmp_path: Path) -> None:
