@@ -9,15 +9,12 @@ import math
 import struct
 from pathlib import Path
 
-import numpy as np
+import pytest
 
-from tratrac.domain.frame import Frame, VideoMetadata
+from tratrac.domain.frame import VideoMetadata
 from tratrac.domain.geometry import Dimensions, Heading, Point2D, Vector2D
 from tratrac.domain.vehicle import VehicleState
-from tratrac.infrastructure.export.ssam_trj import SsamTrjExporter
-
-# SSAM is a pure data format and ignores the frame; a shared dummy suffices.
-_FRAME = Frame(index=0, pixels=np.zeros((1, 1, 3), dtype=np.uint8))
+from tratrac.infrastructure.export.ssam_trj import SsamTrjExporter, read_trj
 
 _FORMAT_SIZE = 6
 _DIMENSIONS_SIZE = 22
@@ -81,7 +78,7 @@ class TestTimestep:
 		path = tmp_path / "x.trj"
 		meta = VideoMetadata(width=100, height=200, fps=30.0, total_frames=1)
 		with SsamTrjExporter(path, meta, scale=1.0) as exporter:
-			exporter.emit_frame(timestamp_seconds=2.5, states=[], frame=_FRAME)
+			exporter.emit_frame(timestamp_seconds=2.5, states=[])
 		data = path.read_bytes()
 
 		record_type, ts = struct.unpack("<Bf", data[_HEADER_SIZE : _HEADER_SIZE + _TIMESTEP_SIZE])
@@ -103,7 +100,7 @@ class TestVehicleRecord:
 			acceleration=0.5,
 		)
 		with SsamTrjExporter(path, meta, scale=1.0) as exporter:
-			exporter.emit_frame(timestamp_seconds=0.0, states=[state], frame=_FRAME)
+			exporter.emit_frame(timestamp_seconds=0.0, states=[state])
 		data = path.read_bytes()
 
 		offset = _HEADER_SIZE + _TIMESTEP_SIZE
@@ -131,7 +128,7 @@ class TestVehicleRecord:
 		# Heading "up the screen" in image space (y decreasing) -> y increasing in SSAM.
 		state = _vehicle(centroid=Point2D(100.0, 200.0), heading=Heading(0.0, -1.0), length=10.0)
 		with SsamTrjExporter(path, meta, scale=1.0) as exporter:
-			exporter.emit_frame(timestamp_seconds=0.0, states=[state], frame=_FRAME)
+			exporter.emit_frame(timestamp_seconds=0.0, states=[state])
 		data = path.read_bytes()
 
 		offset = _HEADER_SIZE + _TIMESTEP_SIZE
@@ -149,7 +146,7 @@ class TestVehicleRecord:
 		meta = VideoMetadata(width=400, height=400, fps=10.0, total_frames=1)
 		state = _vehicle(centroid=Point2D(100.0, 100.0), heading=Heading(1.0, 0.0), length=4.0)
 		with SsamTrjExporter(path, meta, scale=0.5) as exporter:
-			exporter.emit_frame(timestamp_seconds=0.0, states=[state], frame=_FRAME)
+			exporter.emit_frame(timestamp_seconds=0.0, states=[state])
 		data = path.read_bytes()
 
 		# Verify Scale in DIMENSIONS record.
@@ -174,7 +171,7 @@ class TestVehicleRecord:
 		# Place a centroid at 30 m from the top of the image (image-space y).
 		state = _vehicle(centroid=Point2D(50.0, 30.0), heading=Heading(1.0, 0.0), length=4.0)
 		with SsamTrjExporter(path, meta, scale=0.5) as exporter:
-			exporter.emit_frame(timestamp_seconds=0.0, states=[state], frame=_FRAME)
+			exporter.emit_frame(timestamp_seconds=0.0, states=[state])
 		data = path.read_bytes()
 
 		offset = _HEADER_SIZE + _TIMESTEP_SIZE
@@ -201,7 +198,7 @@ class TestLinkAndLaneIds:
 			lane_id=2,
 		)
 		with SsamTrjExporter(path, meta, scale=1.0) as exporter:
-			exporter.emit_frame(timestamp_seconds=0.0, states=[state], frame=_FRAME)
+			exporter.emit_frame(timestamp_seconds=0.0, states=[state])
 		data = path.read_bytes()
 
 		offset = _HEADER_SIZE + _TIMESTEP_SIZE
@@ -211,6 +208,73 @@ class TestLinkAndLaneIds:
 		assert lane_id == 2
 
 
+class TestReadTrj:
+	"""``read_trj`` reconstructs VehicleStates from a written .trj (viz-only round trip)."""
+
+	def test_round_trips_geometry_and_kinematics(self, tmp_path: Path) -> None:
+		path = tmp_path / "x.trj"
+		meta = VideoMetadata(width=1000, height=500, fps=10.0, total_frames=2)
+		state = _vehicle(
+			vehicle_id=7,
+			centroid=Point2D(100.0, 200.0),
+			heading=Heading(0.0, -1.0),
+			length=6.0,
+			width=2.0,
+			velocity=Vector2D(0.0, -4.0),
+			acceleration=0.5,
+		)
+		with SsamTrjExporter(path, meta, scale=0.5) as exporter:
+			exporter.emit_frame(0.0, [state])
+			exporter.emit_frame(0.1, [])
+
+		recording = read_trj(path)
+		assert recording.scale == 0.5
+		assert (recording.width, recording.height) == (1000, 500)
+		assert [f.timestamp_seconds for f in recording.frames] == [0.0, pytest.approx(0.1)]
+
+		(restored,) = recording.frames[0].states
+		assert restored.vehicle_id == 7
+		# Front/rear bumpers (the bytes actually stored) recover exactly within float32.
+		assert restored.front_bumper.x == pytest.approx(state.front_bumper.x, abs=1e-3)
+		assert restored.front_bumper.y == pytest.approx(state.front_bumper.y, abs=1e-3)
+		assert restored.rear_bumper.x == pytest.approx(state.rear_bumper.x, abs=1e-3)
+		assert restored.rear_bumper.y == pytest.approx(state.rear_bumper.y, abs=1e-3)
+		assert restored.centroid.x == pytest.approx(100.0, abs=1e-3)
+		assert restored.centroid.y == pytest.approx(200.0, abs=1e-3)
+		assert restored.dimensions.length == pytest.approx(6.0, abs=1e-3)
+		assert restored.speed == pytest.approx(4.0, abs=1e-3)
+
+	def test_preserves_link_and_lane_ids(self, tmp_path: Path) -> None:
+		path = tmp_path / "x.trj"
+		meta = VideoMetadata(width=200, height=200, fps=10.0, total_frames=1)
+		state = VehicleState(
+			vehicle_id=3,
+			timestamp_seconds=0.0,
+			centroid=Point2D(50.0, 50.0),
+			heading=Heading(1.0, 0.0),
+			dimensions=Dimensions(length=4.0, width=2.0),
+			velocity=Vector2D(0.0, 0.0),
+			acceleration=0.0,
+			link_id=11,
+			lane_id=4,
+		)
+		with SsamTrjExporter(path, meta, scale=1.0) as exporter:
+			exporter.emit_frame(0.0, [state])
+
+		(restored,) = read_trj(path).frames[0].states
+		assert restored.link_id == 11
+		assert restored.lane_id == 4
+
+	def test_rejects_truncated_file(self, tmp_path: Path) -> None:
+		path = tmp_path / "x.trj"
+		meta = VideoMetadata(width=100, height=100, fps=10.0, total_frames=1)
+		with SsamTrjExporter(path, meta, scale=1.0) as exporter:
+			exporter.emit_frame(0.0, [_vehicle()])
+		path.write_bytes(path.read_bytes()[:-5])  # chop the tail of the VEHICLE record
+		with pytest.raises(ValueError, match="truncated or malformed"):
+			read_trj(path)
+
+
 class TestFileLayout:
 	def test_two_frames_three_vehicles_total_size(self, tmp_path: Path) -> None:
 		path = tmp_path / "x.trj"
@@ -218,8 +282,8 @@ class TestFileLayout:
 		v1 = _vehicle(vehicle_id=1, centroid=Point2D(20.0, 30.0))
 		v2 = _vehicle(vehicle_id=2, centroid=Point2D(40.0, 60.0))
 		with SsamTrjExporter(path, meta, scale=1.0) as exporter:
-			exporter.emit_frame(0.0, [v1, v2], _FRAME)
-			exporter.emit_frame(1.0 / 30.0, [v1], _FRAME)
+			exporter.emit_frame(0.0, [v1, v2])
+			exporter.emit_frame(1.0 / 30.0, [v1])
 
 		expected = _HEADER_SIZE + 2 * _TIMESTEP_SIZE + 3 * _VEHICLE_SIZE
 		assert path.stat().st_size == expected
@@ -229,7 +293,7 @@ class TestFileLayout:
 		meta = VideoMetadata(width=100, height=100, fps=10.0, total_frames=1)
 		v = _vehicle()
 		with SsamTrjExporter(path, meta, scale=1.0) as exporter:
-			exporter.emit_frame(0.0, [v], _FRAME)
+			exporter.emit_frame(0.0, [v])
 		data = path.read_bytes()
 
 		assert data[0] == 0  # FORMAT

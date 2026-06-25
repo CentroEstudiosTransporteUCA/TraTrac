@@ -1,30 +1,21 @@
 """Timing decorators: wrap each pipeline port to measure its per-frame latency.
 
 Each decorator implements the port it wraps, forwards the call unchanged, and
-reports a ``StepTiming`` to a ``TimingSink``. Because orientation is a batch
-port, all four steps run exactly once per frame, so each decorator counts its
-own calls as the frame ordinal — they stay aligned without sharing state. See
-vault/15_step_timing.md.
+reports a ``StepTiming`` to a ``TimingSink``. Both steps (detect, track) run
+exactly once per frame, so each decorator counts its own calls as the frame
+ordinal — they stay aligned without sharing state. See vault/15_step_timing.md.
 """
 
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Sequence
-from types import TracebackType
+from collections.abc import Callable
 from typing import TypeVar
 
 from tratrac.domain.detection import Detection, TrackedDetection
 from tratrac.domain.frame import Frame
-from tratrac.domain.ports import (
-	Detector,
-	OrientationEstimator,
-	TimingSink,
-	Tracker,
-	TrajectoryExporter,
-)
+from tratrac.domain.ports import Detector, TimingSink, Tracker
 from tratrac.domain.timing import PipelineStep, StepTiming
-from tratrac.domain.vehicle import VehicleState
 
 _T = TypeVar("_T")
 
@@ -81,53 +72,3 @@ class TimedTracker:
 
 	def update(self, frame: Frame, detections: list[Detection]) -> list[TrackedDetection]:
 		return self._stopwatch.time(lambda: self._inner.update(frame, detections))
-
-
-class TimedOrientation:
-	"""``OrientationEstimator`` wrapper that times ``estimate``."""
-
-	def __init__(
-		self,
-		inner: OrientationEstimator,
-		sink: TimingSink,
-		*,
-		clock: Callable[[], float] = time.perf_counter,
-	) -> None:
-		self._inner = inner
-		self._stopwatch = StepStopwatch(PipelineStep.ORIENT, sink, clock=clock)
-
-	def estimate(
-		self, tracked: Sequence[TrackedDetection], timestamp_seconds: float
-	) -> list[VehicleState]:
-		return self._stopwatch.time(lambda: self._inner.estimate(tracked, timestamp_seconds))
-
-
-class TimedExporter:
-	"""``TrajectoryExporter`` wrapper: times ``emit_frame``, delegates the context manager."""
-
-	def __init__(
-		self,
-		inner: TrajectoryExporter,
-		sink: TimingSink,
-		*,
-		clock: Callable[[], float] = time.perf_counter,
-	) -> None:
-		self._inner = inner
-		self._stopwatch = StepStopwatch(PipelineStep.EXPORT, sink, clock=clock)
-
-	def emit_frame(
-		self, timestamp_seconds: float, states: list[VehicleState], frame: Frame
-	) -> None:
-		self._stopwatch.time(lambda: self._inner.emit_frame(timestamp_seconds, states, frame))
-
-	def __enter__(self) -> TimedExporter:
-		self._inner.__enter__()
-		return self
-
-	def __exit__(
-		self,
-		exc_type: type[BaseException] | None,
-		exc_val: BaseException | None,
-		exc_tb: TracebackType | None,
-	) -> None:
-		self._inner.__exit__(exc_type, exc_val, exc_tb)

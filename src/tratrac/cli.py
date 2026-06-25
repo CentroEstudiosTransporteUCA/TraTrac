@@ -6,6 +6,10 @@ built-in defaults: every value comes from the ``--config`` TOML or a flag, and a
 missing value fails the run listing exactly what is absent. Flags override the
 config file key-for-key; the positional ``video`` overrides ``input.video`` and
 ``--out`` overrides ``export.out``. A complete config replays with no arguments.
+
+The run is **perception only**: it writes the track record (the raw tracked
+measurements, the run's canonical output). It does not produce an SSAM ``.trj`` —
+run ``tratrac-smooth`` on the record to get a de-jittered ``.trj`` (vault/22).
 """
 
 from __future__ import annotations
@@ -22,28 +26,19 @@ from tratrac.application.config import (
 	ConfigError,
 	DetectorChoice,
 	DetectorConfig,
-	OrientationChoice,
-	OrientationConfig,
 	RunConfig,
 )
 from tratrac.application.exclusion import to_global_polygons
-from tratrac.application.orientation import EmaOrientationEstimator
-from tratrac.application.orientation_kalman import KalmanOrientationEstimator
 from tratrac.application.pipeline import TrajectoryPipeline
 from tratrac.domain.exclusion import ExclusionZones
-from tratrac.domain.frame import VideoMetadata
 from tratrac.domain.geometry import Transform2D
 from tratrac.domain.ports import (
 	DetectionMask,
 	DetectionObserver,
 	Detector,
 	EgoMotionEstimator,
-	OrientationEstimator,
-	StabilizationTransformSource,
 	TimingSink,
 	Tracker,
-	TrackSink,
-	TrajectoryExporter,
 	TransformSink,
 )
 from tratrac.infrastructure.config.toml import load_toml
@@ -51,21 +46,11 @@ from tratrac.infrastructure.detection.rt_detr import RtDetrDetector
 from tratrac.infrastructure.detection.yolov8_visdrone import YoloV8VisDroneDetector
 from tratrac.infrastructure.exclusion.json import load_exclusion_zones
 from tratrac.infrastructure.exclusion.raster import RasterExclusionMask
-from tratrac.infrastructure.export.composite import CompositeTrajectoryExporter
-from tratrac.infrastructure.export.decimating import DecimatingTrajectoryExporter
-from tratrac.infrastructure.export.overlay_video import OverlayVideoExporter
-from tratrac.infrastructure.export.ssam_trj import SsamTrjExporter
 from tratrac.infrastructure.progress.console import ConsoleProgressReporter
 from tratrac.infrastructure.timing.csv import CsvTimingSink
-from tratrac.infrastructure.timing.decorators import (
-	TimedDetector,
-	TimedExporter,
-	TimedOrientation,
-	TimedTracker,
-)
+from tratrac.infrastructure.timing.decorators import TimedDetector, TimedTracker
 from tratrac.infrastructure.tracking.boxmot_bot_sort import BoxmotBotSortTracker
-from tratrac.infrastructure.tracking.recording import RecordingTracker
-from tratrac.infrastructure.tracks.csv import CsvTrackSink
+from tratrac.infrastructure.tracks.parquet import ParquetTrackSink
 from tratrac.infrastructure.transform.csv import CsvTransformSink, read_transforms
 from tratrac.infrastructure.transform.recording import RecordingEgoMotionEstimator
 from tratrac.infrastructure.video.ego_motion_orb import OrbEgoMotionEstimator
@@ -105,7 +90,12 @@ def process(
 	] = None,
 	out: Annotated[
 		Path | None,
-		typer.Option("--out", "-o", dir_okay=False, help="Output .trj path (export.out)."),
+		typer.Option(
+			"--out",
+			"-o",
+			dir_okay=False,
+			help="Output track-record path (export.out). Feed it to tratrac-smooth for a .trj.",
+		),
 	] = None,
 	detector: Annotated[
 		DetectorChoice | None,
@@ -197,53 +187,6 @@ def process(
 		float | None,
 		typer.Option("--det-thresh", help="Tracker detection threshold (tracker.det_thresh)."),
 	] = None,
-	orientation: Annotated[
-		OrientationChoice | None,
-		typer.Option("--orientation", help="Kinematics estimator (orientation.method)."),
-	] = None,
-	smoothing_window: Annotated[
-		int | None,
-		typer.Option(
-			"--smoothing-window",
-			help="Orientation EMA window, >= 2 (orientation.smoothing_window).",
-		),
-	] = None,
-	kalman_pos_noise: Annotated[
-		float | None,
-		typer.Option(
-			"--kalman-pos-noise",
-			help="Kalman measurement-noise std in px (orientation.kalman_pos_noise).",
-		),
-	] = None,
-	kalman_jerk: Annotated[
-		float | None,
-		typer.Option(
-			"--kalman-jerk",
-			help="Kalman process jerk density; higher = more responsive (orientation.kalman_jerk).",
-		),
-	] = None,
-	timestep_precision: Annotated[
-		float | None,
-		typer.Option(
-			"--timestep-precision",
-			help="Min seconds between exported TIMESTEPs; 0 = every frame (export.timestep_precision).",
-		),
-	] = None,
-	video_out: Annotated[
-		Path | None,
-		typer.Option(
-			"--video-out",
-			dir_okay=False,
-			help="Overlay video output (raw frame + trajectories); omit to skip (export.video_out).",
-		),
-	] = None,
-	video_trail: Annotated[
-		int | None,
-		typer.Option(
-			"--video-trail",
-			help="Trail length in frames for the overlay video; 0 = whole path (export.video_trail).",
-		),
-	] = None,
 	transform_csv: Annotated[
 		Path | None,
 		typer.Option(
@@ -251,15 +194,6 @@ def process(
 			dir_okay=False,
 			help='Per-frame ego-motion transform CSV; "" disables. Requires --stabilize '
 			"(export.transform_csv).",
-		),
-	] = None,
-	tracks: Annotated[
-		Path | None,
-		typer.Option(
-			"--tracks",
-			dir_okay=False,
-			help='Track-observation sidecar for the offline tratrac-smooth pass; "" disables '
-			"(export.tracks).",
 		),
 	] = None,
 	start: Annotated[
@@ -296,7 +230,7 @@ def process(
 		),
 	] = None,
 ) -> None:
-	"""Process a video into an SSAM .trj trajectory file."""
+	"""Track a video into a record file (run tratrac-smooth on it to get a .trj)."""
 	overrides: dict[str, Any] = {
 		"input.video": video,
 		"input.process_fps": process_fps,
@@ -318,15 +252,7 @@ def process(
 		"ego_motion.min_anchor_overlap": min_anchor_overlap,
 		"ego_motion.transforms": transforms,
 		"tracker.det_thresh": det_thresh,
-		"orientation.method": orientation.value if orientation is not None else None,
-		"orientation.smoothing_window": smoothing_window,
-		"orientation.kalman_pos_noise": kalman_pos_noise,
-		"orientation.kalman_jerk": kalman_jerk,
-		"export.timestep_precision": timestep_precision,
-		"export.video_out": video_out,
-		"export.video_trail": video_trail,
 		"export.transform_csv": transform_csv,
-		"export.tracks": tracks,
 		"window.start": start,
 		"window.end": end,
 		"analysis.exclusion_zones": exclusion_zones,
@@ -385,47 +311,18 @@ def process(
 		and run.export.out.resolve() == run.options.timing_csv.resolve()
 	):
 		raise typer.BadParameter("run.timing_csv must differ from export.out.")
-	if run.export.video_out is not None and run.export.video_out.resolve() in {
-		run.export.out.resolve(),
-		run.options.timing_csv.resolve() if run.options.timing_csv is not None else None,
-	}:
-		raise typer.BadParameter("export.video_out must differ from export.out and run.timing_csv.")
 	if run.export.transform_csv is not None and run.export.transform_csv.resolve() in {
 		run.export.out.resolve(),
 		run.options.timing_csv.resolve() if run.options.timing_csv is not None else None,
-		run.export.video_out.resolve() if run.export.video_out is not None else None,
 	}:
 		raise typer.BadParameter(
-			"export.transform_csv must differ from export.out, run.timing_csv, and export.video_out."
+			"export.transform_csv must differ from export.out and run.timing_csv."
 		)
-	if run.export.timestep_precision > _COARSE_TIMESTEP_WARNING_SECONDS:
-		typer.echo(
-			f"WARNING: timestep_precision {run.export.timestep_precision}s is coarse; SSAM "
-			"conflict analysis wants sub-second timesteps (~0.1s). The .trj stays valid but may "
-			"be too sparse for surrogate-safety metrics.",
-			err=True,
-		)
-	if run.input.process_fps > 0.0 and run.export.timestep_precision > 0.0:
-		processing_interval = 1.0 / run.input.process_fps
-		if processing_interval > run.export.timestep_precision + 1e-9:
-			typer.echo(
-				f"WARNING: export.timestep_precision {run.export.timestep_precision}s is finer than "
-				f"input.process_fps allows (~{processing_interval:.3f}s between processed frames); "
-				"the export can only emit frames that were processed, so it effectively runs at the "
-				"processing rate.",
-				err=True,
-			)
-	if run.export.tracks is not None and run.export.tracks.resolve() == run.export.out.resolve():
-		raise typer.BadParameter("export.tracks must differ from export.out.")
 	_prepare_output_path(run.export.out, force=run.options.force)
 	if run.options.timing_csv is not None:
 		_prepare_output_path(run.options.timing_csv, force=run.options.force)
-	if run.export.video_out is not None:
-		_prepare_output_path(run.export.video_out, force=run.options.force)
 	if run.export.transform_csv is not None:
 		_prepare_output_path(run.export.transform_csv, force=run.options.force)
-	if run.export.tracks is not None:
-		_prepare_output_path(run.export.tracks, force=run.options.force)
 
 	with _open_video(
 		run.input.video,
@@ -445,13 +342,10 @@ def process(
 		# off. Live ORB is also the DetectionObserver (masking vehicles out of its own
 		# feature extraction); a replay estimator just serves the scout's schedule.
 		ego_motion: EgoMotionEstimator | None = None
-		stabilizer: StabilizationTransformSource | None = None
 		detection_observer: DetectionObserver | None = None
 		if run.ego_motion.enabled:
 			if transforms_map is not None:
-				replay = ReplayEgoMotionEstimator(transforms_map)
-				ego_motion = replay
-				stabilizer = replay
+				ego_motion = ReplayEgoMotionEstimator(transforms_map)
 			else:
 				orb = OrbEgoMotionEstimator(
 					n_features=run.ego_motion.n_features,
@@ -461,7 +355,6 @@ def process(
 					min_anchor_overlap=run.ego_motion.min_anchor_overlap,
 				)
 				ego_motion = orb
-				stabilizer = orb
 				detection_observer = orb
 		det: Detector = _build_detector(run.detector, device=run.runtime.device)
 		# When we stabilize coordinates ourselves, disable BoT-SORT's own camera-motion
@@ -471,64 +364,28 @@ def process(
 			det_thresh=run.tracker.det_thresh,
 			compensate_camera_motion=not run.ego_motion.enabled,
 		)
-		exporter: TrajectoryExporter = SsamTrjExporter(run.export.out, source.metadata, scale=scale)
-		if run.export.timestep_precision > 0.0:
-			# Decimate the TIMESTEP stream. Sits inside TimedExporter (below) so the
-			# EXPORT step still records once per processed frame (see vault/15).
-			exporter = DecimatingTrajectoryExporter(
-				exporter,
-				min_interval_seconds=run.export.timestep_precision,
-				fps=source.metadata.fps,
-			)
-		if run.export.video_out is not None:
-			# Fan out to the .trj (decimated above if requested) AND a full-framerate
-			# overlay video. Only the .trj leg is decimated; the video keeps every
-			# processed frame. See vault/20_video_export.md.
-			exporter = CompositeTrajectoryExporter(
-				[
-					exporter,
-					OverlayVideoExporter(
-						run.export.video_out,
-						source.metadata,
-						scale=scale,
-						trail_length=run.export.video_trail,
-						# Map stabilized coordinates back onto the raw frame; identity
-						# (default) when stabilization is off.
-						transform_source=_overlay_transform_source(stabilizer),
-					),
-				]
-			)
-		orientation_estimator: OrientationEstimator = _build_orientation(
-			run.orientation, scale=scale
-		)
 		with (
 			_timing_sink(run.options.timing_csv) as sink,
 			_transform_sink(run.export.transform_csv) as transform_sink,
-			_track_sink(run.export.tracks, source.metadata, scale) as track_sink,
 		):
 			if sink is not None:
 				det = TimedDetector(det, sink)
 				tracker = TimedTracker(tracker, sink)
-				orientation_estimator = TimedOrientation(orientation_estimator, sink)
-				exporter = TimedExporter(exporter, sink)
-			# Persist raw tracked measurements ("export B") by teeing the tracker output
-			# (pipeline untouched). Outermost wrap, so the TRACK timing measures only the
-			# real tracker. Feeds the offline tratrac-smooth pass (vault/22).
-			if track_sink is not None:
-				tracker = RecordingTracker(tracker, track_sink)
-			# Persist the per-frame transform by decorating the estimator (the
-			# pipeline stays untouched). The concrete estimator above keeps serving the
-			# overlay's transform_source and the DetectionObserver; the pipeline drives
-			# the recorder. Guaranteed present when transform_csv is set (config guard).
+			# Persist the per-frame transform by decorating the estimator (the pipeline
+			# stays untouched). The concrete estimator above keeps serving the
+			# DetectionObserver; the pipeline drives the recorder. Guaranteed present
+			# when transform_csv is set (config guard).
 			pipeline_ego_motion: EgoMotionEstimator | None = ego_motion
 			if transform_sink is not None and ego_motion is not None:
 				pipeline_ego_motion = RecordingEgoMotionEstimator(ego_motion, transform_sink)
+			# The track record is the run's output. The pipeline owns its lifecycle
+			# (open on enter, close on exit), so it is passed unopened.
+			track_sink = ParquetTrackSink(run.export.out, source.metadata, scale=scale)
 			pipeline = TrajectoryPipeline(
 				video=source,
 				detector=det,
 				tracker=tracker,
-				exporter=exporter,
-				orientation=orientation_estimator,
+				sink=track_sink,
 				reporter=ConsoleProgressReporter(),
 				detection_observer=detection_observer,
 				detection_mask=detection_mask,
@@ -536,22 +393,10 @@ def process(
 			)
 			n_frames = pipeline.run()
 
-	typer.echo(f"Processed {n_frames} frames -> {run.export.out} (scale={scale} m/px)")
-
-
-# Above this, exported timesteps get too sparse for SSAM conflict analysis
-# (vault/04: sub-second, ~0.1s, is the practical minimum). Still valid, so warn.
-_COARSE_TIMESTEP_WARNING_SECONDS = 0.5
-
-
-def _overlay_transform_source(
-	stabilizer: StabilizationTransformSource | None,
-) -> Callable[[], Transform2D] | None:
-	"""A callable yielding the current stabilization transform for the overlay video,
-	or ``None`` when stabilization is off (the overlay then uses identity)."""
-	if stabilizer is None:
-		return None
-	return lambda: stabilizer.current_transform
+	typer.echo(
+		f"Recorded {n_frames} frames -> {run.export.out} (scale={scale} m/px). "
+		"Run tratrac-smooth on it to produce a .trj."
+	)
 
 
 def _pose_for(
@@ -608,17 +453,6 @@ def _open_video(
 		except ValueError as exc:
 			raise typer.BadParameter(str(exc)) from exc
 		yield source
-
-
-def _build_orientation(config: OrientationConfig, *, scale: float) -> OrientationEstimator:
-	"""Select the kinematics estimator: EMA finite-difference or forward Kalman."""
-	if config.method is OrientationChoice.KALMAN:
-		return KalmanOrientationEstimator(
-			meters_per_pixel=scale,
-			pos_noise=config.kalman_pos_noise,
-			jerk=config.kalman_jerk,
-		)
-	return EmaOrientationEstimator(smoothing_window=config.smoothing_window, meters_per_pixel=scale)
 
 
 def _build_detector(detector: DetectorConfig, *, device: str) -> Detector:
@@ -685,18 +519,6 @@ def _transform_sink(path: Path | None) -> Iterator[TransformSink | None]:
 		yield None
 		return
 	with CsvTransformSink(path) as sink:
-		yield sink
-
-
-@contextmanager
-def _track_sink(
-	path: Path | None, metadata: VideoMetadata, scale: float
-) -> Iterator[TrackSink | None]:
-	"""Yield a CSV track-observation sink when a path is given, else ``None`` (off)."""
-	if path is None:
-		yield None
-		return
-	with CsvTrackSink(path, metadata, scale=scale) as sink:
 		yield sink
 
 

@@ -1,4 +1,4 @@
-"""CSV timing sink: one wide row per frame (frame, detect, track, orient, export).
+"""CSV timing sink: one wide row per frame (frame, detect, track).
 
 Buffers a frame's step timings and flushes the row when the frame ordinal
 advances — safe because every step runs once per frame, so a frame's records
@@ -18,8 +18,6 @@ from tratrac.domain.timing import PipelineStep, StepTiming
 _STEP_ORDER = (
 	PipelineStep.DETECT,
 	PipelineStep.TRACK,
-	PipelineStep.ORIENT,
-	PipelineStep.EXPORT,
 )
 
 

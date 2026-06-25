@@ -12,6 +12,7 @@ dependencies = [
     "dill>=0.4.1",
     "numpy>=2.4.6",
     "opencv-python>=4.13.0.92",
+    "pyarrow>=24.0.0",
     "torch>=2.12.0",
     "torchvision>=0.27.0",
     "tqdm>=4.67.3",
@@ -24,6 +25,7 @@ dependencies = [
 tratrac = "tratrac.cli:app"
 tratrac-scout = "tratrac.cli_scout:app"
 tratrac-smooth = "tratrac.cli_smooth:app"
+tratrac-render = "tratrac.cli_render:app"
 
 [build-system]
 requires = ["uv_build>=0.11.13,<0.12.0"]
@@ -103,6 +105,7 @@ module = [
 	"boxmot.*",
 	"cv2.*",
 	"huggingface_hub.*",
+	"pyarrow.*",
 	"tqdm.*",
 	"transformers.*",
 	"ultralytics.*",

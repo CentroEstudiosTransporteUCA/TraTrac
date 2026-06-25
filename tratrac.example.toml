@@ -5,16 +5,19 @@
 # described by this config: there are NO built-in defaults, so EVERY key below
 # is required. Each value may be overridden on the command line by its flag
 # (e.g. --conf 0.4). A "disabled" feature is still an explicit value, never a
-# missing key: timing_csv = "" (off), force = false, start/end = "" (whole clip),
-# timestep_precision = 0.0 (every frame). See vault/19_config_file.md.
+# missing key: timing_csv = "" (off), force = false, start/end = "" (whole clip).
+# See vault/19_config_file.md.
+#
+# The run is PERCEPTION ONLY: it writes the track record (export.out). It does not
+# produce a .trj — run `tratrac-smooth RECORD --out run.trj` afterwards (vault/22).
 
 [input]
 # The processed video. Overridden by the positional argument: `tratrac VIDEO`.
 video = "clips/highway_run3.mp4"
 process_fps = 0.0                 # cap processing to ~N frames/sec; 0.0 = every frame.
                                   # Decode-time decimation: faster on long clips, but fewer
-                                  # frames => more BoT-SORT ID switches. Independent of (and
-                                  # stacks before) export.timestep_precision. See vault/18.
+                                  # frames => more BoT-SORT ID switches. See vault/18.
+                                  # (.trj TIMESTEP decimation is a tratrac-smooth flag now.)
 
 [detector]
 name = "yolov8_visdrone"          # yolov8_visdrone | rt_detr
@@ -51,21 +54,14 @@ transforms = ""                   # "" = compute ORB live; else a scout transfor
 [tracker]
 det_thresh = 0.1                  # BoT-SORT detection threshold (kept below detector.conf)
 
-[orientation]
-method = "ema"                    # ema | kalman (kalman = streaming forward CA filter, see vault/22)
-smoothing_window = 5              # EMA heading window, >= 2 (only used when method = ema)
-kalman_pos_noise = 2.0            # Kalman measurement-noise std in px (only used when method = kalman)
-kalman_jerk = 20.0               # Kalman process jerk density; higher = more responsive (kalman only)
+# Kinematics (orientation/speed/accel) and the .trj are produced post-hoc by
+# tratrac-smooth from the record, not here — there is no [orientation] section.
 
 [export]
-out = "out/highway_run3.trj"      # output .trj path (overridden by --out)
-timestep_precision = 0.0          # min seconds between exported TIMESTEPs; 0 = every frame
-video_out = ""                    # "" = no overlay video; else an .mp4 of frames + trajectories
-video_trail = 0                   # overlay trail length in frames; 0 = whole path (only used when video_out set)
+out = "out/highway_run3.parquet"  # the track record (run's primary output, Parquet); overridden by --out.
+                                  # Feed it to tratrac-smooth to get a .trj (vault/22).
 transform_csv = ""                # "" = off; else a per-frame ego-motion transform CSV. Requires ego_motion.enabled
-                                  # (lets scripts/render_violations.py map global-frame positions back onto the raw video)
-tracks = ""                       # "" = off; else a track-observation sidecar (raw measurements, "export B")
-                                  # for the offline `tratrac-smooth` Kalman/RTS de-jitter pass. See vault/22.
+                                  # (feeds `tratrac-render --transforms` / render_violations to map global-frame coords back)
 
 [window]
 start = ""                        # "" = clip start; else HH:MM:SS(.ms) / MM:SS / SS

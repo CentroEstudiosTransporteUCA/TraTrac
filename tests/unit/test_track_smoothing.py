@@ -13,7 +13,7 @@ from tratrac.cli_smooth import app
 from tratrac.domain.detection import Detection, TrackedDetection, VehicleClass
 from tratrac.domain.frame import VideoMetadata
 from tratrac.domain.geometry import BoundingBox, Point2D
-from tratrac.infrastructure.tracks.csv import CsvTrackSink
+from tratrac.infrastructure.tracks.parquet import ParquetTrackSink
 
 
 def _samples(n: int, *, vx: float, fps: float = 10.0) -> list[TrackSample]:
@@ -59,7 +59,7 @@ class TestSmoothToStates:
 
 def _write_tracks(path: Path, samples: list[TrackSample]) -> None:
 	meta = VideoMetadata(width=1920, height=1080, fps=10.0, total_frames=len(samples))
-	with CsvTrackSink(path, meta, scale=1.0) as sink:
+	with ParquetTrackSink(path, meta, scale=1.0) as sink:
 		for s in samples:
 			det = TrackedDetection(
 				track_id=1,
@@ -79,7 +79,7 @@ def _write_tracks(path: Path, samples: list[TrackSample]) -> None:
 
 class TestSmoothCli:
 	def test_smooths_tracks_into_parseable_trj(self, tmp_path: Path) -> None:
-		tracks = tmp_path / "tracks.csv"
+		tracks = tmp_path / "tracks.parquet"
 		out = tmp_path / "smooth.trj"
 		_write_tracks(tracks, _samples(20, vx=8.0))
 
@@ -93,7 +93,7 @@ class TestSmoothCli:
 		assert record_type in (0, 1, 2, 3)  # a valid SSAM record-type tag
 
 	def test_refuses_to_overwrite_without_force(self, tmp_path: Path) -> None:
-		tracks = tmp_path / "tracks.csv"
+		tracks = tmp_path / "tracks.parquet"
 		out = tmp_path / "smooth.trj"
 		_write_tracks(tracks, _samples(5, vx=8.0))
 		out.write_text("existing")

@@ -16,8 +16,6 @@ class PipelineStep(StrEnum):
 
 	DETECT = "detect"
 	TRACK = "track"
-	ORIENT = "orient"
-	EXPORT = "export"
 
 
 @dataclass(frozen=True, slots=True)

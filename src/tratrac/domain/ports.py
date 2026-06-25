@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator
 from types import TracebackType
 from typing import Protocol
 
@@ -99,18 +99,6 @@ class Tracker(Protocol):
 	def update(self, frame: Frame, detections: list[Detection]) -> list[TrackedDetection]: ...
 
 
-class OrientationEstimator(Protocol):
-	"""Turns a frame's tracked detections into vehicle states.
-
-	Batch (one call per frame) so it is a uniform pipeline step alongside the
-	other ports, decoratable the same way — see vault/15_step_timing.md.
-	"""
-
-	def estimate(
-		self, tracked: Sequence[TrackedDetection], timestamp_seconds: float
-	) -> list[VehicleState]: ...
-
-
 class TrajectoryExporter(Protocol):
 	"""
 	Writes per-timestep vehicle states to some trajectory output.
@@ -118,16 +106,13 @@ class TrajectoryExporter(Protocol):
 	Used as a context manager so the exporter can write headers on enter and
 	flush/close on exit.
 
-	``emit_frame`` also receives the ``Frame`` the states were derived from — the
-	(already-stabilized, if stabilization is on) pixels the pipeline processed.
-	Pure data exporters (SSAM ``.trj``) ignore it; pixel exporters (the overlay
-	video writer) render onto it. Carrying the frame here keeps every output a
-	single uniform port so they compose behind one ``CompositeTrajectoryExporter``.
+	This is a pure data port — it carries no pixels. Visualization (drawing
+	trajectories over the footage) is a post-hoc concern handled by the standalone
+	``OverlayVideoExporter`` / ``tratrac-render``, not a pipeline exporter (see
+	vault/20_video_export.md).
 	"""
 
-	def emit_frame(
-		self, timestamp_seconds: float, states: list[VehicleState], frame: Frame
-	) -> None: ...
+	def emit_frame(self, timestamp_seconds: float, states: list[VehicleState]) -> None: ...
 
 	def __enter__(self) -> TrajectoryExporter: ...
 
@@ -166,13 +151,23 @@ class TrackSink(Protocol):
 
 	One call per processed frame, with the absolute ``frame_index`` and that frame's
 	tracked detections (in the tracker's coordinate frame — stabilized pixels when
-	ego-motion is on). Adapters persist them as the "export B" track-observation file
-	(the extended internal format of the dual-export architecture), which the offline
-	``tratrac-smooth`` pass reads to run the Kalman/RTS smoother. Streaming, like
-	``TransformSink``; see vault/22_smoothing.md.
+	ego-motion is on). Adapters persist them as the track-observation file — the
+	canonical run output (the internal record of the dual-export architecture), which
+	the offline ``tratrac-smooth`` pass reads to run the Kalman/RTS smoother and produce
+	the SSAM ``.trj``. Used as a context manager (write a header on enter, flush/close on
+	exit), since it is the pipeline's primary output. See vault/22_smoothing.md.
 	"""
 
 	def record(self, frame_index: int, tracked: list[TrackedDetection]) -> None: ...
+
+	def __enter__(self) -> TrackSink: ...
+
+	def __exit__(
+		self,
+		exc_type: type[BaseException] | None,
+		exc_val: BaseException | None,
+		exc_tb: TracebackType | None,
+	) -> None: ...
 
 
 class TransformSink(Protocol):

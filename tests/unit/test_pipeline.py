@@ -8,7 +8,6 @@ from types import TracebackType
 import numpy as np
 import pytest
 
-from tratrac.application.orientation import EmaOrientationEstimator
 from tratrac.application.pipeline import TrajectoryPipeline
 from tratrac.domain.detection import Detection, TrackedDetection, VehicleClass
 from tratrac.domain.frame import Frame, VideoMetadata
@@ -20,7 +19,6 @@ from tratrac.domain.progress import (
 	ProcessingStarted,
 	ProgressEvent,
 )
-from tratrac.domain.vehicle import VehicleState
 
 
 class _FakeVideoSource:
@@ -65,20 +63,18 @@ class _IdentityTracker:
 		return [TrackedDetection(track_id=i, detection=d) for i, d in enumerate(detections)]
 
 
-class _CapturingExporter:
+class _CapturingSink:
+	"""The run's output port: records each frame's tracked detections."""
+
 	def __init__(self) -> None:
-		self.emitted: list[tuple[float, list[VehicleState]]] = []
-		self.frames: list[Frame] = []
+		self.records: list[tuple[int, list[TrackedDetection]]] = []
 		self.opened = False
 		self.closed = False
 
-	def emit_frame(
-		self, timestamp_seconds: float, states: list[VehicleState], frame: Frame
-	) -> None:
-		self.emitted.append((timestamp_seconds, states))
-		self.frames.append(frame)
+	def record(self, frame_index: int, tracked: list[TrackedDetection]) -> None:
+		self.records.append((frame_index, tracked))
 
-	def __enter__(self) -> _CapturingExporter:
+	def __enter__(self) -> _CapturingSink:
 		self.opened = True
 		return self
 
@@ -116,48 +112,42 @@ def _det(x: float) -> Detection:
 
 
 class TestPipeline:
-	def test_emits_one_record_per_frame_with_correct_timestamps(self) -> None:
-		exporter = _CapturingExporter()
+	def test_records_one_entry_per_frame_with_indices(self) -> None:
+		sink = _CapturingSink()
 		pipeline = TrajectoryPipeline(
 			video=_FakeVideoSource(n_frames=3, fps=30.0),
 			detector=_FixedDetector([[_det(0.0)], [_det(1.0)], [_det(2.0)]]),
 			tracker=_IdentityTracker(),
-			exporter=exporter,
-			orientation=EmaOrientationEstimator(smoothing_window=5, meters_per_pixel=1.0),
+			sink=sink,
 		)
 		processed = pipeline.run()
 
 		assert processed == 3
-		assert len(exporter.emitted) == 3
-		# Timestamps = frame_index / fps.
-		assert exporter.emitted[0][0] == 0.0
-		assert exporter.emitted[1][0] == 1.0 / 30.0
-		assert exporter.emitted[2][0] == 2.0 / 30.0
+		assert [index for index, _ in sink.records] == [0, 1, 2]
+		assert all(len(tracked) == 1 for _, tracked in sink.records)
 
-	def test_opens_and_closes_the_exporter(self) -> None:
-		exporter = _CapturingExporter()
+	def test_opens_and_closes_the_sink(self) -> None:
+		sink = _CapturingSink()
 		pipeline = TrajectoryPipeline(
 			video=_FakeVideoSource(n_frames=1),
 			detector=_FixedDetector([[]]),
 			tracker=_IdentityTracker(),
-			exporter=exporter,
-			orientation=EmaOrientationEstimator(smoothing_window=5, meters_per_pixel=1.0),
+			sink=sink,
 		)
 		pipeline.run()
-		assert exporter.opened
-		assert exporter.closed
+		assert sink.opened
+		assert sink.closed
 
-	def test_zero_detections_emits_empty_state_list(self) -> None:
-		exporter = _CapturingExporter()
+	def test_zero_detections_records_empty_tracked(self) -> None:
+		sink = _CapturingSink()
 		pipeline = TrajectoryPipeline(
 			video=_FakeVideoSource(n_frames=2),
 			detector=_FixedDetector([[], []]),
 			tracker=_IdentityTracker(),
-			exporter=exporter,
-			orientation=EmaOrientationEstimator(smoothing_window=5, meters_per_pixel=1.0),
+			sink=sink,
 		)
 		pipeline.run()
-		assert all(states == [] for _, states in exporter.emitted)
+		assert all(tracked == [] for _, tracked in sink.records)
 
 	def test_forwards_each_frames_detections_to_the_observer(self) -> None:
 		observer = _RecordingObserver()
@@ -166,28 +156,11 @@ class TestPipeline:
 			video=_FakeVideoSource(n_frames=3),
 			detector=_FixedDetector(per_frame),
 			tracker=_IdentityTracker(),
-			exporter=_CapturingExporter(),
-			orientation=EmaOrientationEstimator(smoothing_window=5, meters_per_pixel=1.0),
+			sink=_CapturingSink(),
 			detection_observer=observer,
 		)
 		pipeline.run()
 		assert observer.batches == per_frame
-
-	def test_states_carry_orientation_derived_attributes(self) -> None:
-		exporter = _CapturingExporter()
-		# Eastward motion across three frames.
-		pipeline = TrajectoryPipeline(
-			video=_FakeVideoSource(n_frames=3, fps=30.0),
-			detector=_FixedDetector([[_det(0.0)], [_det(30.0)], [_det(60.0)]]),
-			tracker=_IdentityTracker(),
-			exporter=exporter,
-			orientation=EmaOrientationEstimator(smoothing_window=5, meters_per_pixel=1.0),
-		)
-		pipeline.run()
-		# Final frame's state should have eastward heading.
-		final_state = exporter.emitted[-1][1][0]
-		assert final_state.heading.dx > 0.9
-		assert final_state.speed > 0.0
 
 
 class _CapturingTracker:
@@ -222,8 +195,7 @@ class TestStabilization:
 			video=_FakeVideoSource(n_frames=1),
 			detector=_FixedDetector([[_det(0.0)]]),
 			tracker=tracker,
-			exporter=_CapturingExporter(),
-			orientation=EmaOrientationEstimator(smoothing_window=5, meters_per_pixel=1.0),
+			sink=_CapturingSink(),
 			ego_motion=ego,
 		)
 		pipeline.run()
@@ -238,28 +210,11 @@ class TestStabilization:
 			video=_FakeVideoSource(n_frames=1),
 			detector=_FixedDetector([[_det(5.0)]]),
 			tracker=tracker,
-			exporter=_CapturingExporter(),
-			orientation=EmaOrientationEstimator(smoothing_window=5, meters_per_pixel=1.0),
+			sink=_CapturingSink(),
 		)
 		pipeline.run()
 		# Detection centre is (5 + 2, 11) = (7, 11), untouched.
 		assert tracker.received[0][0].bbox.center.x == pytest.approx(7.0)
-
-	def test_exporter_receives_the_raw_frame(self) -> None:
-		ego = _StubEgoMotion(Transform2D(a=1.0, b=0.0, tx=100.0, c=0.0, d=1.0, ty=0.0))
-		exporter = _CapturingExporter()
-		pipeline = TrajectoryPipeline(
-			video=_FakeVideoSource(n_frames=1),
-			detector=_FixedDetector([[_det(0.0)]]),
-			tracker=_IdentityTracker(),
-			exporter=exporter,
-			orientation=EmaOrientationEstimator(smoothing_window=5, meters_per_pixel=1.0),
-			ego_motion=ego,
-		)
-		pipeline.run()
-		# The raw frame (index 0, all-zero pixels) reaches the exporter, not a warp.
-		assert exporter.frames[0].index == 0
-		assert not exporter.frames[0].pixels.any()
 
 
 class TestProgressEmission:
@@ -269,8 +224,7 @@ class TestProgressEmission:
 			video=_FakeVideoSource(n_frames=2, fps=30.0),
 			detector=_FixedDetector([[_det(0.0)], [_det(1.0)]]),
 			tracker=_IdentityTracker(),
-			exporter=_CapturingExporter(),
-			orientation=EmaOrientationEstimator(smoothing_window=5, meters_per_pixel=1.0),
+			sink=_CapturingSink(),
 			reporter=reporter,
 		)
 		pipeline.run()
@@ -279,6 +233,7 @@ class TestProgressEmission:
 		frame_events = [e for e in reporter.events if isinstance(e, FrameProcessed)]
 		assert [e.frame_index for e in frame_events] == [0, 1]
 		assert [e.frames_done for e in frame_events] == [1, 2]  # 1-based progress count
+		assert [e.active_tracks for e in frame_events] == [1, 1]
 
 		finished = reporter.events[-1]
 		assert isinstance(finished, ProcessingFinished)
@@ -294,8 +249,7 @@ class TestProgressEmission:
 			video=_FakeVideoSource(n_frames=1),
 			detector=_BoomDetector(),
 			tracker=_IdentityTracker(),
-			exporter=_CapturingExporter(),
-			orientation=EmaOrientationEstimator(smoothing_window=5, meters_per_pixel=1.0),
+			sink=_CapturingSink(),
 			reporter=reporter,
 		)
 		with pytest.raises(RuntimeError, match="boom"):

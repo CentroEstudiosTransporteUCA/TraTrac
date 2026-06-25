@@ -143,47 +143,16 @@ class TrackerConfig:
 	det_thresh: float
 
 
-class OrientationChoice(StrEnum):
-	"""Kinematics estimator: EMA finite-difference (default) or forward Kalman.
-
-	``ema`` is the original windowed finite-difference estimator. ``kalman`` runs a
-	streaming constant-acceleration forward filter (de-jitters the live ``.trj``; the
-	offline ``tratrac-smooth`` RTS pass is preferred when the whole clip is available).
-	See vault/22_smoothing.md.
-	"""
-
-	EMA = "ema"
-	KALMAN = "kalman"
-
-
-@dataclass(frozen=True, slots=True)
-class OrientationConfig:
-	"""Kinematics config. ``smoothing_window`` matters only for ``ema``; the Kalman
-	parameters only for ``kalman`` (the unused set holds ignored placeholders)."""
-
-	method: OrientationChoice
-	smoothing_window: int
-	kalman_pos_noise: float
-	kalman_jerk: float
-
-
 @dataclass(frozen=True, slots=True)
 class ExportConfig:
+	# The run's primary output: the track record (raw tracked measurements). The
+	# offline ``tratrac-smooth`` pass reads it to produce the SSAM ``.trj`` (vault/22).
 	out: Path
-	timestep_precision: float  # 0.0 = emit every processed frame
-	# Optional overlay video output (raw frame + trajectories). ``None`` = off.
-	# ``video_trail`` (trail length in frames; 0 = whole path) is only meaningful —
-	# and only required by ``resolve`` — when ``video_out`` is set.
-	video_out: Path | None
-	video_trail: int
 	# Optional per-frame ego-motion transform CSV (current frame -> global). ``None``
 	# = off. Only meaningful when ego-motion is enabled (``resolve`` enforces this):
 	# with stabilization off every transform is the identity, so there is nothing to
 	# record. See vault/05_75_mvp1_9.md.
 	transform_csv: Path | None
-	# Optional track-observation sidecar ("export B"): raw tracked measurements for the
-	# offline ``tratrac-smooth`` Kalman/RTS pass. ``None`` = off. See vault/22_smoothing.md.
-	tracks: Path | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -220,7 +189,6 @@ class RunConfig:
 	calibration: CalibrationConfig
 	ego_motion: EgoMotionConfig
 	tracker: TrackerConfig
-	orientation: OrientationConfig
 	export: ExportConfig
 	window: WindowConfig
 	analysis: AnalysisConfig
@@ -259,14 +227,7 @@ class RunConfig:
 		det_thresh = resolver.required_float("tracker.det_thresh")
 		_check_range(det_thresh, 0.0, 1.0, "tracker.det_thresh", resolver)
 
-		orientation = _resolve_orientation(resolver)
-
 		out = resolver.required_path("export.out")
-		timestep_precision = resolver.required_float("export.timestep_precision")
-		if timestep_precision < 0.0:
-			resolver.problems.append("export.timestep_precision must be >= 0 (0 = every frame).")
-		video_out, video_trail = _resolve_video(resolver)
-		tracks = resolver.toggleable_path("export.tracks")
 		transform_csv = resolver.toggleable_path("export.transform_csv")
 		if transform_csv is not None and not ego_motion.enabled:
 			resolver.problems.append(
@@ -297,14 +258,9 @@ class RunConfig:
 			calibration=calibration,
 			ego_motion=ego_motion,
 			tracker=TrackerConfig(det_thresh=det_thresh),
-			orientation=orientation,
 			export=ExportConfig(
 				out=out,
-				timestep_precision=timestep_precision,
-				video_out=video_out,
-				video_trail=video_trail,
 				transform_csv=transform_csv,
-				tracks=tracks,
 			),
 			window=window,
 			analysis=AnalysisConfig(exclusion_zones=exclusion_zones),
@@ -571,53 +527,6 @@ def _resolve_ego_motion(resolver: _Resolver) -> EgoMotionConfig:
 		min_anchor_overlap=min_anchor_overlap,
 		transforms=None,
 	)
-
-
-def _resolve_orientation(resolver: _Resolver) -> OrientationConfig:
-	"""Resolve the kinematics estimator. ``method`` is always required; ``smoothing_window``
-	is required only for ``ema`` and the Kalman parameters only for ``kalman``."""
-	name = resolver.required_str("orientation.method")
-	try:
-		method = OrientationChoice(name)
-	except ValueError:
-		if name:  # empty already reported as missing
-			valid = ", ".join(choice.value for choice in OrientationChoice)
-			resolver.problems.append(f"orientation.method {name!r} is unknown; valid: {valid}.")
-		method = OrientationChoice.EMA
-
-	if method is OrientationChoice.KALMAN:
-		pos_noise = resolver.required_float("orientation.kalman_pos_noise")
-		if resolver.present("orientation.kalman_pos_noise") and pos_noise <= 0.0:
-			resolver.problems.append("orientation.kalman_pos_noise must be positive.")
-		jerk = resolver.required_float("orientation.kalman_jerk")
-		if resolver.present("orientation.kalman_jerk") and jerk <= 0.0:
-			resolver.problems.append("orientation.kalman_jerk must be positive.")
-		return OrientationConfig(
-			method=method, smoothing_window=0, kalman_pos_noise=pos_noise, kalman_jerk=jerk
-		)
-
-	smoothing_window = resolver.required_int("orientation.smoothing_window")
-	if resolver.present("orientation.smoothing_window") and smoothing_window < 2:
-		resolver.problems.append("orientation.smoothing_window must be >= 2.")
-	return OrientationConfig(
-		method=method, smoothing_window=smoothing_window, kalman_pos_noise=0.0, kalman_jerk=0.0
-	)
-
-
-def _resolve_video(resolver: _Resolver) -> tuple[Path | None, int]:
-	"""Resolve the optional overlay-video output. ``export.video_out`` is a required
-	toggleable key ("" = off, like ``run.timing_csv``); ``export.video_trail`` is
-	required (and range-checked) only when the video output is on, mirroring how the
-	ORB parameters are required only when ego-motion is enabled."""
-	video_out = resolver.toggleable_path("export.video_out")
-	if video_out is None:
-		# Off (or the key was missing — already reported). The trail length is
-		# irrelevant; a placeholder zero that is never read downstream.
-		return None, 0
-	video_trail = resolver.required_int("export.video_trail")
-	if resolver.present("export.video_trail") and video_trail < 0:
-		resolver.problems.append("export.video_trail must be >= 0 (0 = whole path).")
-	return video_out, video_trail
 
 
 def _resolve_window_bound(resolver: _Resolver, dotted: str) -> float | None:
