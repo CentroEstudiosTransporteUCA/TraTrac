@@ -56,7 +56,6 @@ every run. The rule that resolves this, while keeping "no hidden default":
 > operator writes.
 
 - `timing_csv = ""` — profiling off; a path turns it on.
-- `video_out = ""` — no overlay video; a path turns it on.
 - `transform_csv = ""` — no per-frame transform sidecar; a path turns it on.
 - `force = false` — prompt on overwrite; `true` overwrites silently.
 - `start = "" / end = ""` — the clip's natural bounds; else a timecode.
@@ -114,8 +113,8 @@ The CLI is a single-command Typer app, so it is invoked as `tratrac VIDEO …` /
 ## Consequence: No Library Pixel Fallback
 
 Removing defaults is **package-wide**, not CLI-only. The adapter constructors
-(`EmaOrientationEstimator`, `SsamTrjExporter`, `RtDetrDetector`,
-`YoloV8VisDroneDetector`, `BoxmotBotSortTracker`) no longer carry defaults — the
+(`SsamTrjExporter`, `RtDetrDetector`, `YoloV8VisDroneDetector`,
+`BoxmotBotSortTracker`) no longer carry defaults — the
 old `scale=1.0` / `meters_per_pixel=1.0` "pixels-as-metres" library escape hatch is
 gone. Callers (CLI and tests) pass every value explicitly; tests that want MVP1
 pixel behaviour pass `scale=1.0` / `meters_per_pixel=1.0` themselves.

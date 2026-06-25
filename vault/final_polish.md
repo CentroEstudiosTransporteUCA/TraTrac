@@ -64,19 +64,18 @@ pipeline, exporter, or test changes outside the new adapter and its own tests.
 
 ---
 
-### 2. Kinematics: EMA finite-difference → Kalman/RTS smoothing
+### 2. Kinematics: Kalman/RTS smoothing (now the only path)
 
 | | |
 | --- | --- |
-| **Seam** | `OrientationEstimator` port (the ORIENT step) |
-| **Ships with** | `EmaOrientationEstimator` — raw centroid + windowed finite differences |
+| **Seam** | the offline `tratrac-smooth` pass over the track record |
 | **Target** | constant-acceleration **Kalman/RTS** smoother (`application/kalman.py`) |
-| **Trigger** | acceleration/jerk noise in the exported `.trj` (the standing accel-noise issue) |
+| **Trigger** | acceleration/jerk noise in the `.trj` (the standing accel-noise issue) |
 
-Both paths have **shipped** (`22_smoothing.md`): the offline two-pass (`export.tracks` +
-`tratrac-smooth` forward+RTS) and the inline forward `KalmanOrientationEstimator`
-(`orientation.method = kalman`) for the streaming `.trj`. Clean swap: the port returns
-`VehicleState` per frame; nothing downstream knows whether kinematics came from EMA, a
-forward Kalman, or the RTS post-pass. What remains genuinely deferred is **tuning** —
-picking `pos_noise`/`jerk` against real footage using the `validate_trj.py` jerk metric —
-and a possible **fixed-lag** middle ground if the offline pass is ever too heavy.
+The offline two-pass has **shipped** (`22_smoothing.md`): the perception run writes the raw
+track record, and `tratrac-smooth` runs a forward+RTS smoother to reconstruct kinematics and
+write the `.trj`. The **export inversion** removed the in-pipeline EMA/forward-Kalman
+orientation entirely — there is no longer a streaming/inline `.trj`, so kinematics is always
+the offline smoother. What remains deferred: **tuning** `pos_noise`/`jerk` against real
+footage using the `validate_trj.py` jerk metric; and, if a real-time `.trj` is ever needed,
+a streaming path built on the kept `KinematicKalmanFilter` (or a **fixed-lag** middle ground).
