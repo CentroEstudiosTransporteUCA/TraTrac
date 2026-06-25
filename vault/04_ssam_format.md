@@ -186,6 +186,14 @@ MVP1 emits **valid v1.04** (no Z, no multi-plane). Concrete choices:
 
 MVP2 replaces Scale + coordinates with real metric values from a single homography; MVP3 introduces v3.0 with Z when multi-homography lands.
 
+**MVP2 world mode (post-hoc projection, see `06_mvp2.md`):** when `tratrac-postprocess
+--calibration` projects to world metres, `Scale = 1.0` and the coordinates are *already*
+metric — so the DIMENSIONS bounds are **not** the pixel grid. They are the world-coordinate
+bounding box in metres (`MinX = MinY = 0` after the projected points are translated to a
+non-negative origin; `MaxX`/`MaxY` = the padded world extent), and the Y-flip is about that
+world `MaxY`. Reusing the image dimensions here would leave a third-party reader interpreting
+metric coordinates against a pixel-sized canvas flipped about the wrong axis.
+
 **CLI policy (MVP1.75+):** the `tratrac` CLI no longer *defaults* to Scale = 1.0. It requires explicit calibration (`--meters-per-pixel`, or `--drone-model` + `--altitude`/`.SRT`) and exits with an error otherwise, so it cannot silently emit physically meaningless metric values. The scale=1.0 pixel mode described above remains available at the **library** level (`SsamTrjExporter` and the `tratrac-postprocess` reconstruction accept any `scale`) for callers that knowingly want it.
 
 ---
