@@ -71,6 +71,38 @@ def test_render_writes_overlay(synthetic_video: Path, trj_file: Path, tmp_path: 
 	assert frame.shape[:2] == (_H, _W)
 
 
+def test_renders_only_the_trj_span_not_the_whole_clip(
+	synthetic_video: Path, tmp_path: Path
+) -> None:
+	# A .trj covering only the first 4 of the clip's _N frames must not re-encode all _N.
+	short = tmp_path / "short.trj"
+	meta = VideoMetadata(width=_W, height=_H, fps=float(_FPS), total_frames=_N)
+	with SsamTrjExporter(short, meta, scale=1.0) as exporter:
+		for i in range(4):
+			state = VehicleState(
+				vehicle_id=1,
+				timestamp_seconds=i / _FPS,
+				centroid=Point2D(5.0 + 3.0 * i, 22.0),
+				heading=Heading(1.0, 0.0),
+				dimensions=Dimensions(length=8.0, width=4.0),
+				velocity=Vector2D(30.0, 0.0),
+				acceleration=0.0,
+			)
+			exporter.emit_frame(i / _FPS, [state])
+
+	out = tmp_path / "short_overlay.mp4"
+	result = CliRunner().invoke(app, [str(synthetic_video), "--trj", str(short), "--out", str(out)])
+	assert result.exit_code == 0, result.output
+
+	cap = cv2.VideoCapture(str(out))
+	written = 0
+	while cap.read()[0]:
+		written += 1
+	cap.release()
+	# Windowed to the ~4 covered frames plus a small tail buffer — well under the full clip.
+	assert 4 <= written < _N
+
+
 def test_existing_out_needs_force(synthetic_video: Path, trj_file: Path, tmp_path: Path) -> None:
 	out = tmp_path / "overlay.mp4"
 	out.write_bytes(b"x")
