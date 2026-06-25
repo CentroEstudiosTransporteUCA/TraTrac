@@ -51,11 +51,9 @@ def _write_record(path: Path, *, scale: float) -> None:
 			sink.record(frame, [_tracked(x=10.0 * frame + 20.0, y=50.0)])
 
 
-def _interior_centroid(trj_path: Path) -> tuple[float, float]:
-	"""The track's centroid at an interior frame (frame 3), away from filter transients."""
-	recording = read_trj(trj_path)
-	frame = recording.frames[3]
-	state = frame.states[0]
+def _centroid_at(trj_path: Path, frame_index: int) -> tuple[float, float]:
+	"""The track's centroid at an interior frame, away from filter transients."""
+	state = read_trj(trj_path).frames[frame_index].states[0]
 	return state.centroid.x, state.centroid.y
 
 
@@ -69,7 +67,7 @@ class TestPostprocessCalibration:
 		assert result.exit_code == 0, result.output
 
 		assert read_trj(out).scale == pytest.approx(1.0)
-		cx, cy = _interior_centroid(out)
+		cx, cy = _centroid_at(out, 3)
 		# frame 3 image centre: (10*3 + 20 + 2, 51) = (52, 51)
 		assert cx == pytest.approx(52.0, abs=0.5)
 		assert cy == pytest.approx(51.0, abs=0.5)
@@ -89,10 +87,34 @@ class TestPostprocessCalibration:
 
 		# DIMENSIONS.Scale becomes 1.0 — the coordinates are already metric.
 		assert read_trj(out).scale == pytest.approx(1.0)
-		cx, cy = _interior_centroid(out)
-		# image centre (52, 51) * 0.5 -> world (26, 25.5)
-		assert cx == pytest.approx(26.0, abs=0.5)
-		assert cy == pytest.approx(25.5, abs=0.5)
+		# Coordinates are translated to a 0-origin (absolute world origin is discarded), so
+		# we assert the metric *displacement*: image dx = 10 px/frame, * 0.5 -> 5 m/frame.
+		(x2, _), (x3, _) = _centroid_at(out, 2), _centroid_at(out, 3)
+		assert x3 - x2 == pytest.approx(5.0, abs=0.2)
+
+	def test_with_calibration_sizes_dimensions_to_world_extent(self, tmp_path: Path) -> None:
+		record = tmp_path / "tracks.parquet"
+		out = tmp_path / "world.trj"
+		calibration = tmp_path / "calibration.json"
+		_write_record(record, scale=1.0)
+		calibration.write_text(json.dumps(_HALF_SCALE_CALIBRATION))
+
+		result = CliRunner().invoke(
+			app, [str(record), "--out", str(out), "--calibration", str(calibration)]
+		)
+		assert result.exit_code == 0, result.output
+
+		recording = read_trj(out)
+		# DIMENSIONS bounds describe the WORLD extent (metres, ~29x4), not the 200x200 pixel
+		# grid — otherwise an external reader sees metric coords on a pixel-sized canvas.
+		assert recording.width < 100
+		assert recording.height < 100
+		# Every stored coordinate is non-negative and inside those bounds (the Y-flip is now
+		# about the world height, not the pixel height).
+		for frame in recording.frames:
+			for state in frame.states:
+				assert 0.0 <= state.centroid.x <= recording.width
+				assert 0.0 <= state.centroid.y <= recording.height
 
 	def test_calibration_scales_metric_dimensions(self, tmp_path: Path) -> None:
 		record = tmp_path / "tracks.parquet"

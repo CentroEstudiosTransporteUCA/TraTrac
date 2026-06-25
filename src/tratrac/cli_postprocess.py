@@ -35,6 +35,7 @@ import typer
 from tratrac.application.exclusion import excluded_track_ids, to_global_polygons
 from tratrac.application.track_smoothing import TrackSample, smooth_to_states
 from tratrac.application.world_projection import SingleHomographyProjector, local_scale_at
+from tratrac.domain.frame import VideoMetadata
 from tratrac.domain.geometry import Point2D, Transform2D
 from tratrac.domain.ports import TrajectoryExporter, WorldProjector
 from tratrac.domain.vehicle import VehicleState
@@ -212,9 +213,18 @@ def _project_to_world(
 	Fits one homography from the calibration correspondences (each mapped into the global
 	frame via its anchor pose, exactly like exclusion zones), rewrites every observation's
 	centroid and bbox into world metres, and stamps ``scale = 1.0`` so the downstream
-	smoother/exporter emit world coordinates with ``DIMENSIONS.Scale = 1.0`` — the existing
-	path is reused unchanged. ``pos_noise``/``jerk`` are converted from pixels into the
-	world units by the homography's local scale, preserving the smoother's behaviour.
+	smoother/exporter emit world coordinates with ``DIMENSIONS.Scale = 1.0``.
+
+	The projected coordinates are translated to a non-negative origin and the recording's
+	``width``/``height`` are replaced with the **world** extent (metres) — not the pixel
+	grid. This matters because the SSAM exporter writes those as the DIMENSIONS bounds and
+	flips Y about ``height x scale``: leaving the pixel dimensions in place would make an
+	external reader see metric coordinates against a pixel-sized canvas, flipped about the
+	wrong axis (vault/04 + vault/06_mvp2.md). The translation discards the operator's
+	absolute world origin, which is arbitrary in Approach A and irrelevant to the
+	translation-invariant conflict analytics. ``pos_noise``/``jerk`` are converted from
+	pixels into world units by the homography's local scale, preserving the smoother's
+	behaviour.
 	"""
 	try:
 		calibration = load_calibration(calibration_path)
@@ -232,7 +242,7 @@ def _project_to_world(
 	projector = SingleHomographyProjector(matrix)
 
 	projected = [_project_observation(o, projector) for o in recording.observations]
-	world_recording = TrackRecording(metadata=recording.metadata, scale=1.0, observations=projected)
+	world_recording = _normalize_world_recording(recording.metadata, projected)
 
 	center = Point2D(
 		sum(p.x for p in image_points) / len(image_points),
@@ -240,6 +250,31 @@ def _project_to_world(
 	)
 	scale = local_scale_at(projector, center)
 	return world_recording, pos_noise * scale, jerk * scale * scale
+
+
+def _normalize_world_recording(
+	metadata: VideoMetadata, projected: list[TrackObservation]
+) -> TrackRecording:
+	"""Shift projected observations to a 0-origin and size the metadata to the world extent.
+
+	Pads the bounding box by the largest projected vehicle dimension so the front/rear
+	bumpers the smoother derives from each centroid stay inside the DIMENSIONS bounds. An
+	empty recording keeps the original (pixel) metadata — there are no coordinates to size.
+	"""
+	if not projected:
+		return TrackRecording(metadata=metadata, scale=1.0, observations=projected)
+	pad = max(max(o.width, o.height) for o in projected)
+	min_x = min(o.cx for o in projected) - pad
+	min_y = min(o.cy for o in projected) - pad
+	max_x = max(o.cx for o in projected) + pad
+	max_y = max(o.cy for o in projected) + pad
+	shifted = [replace(o, cx=o.cx - min_x, cy=o.cy - min_y) for o in projected]
+	world_meta = replace(
+		metadata,
+		width=max(1, math.ceil(max_x - min_x)),
+		height=max(1, math.ceil(max_y - min_y)),
+	)
+	return TrackRecording(metadata=world_meta, scale=1.0, observations=shifted)
 
 
 def _project_observation(o: TrackObservation, projector: WorldProjector) -> TrackObservation:
