@@ -32,11 +32,11 @@ from pathlib import Path
 import cv2
 import numpy as np
 from numpy.typing import NDArray
+from tratrac.infrastructure.video.stabilized import _cv2_warp
 
 from tratrac.domain.frame import Frame
 from tratrac.domain.geometry import Transform2D
 from tratrac.infrastructure.video.ego_motion_orb import OrbEgoMotionEstimator
-from tratrac.infrastructure.video.stabilized import _cv2_warp
 
 
 def _decompose(t: Transform2D) -> tuple[float, float, float]:
