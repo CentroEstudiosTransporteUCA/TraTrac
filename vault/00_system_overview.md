@@ -65,7 +65,7 @@ per-MVP files carry a **Status** banner; this is the single reconciliation of pl
 | 1.5 | Fine-tune RT-DETR, remove YOLOv8 | ❌ **Skipped** (leapfrogged by 1.75 + 1.9) |
 | 1.75 | Metric sizes/speeds from drone GSD | ✅ **Shipped** |
 | 1.9 | ORB ego-motion stabilization | ✅ **Shipped** (optional, off by default) |
-| 2 | Single-homography **world projection** | ❌ **Not started** — the load-bearing gap: SSAM positions remain image-space pixels |
+| 2 | Single-homography **world projection** | 🟡 **Partially shipped** — post-hoc single-homography projection (Approach A) lives in `tratrac-postprocess --calibration`; SSAM positions can now be metric world coords. Deferred: SuperPoint+LightGlue stabilization (ORB still does ego-motion) and the multi-anchor projector (C/D). See `06_mvp2.md`. |
 | 3 | Multi-homography + Link ID | ❌ Not started |
 | 4 | SAM2 segmentation; **dual export begins** | 🟡 **Partially pulled forward** — the dual-export "B-first" architecture is already core; SAM2 not started |
 | 5 | FastReID identity persistence | ❌ Not started |
