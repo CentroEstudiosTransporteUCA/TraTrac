@@ -8,7 +8,7 @@ from typing import Protocol
 
 from tratrac.domain.detection import Detection, TrackedDetection
 from tratrac.domain.frame import Frame, VideoMetadata
-from tratrac.domain.geometry import Transform2D
+from tratrac.domain.geometry import Point2D, Transform2D
 from tratrac.domain.progress import ProgressEvent
 from tratrac.domain.stabilization import FrameTransform
 from tratrac.domain.timing import StepTiming
@@ -92,6 +92,19 @@ class Tracker(Protocol):
 	"""Assigns stable identities to detections across frames."""
 
 	def update(self, frame: Frame, detections: list[Detection]) -> list[TrackedDetection]: ...
+
+
+class WorldProjector(Protocol):
+	"""Maps a track observation's (stabilized) image point onto the metric world plane.
+
+	Applied post-hoc by ``tratrac-postprocess`` before smoothing, so trajectories are
+	smoothed and exported in world metres (MVP2, see ``vault/06_mvp2.md``). The method
+	takes the observation's ``frame_index`` as well as the point so a future per-anchor
+	projector can pick the right homography; the single-homography impl ignores it. The
+	Null/identity impl returns the point unchanged (image-space, the pre-MVP2 behavior).
+	"""
+
+	def to_world(self, point: Point2D, frame_index: int) -> Point2D: ...
 
 
 class TrajectoryExporter(Protocol):
