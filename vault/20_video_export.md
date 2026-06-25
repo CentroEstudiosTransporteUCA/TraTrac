@@ -84,8 +84,11 @@ overlay tool, marking validator violations on top of this (or any) video.
 - `cli_render.py` — `tratrac-render`. Reads the `.trj` (`read_trj`) and the optional
   transforms CSV, buckets states onto absolute video frames by
   `round(timestamp * fps)` (fps from the **clip** — the `.trj` carries time but not
-  fps — the same alignment `render_violations.py` uses), opens the clip, and drives a
-  single `OverlayVideoExporter`.
+  fps — the same alignment `render_violations.py` uses), and drives a single
+  `OverlayVideoExporter`. It opens the clip **windowed to the `.trj`'s covered span**
+  (the absolute-seconds TIMESTEPs bound `start_seconds`/`end_seconds`, plus a small tail
+  buffer), so a short analysis window on a long clip renders only that span instead of
+  re-encoding the whole video. An empty `.trj` renders nothing.
 
 (The old in-pipeline `CompositeTrajectoryExporter` was removed: with rendering gone
 from both `process` and `smooth`, nothing composes exporters anymore.)

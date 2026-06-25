@@ -39,6 +39,10 @@ app = typer.Typer(
 	no_args_is_help=True,
 )
 
+# Seconds of clip kept past the last TIMESTEP so its frame is included (the .trj carries
+# time but not fps, so the window is set in seconds). Small over-render; bounds the output.
+_TAIL_BUFFER_SECONDS = 0.5
+
 
 class _CurrentTransform:
 	"""Mutable holder so the overlay's ``transform_source`` reads the frame's transform."""
@@ -87,9 +91,20 @@ def render(
 	except (ValueError, OSError) as exc:
 		raise typer.BadParameter(str(exc)) from exc
 
+	if not recording.frames:
+		typer.echo(f"{trj} has no trajectories; nothing to render.")
+		return
+
 	out.parent.mkdir(parents=True, exist_ok=True)
+	# Render only the clip span the .trj covers, not the whole source — otherwise a short
+	# analysis window on a long clip would re-encode the entire video. TIMESTEPs are
+	# absolute seconds (vault/17), so they bound the window directly; the tail buffer keeps
+	# the last covered frame. Windowed frames keep their absolute index, so the
+	# round(timestamp * fps) alignment below (the same render_violations uses) still holds.
+	start_seconds = min(f.timestamp_seconds for f in recording.frames)
+	end_seconds = max(f.timestamp_seconds for f in recording.frames) + _TAIL_BUFFER_SECONDS
 	try:
-		source = OpenCvVideoSource(video)
+		source = OpenCvVideoSource(video, start_seconds=start_seconds, end_seconds=end_seconds)
 	except ValueError as exc:
 		raise typer.BadParameter(str(exc)) from exc
 
