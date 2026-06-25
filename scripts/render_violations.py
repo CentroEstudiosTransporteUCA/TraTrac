@@ -5,11 +5,10 @@ Standalone — only stdlib + cv2. Takes a video and a violations CSV produced by
 ``scripts/validate_trj.py`` and marks each non-compliant instance in red on the
 frame where it occurs, aligned by ``round(timestamp_s * fps)``.
 
-Trajectory drawing now lives in the pipeline's ``OverlayVideoExporter``
-(``export.video_out``, see vault/20_video_export.md), which writes a video of each
-(already-stabilized, if ego-motion is on) frame with bumpers/IDs/trails drawn.
-This script's sole remaining job is the violation overlay — point it at that
-overlay ``.mp4`` to get "warped frame + trajectories + violations".
+Trajectory drawing now lives in the post-hoc ``tratrac-render`` (see
+vault/20_video_export.md), which draws a ``.trj``'s bumpers/IDs/trails over its
+source clip. This script's sole remaining job is the violation overlay — point it
+at ``tratrac-render``'s overlay ``.mp4`` to get "frame + trajectories + violations".
 
 Alignment: a violation row is placed on ``round(timestamp_s * fps)`` counted from
 the passed video's frame 0. So the video's frame 0 must correspond to absolute

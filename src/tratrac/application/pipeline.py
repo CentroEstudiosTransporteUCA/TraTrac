@@ -1,4 +1,12 @@
-"""Pipeline orchestrator: wires VideoSource -> Detector -> Tracker -> Orientation -> Exporter."""
+"""Pipeline orchestrator: wires VideoSource -> Detector -> Tracker -> TrackSink.
+
+Perception only: it detects, (optionally) removes ego-motion, masks, and tracks, then
+records the raw tracked measurements to a ``TrackSink`` — the canonical run output
+("export B", vault/01). Kinematics (orientation/speed/accel) and the SSAM ``.trj`` are
+**not** produced here; they are derived offline by ``tratrac-smooth`` from the record
+(vault/22). Keeping the pipeline to raw measurements is what lets the smoother de-jitter
+position instead of re-smoothing already-derived kinematics.
+"""
 
 from __future__ import annotations
 
@@ -12,10 +20,9 @@ from tratrac.domain.ports import (
 	DetectionObserver,
 	Detector,
 	EgoMotionEstimator,
-	OrientationEstimator,
 	ProgressReporter,
 	Tracker,
-	TrajectoryExporter,
+	TrackSink,
 	VideoSource,
 )
 from tratrac.domain.progress import (
@@ -27,7 +34,7 @@ from tratrac.domain.progress import (
 
 
 class TrajectoryPipeline:
-	"""Drives the per-frame loop. Caller opens the video; pipeline owns the exporter lifecycle."""
+	"""Drives the per-frame loop. Caller opens the video; pipeline owns the sink lifecycle."""
 
 	def __init__(
 		self,
@@ -35,8 +42,7 @@ class TrajectoryPipeline:
 		video: VideoSource,
 		detector: Detector,
 		tracker: Tracker,
-		exporter: TrajectoryExporter,
-		orientation: OrientationEstimator,
+		sink: TrackSink,
 		reporter: ProgressReporter | None = None,
 		detection_observer: DetectionObserver | None = None,
 		detection_mask: DetectionMask | None = None,
@@ -45,8 +51,9 @@ class TrajectoryPipeline:
 		self._video = video
 		self._detector = detector
 		self._tracker = tracker
-		self._exporter = exporter
-		self._orientation = orientation
+		# The run's primary output: raw tracked measurements per frame. The pipeline
+		# owns its lifecycle (as it used to own the exporter's).
+		self._sink = sink
 		# Coordinate stabilization (MVP1.9, vault/05_75_mvp1_9.md): when present, each
 		# frame's detections are mapped into the keyframe-anchored global frame BEFORE
 		# tracking, so detection/tracking run on the raw, full-resolution frame (no
@@ -77,7 +84,7 @@ class TrajectoryPipeline:
 		total = metadata.total_frames
 		count = 0
 		self._reporter.receive(ProcessingStarted(metadata=metadata))
-		with self._exporter:
+		with self._sink:
 			for frame in self._video.frames():
 				try:
 					timestamp = frame.timestamp_seconds(fps)
@@ -100,11 +107,8 @@ class TrajectoryPipeline:
 						# global frame so the tracker associates ego-motion-free boxes.
 						detections = [apply_transform(d, transform) for d in detections]
 					tracked = self._tracker.update(frame, detections)
-					states = self._orientation.estimate(tracked, timestamp)
-					# Pass the raw frame so pixel exporters can render the overlay (they
-					# map states back to raw via the ego-motion transform); data
-					# exporters ignore it.
-					self._exporter.emit_frame(timestamp, states, frame)
+					# Record the raw measurements; this is the run's output.
+					self._sink.record(frame.index, tracked)
 				except Exception as exc:
 					self._reporter.receive(
 						ProcessingFailed(frame_index=frame.index, error=repr(exc))
@@ -117,7 +121,7 @@ class TrajectoryPipeline:
 						frames_done=count,
 						total_frames=total,
 						timestamp_seconds=timestamp,
-						active_tracks=len(states),
+						active_tracks=len(tracked),
 					)
 				)
 		self._reporter.receive(ProcessingFinished(frames_processed=count))

@@ -1,9 +1,9 @@
-"""End-to-end smoke test: synthetic video -> full pipeline -> valid .trj.
+"""End-to-end smoke test: synthetic video -> perception record -> tratrac-smooth -> valid .trj.
 
 Uses the real RT-DETR + BoT-SORT stack. The first run downloads the RT-DETR
-checkpoint (~80 MB); subsequent runs hit the HF cache. Synthetic black frames
-won't trigger detections, so the resulting .trj has FORMAT + DIMENSIONS + N
-empty TIMESTEPs — exactly the wire we want to verify.
+checkpoint (~80 MB); subsequent runs hit the HF cache. Synthetic noise frames
+won't trigger detections, so the record has no observations and the smoothed .trj
+is FORMAT + DIMENSIONS with no TIMESTEPs — exactly the two-step wire we want to verify.
 """
 
 from __future__ import annotations
@@ -15,12 +15,13 @@ from pathlib import Path
 import cv2
 import numpy as np
 import pytest
+from typer.testing import CliRunner
 
-from tratrac.application.orientation import EmaOrientationEstimator
 from tratrac.application.pipeline import TrajectoryPipeline
+from tratrac.cli_smooth import app as smooth_app
 from tratrac.infrastructure.detection.rt_detr import RtDetrDetector
-from tratrac.infrastructure.export.ssam_trj import SsamTrjExporter
 from tratrac.infrastructure.tracking.boxmot_bot_sort import BoxmotBotSortTracker
+from tratrac.infrastructure.tracks.parquet import ParquetTrackSink, read_tracks
 from tratrac.infrastructure.video.opencv import OpenCvVideoSource
 
 _WIDTH = 128
@@ -51,24 +52,30 @@ def synthetic_video(tmp_path: Path) -> Path:
 
 
 @pytest.mark.slow
-def test_pipeline_produces_parseable_trj(synthetic_video: Path, tmp_path: Path) -> None:
-	out = tmp_path / "out.trj"
+def test_perception_record_then_smooth_to_trj(synthetic_video: Path, tmp_path: Path) -> None:
+	# Step 1: perception pipeline -> track record (the run's primary output).
+	record = tmp_path / "record.parquet"
 	with OpenCvVideoSource(synthetic_video) as source:
 		detector = RtDetrDetector(
 			checkpoint="PekingU/rtdetr_r18vd", device="cpu", score_threshold=0.5
 		)
 		tracker = BoxmotBotSortTracker(source.metadata, det_thresh=0.1)
-		exporter = SsamTrjExporter(out, source.metadata, scale=1.0)
 		pipeline = TrajectoryPipeline(
 			video=source,
 			detector=detector,
 			tracker=tracker,
-			exporter=exporter,
-			orientation=EmaOrientationEstimator(smoothing_window=5, meters_per_pixel=1.0),
+			sink=ParquetTrackSink(record, source.metadata, scale=1.0),
 		)
 		n_frames = pipeline.run()
 
 	assert n_frames >= 1  # codec may drop the last frame; we want >=1 to confirm we ran.
+	recording = read_tracks(record)  # the record is a valid, self-contained track file
+	assert (recording.metadata.width, recording.metadata.height) == (_WIDTH, _HEIGHT)
+
+	# Step 2: smooth the record into a .trj via the real entry point.
+	out = tmp_path / "out.trj"
+	result = CliRunner().invoke(smooth_app, [str(record), "--out", str(out)])
+	assert result.exit_code == 0, result.output
 	data = out.read_bytes()
 
 	# FORMAT record.
@@ -86,19 +93,15 @@ def test_pipeline_produces_parseable_trj(synthetic_video: Path, tmp_path: Path) 
 	assert units == 1
 	assert (min_x, min_y, max_x, max_y) == (0, 0, _WIDTH, _HEIGHT)
 
-	# Walk the rest of the file: expect alternating TIMESTEP / (no VEHICLE).
-	# We don't assert frame count exactly — mp4v may swallow the last frame.
-	timestep_count = 0
+	# Walk the rest: TIMESTEP / VEHICLE records only (noise frames yield few or none).
 	offset = header_end
 	while offset < len(data):
 		marker = data[offset]
 		if marker == 2:  # TIMESTEP
-			timestep_count += 1
 			offset += _TIMESTEP_SIZE
-		elif marker == 3:  # VEHICLE — none expected from noise frames, but tolerate
+		elif marker == 3:  # VEHICLE
 			from tratrac.infrastructure.export.ssam_trj import _VEHICLE_STRUCT
 
 			offset += _VEHICLE_STRUCT.size
 		else:
 			pytest.fail(f"Unexpected record type byte {marker} at offset {offset}")
-	assert timestep_count >= 1

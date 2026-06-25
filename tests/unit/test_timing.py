@@ -2,25 +2,21 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator
 from pathlib import Path
 from types import TracebackType
 
 import numpy as np
 
-from tratrac.application.orientation import EmaOrientationEstimator
 from tratrac.application.pipeline import TrajectoryPipeline
 from tratrac.domain.detection import Detection, TrackedDetection, VehicleClass
 from tratrac.domain.frame import Frame, VideoMetadata
 from tratrac.domain.geometry import BoundingBox
 from tratrac.domain.timing import PipelineStep, StepTiming
-from tratrac.domain.vehicle import VehicleState
 from tratrac.infrastructure.timing.csv import CsvTimingSink
 from tratrac.infrastructure.timing.decorators import (
 	StepStopwatch,
 	TimedDetector,
-	TimedExporter,
-	TimedOrientation,
 	TimedTracker,
 )
 
@@ -64,27 +60,13 @@ class _ConstTracker:
 		return self._result
 
 
-class _ConstOrientation:
-	def __init__(self, result: list[VehicleState]) -> None:
-		self._result = result
+class _StubTrackSink:
+	"""A TrackSink that discards records; satisfies the pipeline's output port."""
 
-	def estimate(
-		self, tracked: Sequence[TrackedDetection], timestamp_seconds: float
-	) -> list[VehicleState]:
-		return self._result
+	def record(self, frame_index: int, tracked: list[TrackedDetection]) -> None:
+		return None
 
-
-class _RecordingExporter:
-	def __init__(self) -> None:
-		self.calls: list[str] = []
-
-	def emit_frame(
-		self, timestamp_seconds: float, states: list[VehicleState], frame: Frame
-	) -> None:
-		self.calls.append("emit")
-
-	def __enter__(self) -> _RecordingExporter:
-		self.calls.append("enter")
+	def __enter__(self) -> _StubTrackSink:
 		return self
 
 	def __exit__(
@@ -93,7 +75,7 @@ class _RecordingExporter:
 		exc_val: BaseException | None,
 		exc_tb: TracebackType | None,
 	) -> None:
-		self.calls.append("exit")
+		return None
 
 
 class _StubVideo:
@@ -167,25 +149,6 @@ class TestTimedTracker:
 		assert sink.records == [StepTiming(PipelineStep.TRACK, 0, 0.25)]
 
 
-class TestTimedOrientation:
-	def test_forwards_result_and_records_orient(self) -> None:
-		sink = _RecordingSink()
-		timed = TimedOrientation(_ConstOrientation([]), sink, clock=_StubClock([0.0, 0.125]))
-		assert timed.estimate([], 0.0) == []
-		assert sink.records == [StepTiming(PipelineStep.ORIENT, 0, 0.125)]
-
-
-class TestTimedExporter:
-	def test_times_emit_and_delegates_context_manager(self) -> None:
-		sink = _RecordingSink()
-		inner = _RecordingExporter()
-		timed = TimedExporter(inner, sink, clock=_StubClock([0.0, 0.5]))
-		with timed:
-			timed.emit_frame(1.0, [], _frame())
-		assert inner.calls == ["enter", "emit", "exit"]
-		assert sink.records == [StepTiming(PipelineStep.EXPORT, 0, 0.5)]
-
-
 class TestCsvTimingSink:
 	def test_writes_one_wide_row_per_frame(self, tmp_path: Path) -> None:
 		path = tmp_path / "timings.csv"
@@ -193,20 +156,17 @@ class TestCsvTimingSink:
 			for ordinal in (0, 1):
 				sink.record(StepTiming(PipelineStep.DETECT, ordinal, 0.5))
 				sink.record(StepTiming(PipelineStep.TRACK, ordinal, 0.25))
-				sink.record(StepTiming(PipelineStep.ORIENT, ordinal, 0.125))
-				sink.record(StepTiming(PipelineStep.EXPORT, ordinal, 0.0625))
 		lines = path.read_text().splitlines()
-		assert lines[0] == "frame,detect,track,orient,export"
-		assert lines[1] == "0,0.5,0.25,0.125,0.0625"
-		assert lines[2] == "1,0.5,0.25,0.125,0.0625"
+		assert lines[0] == "frame,detect,track"
+		assert lines[1] == "0,0.5,0.25"
+		assert lines[2] == "1,0.5,0.25"
 
 	def test_partial_final_frame_flushes_with_blanks_on_close(self, tmp_path: Path) -> None:
 		path = tmp_path / "partial.csv"
 		with CsvTimingSink(path) as sink:
 			sink.record(StepTiming(PipelineStep.DETECT, 0, 0.5))
-			sink.record(StepTiming(PipelineStep.TRACK, 0, 0.25))
 		lines = path.read_text().splitlines()
-		assert lines[1] == "0,0.5,0.25,,"
+		assert lines[1] == "0,0.5,"
 
 
 class TestDecoratedPipeline:
@@ -217,10 +177,7 @@ class TestDecoratedPipeline:
 				video=_StubVideo(3),
 				detector=TimedDetector(_ConstDetector([_det()]), sink),
 				tracker=TimedTracker(_PerDetectionTracker(), sink),
-				exporter=TimedExporter(_RecordingExporter(), sink),
-				orientation=TimedOrientation(
-					EmaOrientationEstimator(smoothing_window=5, meters_per_pixel=1.0), sink
-				),
+				sink=_StubTrackSink(),
 			)
 			assert pipeline.run() == 3
 		data = path.read_text().splitlines()[1:]

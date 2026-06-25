@@ -6,11 +6,8 @@ de-jittered SSAM ``.trj``. Offline and zero-phase — the second pass of the two
 smoothing design (see vault/22_smoothing.md). Re-running with different ``--pos-noise``/
 ``--jerk`` re-tunes the filter with no re-detection.
 
-With ``--video``/``--video-out`` it also draws the *smoothed* trajectories onto the source
-clip (reusing ``OverlayVideoExporter``), so the smoothed variants get a real trajectory
-overlay — not just violation marks. For an ego-motion run pass ``--transforms`` (the run's
-transform CSV) so the smoothed global-frame coordinates map back onto the raw video,
-exactly as the pipeline overlay does.
+Rendering is a separate step: to draw the smoothed trajectories over the clip, run
+``tratrac-render`` on the smoothed ``.trj`` (see vault/20_video_export.md).
 """
 
 from __future__ import annotations
@@ -19,40 +16,21 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Annotated
 
-import numpy as np
 import typer
-from numpy.typing import NDArray
 
 from tratrac.application.track_smoothing import TrackSample, smooth_to_states
-from tratrac.domain.frame import Frame
-from tratrac.domain.geometry import Point2D, Transform2D
+from tratrac.domain.geometry import Point2D
+from tratrac.domain.ports import TrajectoryExporter
 from tratrac.domain.vehicle import VehicleState
-from tratrac.infrastructure.export.composite import CompositeTrajectoryExporter
-from tratrac.infrastructure.export.overlay_video import OverlayVideoExporter
+from tratrac.infrastructure.export.decimating import DecimatingTrajectoryExporter
 from tratrac.infrastructure.export.ssam_trj import SsamTrjExporter
-from tratrac.infrastructure.tracks.csv import TrackObservation, TrackRecording, read_tracks
-from tratrac.infrastructure.transform.csv import read_transforms
-from tratrac.infrastructure.video.opencv import OpenCvVideoSource
+from tratrac.infrastructure.tracks.parquet import TrackObservation, TrackRecording, read_tracks
 
 app = typer.Typer(
 	name="tratrac-smooth",
 	help="Smooth a track-observation file into a de-jittered SSAM .trj (forward+RTS Kalman).",
 	no_args_is_help=True,
 )
-
-# SsamTrjExporter is a data exporter and ignores the frame pixels; a 1x1 placeholder
-# satisfies the port when no real video is drawn.
-_PLACEHOLDER_PIXELS: NDArray[np.uint8] = np.zeros((1, 1, 3), dtype=np.uint8)
-
-
-class _CurrentTransform:
-	"""Mutable holder so the overlay's ``transform_source`` reads the frame's transform."""
-
-	def __init__(self) -> None:
-		self.value = Transform2D.identity()
-
-	def get(self) -> Transform2D:
-		return self.value
 
 
 @app.command()
@@ -69,64 +47,38 @@ def smooth(
 		float,
 		typer.Option("--jerk", help="Process jerk spectral density; higher = more responsive."),
 	] = 20.0,
-	video: Annotated[
-		Path | None,
+	timestep_precision: Annotated[
+		float,
 		typer.Option(
-			"--video",
-			exists=True,
-			dir_okay=False,
-			help="Source clip to draw the smoothed trajectories on; required with --video-out.",
+			"--timestep-precision",
+			help="Min seconds between exported TIMESTEPs; 0 = every frame. Thins only the .trj "
+			"output (the record keeps every frame).",
 		),
-	] = None,
-	video_out: Annotated[
-		Path | None,
-		typer.Option(
-			"--video-out", dir_okay=False, help="Overlay video of the smoothed trajectories."
-		),
-	] = None,
-	transforms: Annotated[
-		Path | None,
-		typer.Option(
-			"--transforms",
-			dir_okay=False,
-			help="The run's transform CSV; maps smoothed global-frame coords onto the raw video "
-			"(ego-motion runs).",
-		),
-	] = None,
-	video_trail: Annotated[
-		int, typer.Option("--video-trail", help="Overlay trail length in frames; 0 = whole path.")
-	] = 0,
+	] = 0.0,
 	force: Annotated[
 		bool, typer.Option("--force/--no-force", help="Overwrite existing outputs.")
 	] = False,
 ) -> None:
-	"""Smooth TRACKS into a de-jittered .trj at --out (optionally an overlay video)."""
-	if video_out is not None and video is None:
-		raise typer.BadParameter("--video-out requires --video (the source clip to draw on).")
-	for target in (out, video_out):
-		if target is not None and target.exists() and not force:
-			raise typer.BadParameter(f"{target} already exists; pass --force to overwrite.")
+	"""Smooth TRACKS into a de-jittered .trj at --out.
+
+	To draw the smoothed trajectories over the clip, render the output with
+	``tratrac-render`` (see vault/20_video_export.md).
+	"""
+	if out.exists() and not force:
+		raise typer.BadParameter(f"{out} already exists; pass --force to overwrite.")
+	if timestep_precision < 0.0:
+		raise typer.BadParameter("--timestep-precision must be >= 0 (0 = every frame).")
 	try:
 		recording = read_tracks(tracks)
-		transforms_map = read_transforms(transforms) if transforms is not None else {}
 	except (ValueError, OSError) as exc:
 		raise typer.BadParameter(str(exc)) from exc
 
 	states_by_frame = _smooth_recording(recording, pos_noise=pos_noise, jerk=jerk)
 	out.parent.mkdir(parents=True, exist_ok=True)
+	_emit_trj(out, recording, states_by_frame, timestep_precision=timestep_precision)
 
-	if video_out is None:
-		_emit_trj(out, recording, states_by_frame)
-	else:
-		assert video is not None  # guaranteed by the check above
-		video_out.parent.mkdir(parents=True, exist_ok=True)
-		_emit_trj_and_overlay(
-			out, video, video_out, recording, states_by_frame, transforms_map, video_trail
-		)
-
-	overlay_note = f" + overlay {video_out}" if video_out is not None else ""
 	typer.echo(
-		f"Smoothed {tracks} -> {out}{overlay_note} "
+		f"Smoothed {tracks} -> {out} "
 		f"({len(states_by_frame)} frames, pos_noise={pos_noise}px, jerk={jerk})."
 	)
 
@@ -162,56 +114,23 @@ def _smooth_recording(
 
 
 def _emit_trj(
-	out: Path, recording: TrackRecording, states_by_frame: dict[int, list[VehicleState]]
-) -> None:
-	"""Write the smoothed .trj only (no video); data exporter ignores the frame pixels."""
-	fps = recording.metadata.fps
-	with SsamTrjExporter(out, recording.metadata, scale=recording.scale) as exporter:
-		for frame_index in sorted(states_by_frame):
-			exporter.emit_frame(
-				frame_index / fps,
-				states_by_frame[frame_index],
-				Frame(index=frame_index, pixels=_PLACEHOLDER_PIXELS),
-			)
-
-
-def _emit_trj_and_overlay(
 	out: Path,
-	video: Path,
-	video_out: Path,
 	recording: TrackRecording,
 	states_by_frame: dict[int, list[VehicleState]],
-	transforms_map: dict[int, Transform2D],
-	video_trail: int,
+	*,
+	timestep_precision: float,
 ) -> None:
-	"""Write the .trj and an overlay video of the smoothed trajectories over the source clip."""
-	if not states_by_frame:
-		_emit_trj(out, recording, states_by_frame)
-		return
+	"""Write the smoothed .trj from the per-frame states, optionally decimating TIMESTEPs."""
 	fps = recording.metadata.fps
-	lo, hi = min(states_by_frame), max(states_by_frame)
-	current = _CurrentTransform()
-	try:
-		source = OpenCvVideoSource(video, start_seconds=lo / fps, end_seconds=(hi + 0.5) / fps)
-	except ValueError as exc:
-		raise typer.BadParameter(str(exc)) from exc
-	with source:
-		exporter = CompositeTrajectoryExporter(
-			[
-				SsamTrjExporter(out, recording.metadata, scale=recording.scale),
-				OverlayVideoExporter(
-					video_out,
-					recording.metadata,
-					scale=recording.scale,
-					trail_length=video_trail,
-					transform_source=current.get,
-				),
-			]
+	exporter: TrajectoryExporter = SsamTrjExporter(out, recording.metadata, scale=recording.scale)
+	if timestep_precision > 0.0:
+		# Thin the exported TIMESTEP stream; the smoothing still uses every observation.
+		exporter = DecimatingTrajectoryExporter(
+			exporter, min_interval_seconds=timestep_precision, fps=fps
 		)
-		with exporter:
-			for frame in source.frames():
-				current.value = transforms_map.get(frame.index, Transform2D.identity())
-				exporter.emit_frame(frame.index / fps, states_by_frame.get(frame.index, []), frame)
+	with exporter:
+		for frame_index in sorted(states_by_frame):
+			exporter.emit_frame(frame_index / fps, states_by_frame[frame_index])
 
 
 if __name__ == "__main__":

@@ -1,19 +1,29 @@
-"""SSAM .trj v1.04 binary exporter.
+"""SSAM .trj v1.04 binary exporter (and a viz-only reader).
 
 Spec lives in vault/04_ssam_format.md. MVP1 conventions are documented there:
 little-endian, metric units, image-space Y flipped into SSAM Cartesian, Link
 ID = 0, Lane ID = 0. The ``scale`` (metres per pixel) is a required constructor
 argument — there is no default; the caller supplies the resolved GSD.
+
+``read_trj`` reads a written ``.trj`` back into ``VehicleState``s. It exists
+*solely* for rendering/diagnostics (e.g. ``tratrac-render`` drawing trajectories
+over a clip) and does **not** reopen the load-bearing invariant that the SSAM
+``.trj`` is export-only, never re-ingested into the processing/analytics path
+(see vault/01 and vault/22): smoothing and analytics consume the raw track
+sidecar, not the lossy ``.trj``. Reconstruction is float32-exact for the
+pixel-rounded drawing the renderer does.
 """
 
 from __future__ import annotations
 
 import struct
+from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
 from typing import IO
 
-from tratrac.domain.frame import Frame, VideoMetadata
+from tratrac.domain.frame import VideoMetadata
+from tratrac.domain.geometry import Dimensions, Heading, Point2D
 from tratrac.domain.vehicle import VehicleState
 
 _FORMAT_RECORD_TYPE = 0
@@ -62,12 +72,7 @@ class SsamTrjExporter:
 			self._file.close()
 			self._file = None
 
-	def emit_frame(
-		self, timestamp_seconds: float, states: list[VehicleState], frame: Frame
-	) -> None:
-		# ``frame`` is part of the exporter port (the overlay video writer needs the
-		# pixels); SSAM is a pure data format, so it is intentionally ignored here.
-		del frame
+	def emit_frame(self, timestamp_seconds: float, states: list[VehicleState]) -> None:
 		out = self._require_file()
 		out.write(_TIMESTEP_STRUCT.pack(_TIMESTEP_RECORD_TYPE, timestamp_seconds))
 		for state in states:
@@ -121,3 +126,91 @@ class SsamTrjExporter:
 		if self._file is None:
 			raise RuntimeError("SsamTrjExporter must be used as a context manager.")
 		return self._file
+
+
+@dataclass(frozen=True, slots=True)
+class TrjFrame:
+	"""One TIMESTEP read back: its time and the vehicle states at that instant."""
+
+	timestamp_seconds: float
+	states: list[VehicleState]
+
+
+@dataclass(frozen=True, slots=True)
+class TrjRecording:
+	"""A ``.trj`` read back into memory. ``scale`` and ``width``/``height`` come from
+	the DIMENSIONS record, enough to reconstruct world-unit states for rendering."""
+
+	scale: float
+	width: int
+	height: int
+	frames: list[TrjFrame]
+
+
+def read_trj(path: Path) -> TrjRecording:
+	"""Read an SSAM ``.trj`` v1.04 back into ``VehicleState``s (viz-only — see module docstring).
+
+	Inverts ``_write_vehicle_record`` exactly: grid coordinates are multiplied by the
+	DIMENSIONS scale and the SSAM Y-flip is undone, recovering world-unit front/rear
+	bumpers, from which the centroid, heading, and dimensions are reconstructed.
+
+	Raises ``ValueError`` (re-wrapped with the path) on a truncated file or an
+	unexpected record ordering (e.g. a VEHICLE before any TIMESTEP).
+	"""
+	data = path.read_bytes()
+	try:
+		offset = _FORMAT_STRUCT.size  # FORMAT record; its contents are not needed back
+		_, _, scale, _, _, width, height = _DIMENSIONS_STRUCT.unpack_from(data, offset)
+		offset += _DIMENSIONS_STRUCT.size
+		image_height_world = height * scale
+
+		frames: list[TrjFrame] = []
+		current: list[VehicleState] | None = None
+		while offset < len(data):
+			record_type = data[offset]
+			if record_type == _TIMESTEP_RECORD_TYPE:
+				_, timestamp = _TIMESTEP_STRUCT.unpack_from(data, offset)
+				offset += _TIMESTEP_STRUCT.size
+				current = []
+				frames.append(TrjFrame(timestamp_seconds=timestamp, states=current))
+			elif record_type == _VEHICLE_RECORD_TYPE:
+				if current is None:
+					raise ValueError("VEHICLE record before any TIMESTEP record.")
+				fields = _VEHICLE_STRUCT.unpack_from(data, offset)
+				offset += _VEHICLE_STRUCT.size
+				current.append(_vehicle_state_from_record(fields, scale, image_height_world))
+			else:
+				raise ValueError(f"unknown record type {record_type} at byte {offset}.")
+	except struct.error as exc:
+		raise ValueError(f"{path} is a truncated or malformed .trj: {exc}") from exc
+	except ValueError as exc:
+		raise ValueError(f"{path} is not a valid .trj: {exc}") from exc
+	return TrjRecording(scale=scale, width=width, height=height, frames=frames)
+
+
+def _vehicle_state_from_record(
+	fields: tuple[int, int, int, int, float, float, float, float, float, float, float, float],
+	scale: float,
+	image_height_world: float,
+) -> VehicleState:
+	"""Rebuild a ``VehicleState`` from one unpacked VEHICLE record (inverse of the writer)."""
+	(_, vehicle_id, link_id, lane_id, fx, fy, rx, ry, length, width, speed, acceleration) = fields
+	# Undo "divide by scale" and the SSAM Y-flip the writer applied.
+	front = Point2D(fx * scale, image_height_world - fy * scale)
+	rear = Point2D(rx * scale, image_height_world - ry * scale)
+	centroid = Point2D((front.x + rear.x) / 2.0, (front.y + rear.y) / 2.0)
+	axis = rear.displacement_to(front)
+	# Dimensions.length > 0 guarantees front != rear, so the axis normalizes; the
+	# fallback only guards a corrupt/degenerate file.
+	heading = axis.normalized() if axis.magnitude > 0.0 else Heading(1.0, 0.0)
+	return VehicleState(
+		vehicle_id=vehicle_id,
+		timestamp_seconds=0.0,  # the TIMESTEP carries time; the per-vehicle copy is unused
+		centroid=centroid,
+		heading=heading,
+		dimensions=Dimensions(length=length, width=width),
+		velocity=heading.as_vector_with_magnitude(speed),
+		acceleration=acceleration,
+		link_id=link_id,
+		lane_id=lane_id,
+	)

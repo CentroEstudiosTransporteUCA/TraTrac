@@ -15,7 +15,6 @@ from __future__ import annotations
 
 from types import TracebackType
 
-from tratrac.domain.frame import Frame
 from tratrac.domain.ports import TrajectoryExporter
 from tratrac.domain.vehicle import VehicleState
 from tratrac.infrastructure.cadence import DecimationGrid
@@ -41,11 +40,9 @@ class DecimatingTrajectoryExporter:
 		self._inner = inner
 		self._grid = DecimationGrid(min_interval_seconds=min_interval_seconds, fps=fps)
 
-	def emit_frame(
-		self, timestamp_seconds: float, states: list[VehicleState], frame: Frame
-	) -> None:
+	def emit_frame(self, timestamp_seconds: float, states: list[VehicleState]) -> None:
 		if self._grid.accepts(timestamp_seconds):
-			self._inner.emit_frame(timestamp_seconds, states, frame)
+			self._inner.emit_frame(timestamp_seconds, states)
 
 	def __enter__(self) -> DecimatingTrajectoryExporter:
 		self._inner.__enter__()

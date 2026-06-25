@@ -1,10 +1,11 @@
-"""OverlayVideoExporter: a TrajectoryExporter that renders each processed frame
-with its vehicles drawn on top and writes the result to a video file.
+"""OverlayVideoExporter: renders each frame with its vehicles drawn on top and
+writes the result to a video file.
 
-This is the visual sibling of ``SsamTrjExporter``: same port, same per-frame
-``emit_frame`` call, but instead of binary records it writes a frame of the
-output video. It draws on the **raw** frame the pipeline processed. See
-vault/20_video_export.md.
+It is a **standalone** renderer, not a ``TrajectoryExporter`` — rendering is a
+post-hoc step, so this is driven directly by ``tratrac-render`` (which reads a
+``.trj`` back into states via ``read_trj``), not composed into the pipeline. Its
+``emit_frame`` therefore takes the ``Frame`` to draw on, unlike the frameless data
+port. It draws on the **raw** frame. See vault/20_video_export.md.
 
 Coordinates: ``VehicleState`` positions are in world units of the stabilized
 (global) frame (a uniform ``scale`` metres-per-pixel multiple of pixels — no

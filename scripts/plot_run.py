@@ -2,7 +2,7 @@
 
 Standalone (stdlib + numpy + matplotlib; no package imports, so it works even if the
 package is broken). Walks an outputs directory, finds every baseline ``.trj`` (and its
-``_smooth.trj`` / ``_tracks.csv`` siblings, if present), and writes **one PNG per graph**
+``_smooth.trj`` / ``.parquet`` record siblings, if present), and writes **one PNG per graph**
 into a per-run folder ``<stem>/``:
 
   01_speed_vs_time · 02_acceleration · 03_jerk_distribution · 04_trajectories
@@ -107,10 +107,10 @@ def read_trj(path: Path) -> Trj:
 
 
 def read_track_scores(path: Path) -> np.ndarray:
-	"""Detection confidence scores from a track sidecar (header line then CSV)."""
-	with path.open(newline="") as handle:
-		handle.readline()  # skip the "# fps=... meters_per_pixel=..." header line
-		return np.array([float(row["score"]) for row in csv.DictReader(handle)])
+	"""Detection confidence scores from a Parquet track record."""
+	import pyarrow.parquet as pq
+
+	return np.asarray(pq.read_table(path, columns=["score"])["score"].to_numpy(), dtype=float)
 
 
 _VIDEO_SUFFIXES = {".mp4", ".mov", ".avi", ".mkv", ".m4v"}
@@ -497,7 +497,7 @@ def main() -> int:
 	for trj_path in baselines:
 		stem = trj_path.stem
 		smooth_path = trj_path.with_name(f"{stem}_smooth.trj")
-		tracks_path = trj_path.with_name(f"{stem}_tracks.csv")
+		tracks_path = trj_path.with_name(f"{stem}.parquet")
 		base = read_trj(trj_path)
 		if not base.by_vehicle:
 			print(f"skip {stem}: no vehicles")
