@@ -14,7 +14,36 @@ from tratrac.domain.geometry import (
 	Transform2D,
 	Vector2D,
 	clipped_overlap_fraction,
+	point_in_polygon,
 )
+
+
+class TestPointInPolygon:
+	_SQUARE = (Point2D(0.0, 0.0), Point2D(10.0, 0.0), Point2D(10.0, 10.0), Point2D(0.0, 10.0))
+
+	def test_inside_point(self) -> None:
+		assert point_in_polygon(Point2D(5.0, 5.0), self._SQUARE) is True
+
+	def test_outside_point(self) -> None:
+		assert point_in_polygon(Point2D(15.0, 5.0), self._SQUARE) is False
+
+	def test_concave_polygon(self) -> None:
+		# A C-shaped concave polygon; a point in the notch is outside.
+		c_shape = (
+			Point2D(0.0, 0.0),
+			Point2D(10.0, 0.0),
+			Point2D(10.0, 3.0),
+			Point2D(3.0, 3.0),
+			Point2D(3.0, 7.0),
+			Point2D(10.0, 7.0),
+			Point2D(10.0, 10.0),
+			Point2D(0.0, 10.0),
+		)
+		assert point_in_polygon(Point2D(7.0, 5.0), c_shape) is False  # in the notch
+		assert point_in_polygon(Point2D(1.0, 5.0), c_shape) is True  # in the spine
+
+	def test_degenerate_polygon_contains_nothing(self) -> None:
+		assert point_in_polygon(Point2D(0.0, 0.0), (Point2D(0.0, 0.0), Point2D(1.0, 1.0))) is False
 
 
 class TestVector2D:

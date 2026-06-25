@@ -77,22 +77,6 @@ class DetectionObserver(Protocol):
 	def observe(self, detections: list[Detection]) -> None: ...
 
 
-class DetectionMask(Protocol):
-	"""Drops detections that fall inside masked image regions (exclusion zones).
-
-	Applied after detection and ego-motion estimation but BEFORE the detections are
-	mapped into the global frame, so it tests raw-pixel boxes. ``transform`` is the
-	frame's ego-motion pose (raw -> global; identity when stabilization is off): an
-	implementation maps its masked regions back into the raw frame with the inverse
-	and drops detections mostly covered by them, so the zones track the scene under
-	a moving drone. See vault/21_exclusion_zones.md.
-	"""
-
-	def filter(
-		self, detections: list[Detection], transform: Transform2D, frame: Frame
-	) -> list[Detection]: ...
-
-
 class Tracker(Protocol):
 	"""Assigns stable identities to detections across frames."""
 
@@ -180,3 +164,26 @@ class TransformSink(Protocol):
 	"""
 
 	def record(self, frame_transform: FrameTransform) -> None: ...
+
+
+class AnchorSink(Protocol):
+	"""Receives each ORB keyframe **anchor** as the run discovers it.
+
+	One record per re-anchor: the anchor ``frame`` (its pixels are exported as a PNG
+	for the operator to draw exclusion zones on) and its global pose (raw -> global).
+	Adapters persist the images + a manifest of ``(frame_index, pose, image)``, which
+	the post-process pass reads to map zones authored on an anchor into the global
+	frame. Used as a context manager (the manifest is written on exit). See
+	vault/21_exclusion_zones.md.
+	"""
+
+	def record(self, frame: Frame, pose: Transform2D) -> None: ...
+
+	def __enter__(self) -> AnchorSink: ...
+
+	def __exit__(
+		self,
+		exc_type: type[BaseException] | None,
+		exc_val: BaseException | None,
+		exc_tb: TracebackType | None,
+	) -> None: ...

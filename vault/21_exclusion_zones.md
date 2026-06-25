@@ -1,75 +1,68 @@
-# 21 — Exclusion zones: image-space "do-not-analyze" regions
+# 21 — Exclusion zones: post-hoc, track-aware "do-not-analyze" regions
 
 ## What this adds
 
-A set of **pixel polygons** marking image regions the run must ignore — parking
-lots, buildings, sidewalks, static clutter. A detection whose bounding box is
-**mostly covered** (more than 50% of its area) by the polygons' **union** is
-**dropped before tracking**, so it never enters a trajectory.
+A set of **pixel polygons** marking image regions whose traffic doesn't interest the
+analysis — parking lots, buildings, sidewalks, static clutter. A whole **track** is dropped
+when the **majority of its observations** fall inside the polygons' union, so the excluded
+object never appears in the `.trj`.
 
-Optional and off by default. It is the *spatial* analogue of the `--start`/
-`--end` time-window trim (`17_time_window.md`): an image-space input filter that
-leaves the trajectory stages untouched. Mechanism-wise it is kin to the hand-drawn
-polygons of `13_road_topology.md` (MVP3), but it needs none of MVP3's
-homography/plane machinery, so it ships now.
+Optional and off by default. It is applied **post-hoc** by `tratrac-postprocess`, not by the
+run — the spatial analogue of how smoothing and rendering became post-hoc. The perception run
+stays pure (detect → track → record); exclusion is an analysis decision on the record.
 
-## Coverage by rasterized union (not analytic clipping)
+## Why post-hoc, and why track-aware
 
-A detection is dropped when the masked **union** of zones covers more than `0.5`
-of its bounding box. Coverage is measured by rasterizing: the zones are filled
-into a `W×H` binary mask with `cv2.fillPoly`, and a detection's drop test is the
-mean of that mask over its (clamped) bbox versus `0.5`. `0.5` lives in
-`infrastructure/exclusion/raster.py` as `_MAJORITY`.
+Masking was always *post-detection* (you can't make a whole-frame CNN detector skip a region),
+so it never needed to be in the run. Moving it out buys two things:
 
-Rasterizing — rather than an analytic per-polygon clip — is deliberate: `fillPoly`
-fills **concave** polygons correctly and **unions** overlapping/adjacent zones for
-free. This dissolves two earlier limitations of an analytic approach (convex-only
-area, and per-zone `max` letting a box straddling two zones survive). It also uses
-the same primitive the ORB vehicle-mask already uses.
+- **One pass.** The run computes ORB live and **emits its own keyframe anchors**; there is no
+  separate scout pass recomputing ORB, and no replay. (Previously: scout pass + replay run =
+  ORB twice.)
+- **Track-aware filtering.** The per-frame in-pipeline mask could only drop individual
+  detections. Post-hoc, the whole trajectory is visible, so "this *object* doesn't interest
+  me" is expressible: drop a track once a fraction (`--exclusion-min-fraction`, default 0.5)
+  of its observations are inside a zone. A car merely *passing through* keeps its track; a car
+  *parked* in the zone is dropped.
 
-## The seam: a `DetectionMask` port, applied after ego-motion
+The test is **centroid-in-polygon** (`domain/geometry.py:point_in_polygon`, even-odd ray
+casting, concave-safe) on each observation's recorded centroid — simpler than the old
+bbox-raster coverage and closer to what "passing here" means.
 
-The drop runs **inside the pipeline**, between ego-motion estimation and
-stabilization — *not* at the detector seam. Reason: a moving-drone zone must be
-mapped into the frame being processed, which needs that frame's ego-motion pose,
-and the pose is produced by `EgoMotionEstimator.estimate()` *after*
-`Detector.detect()`. So a detector-seam decorator cannot see the pose.
-
-The per-frame loop (`application/pipeline.py`) is therefore:
+## The workflow
 
 ```
-detections = detect(frame)
-observe(detections)                              # ORB vehicle-masking (unchanged)
-pose = ego_motion.estimate(frame) or identity    # raw -> global
-detections = detection_mask.filter(detections, pose, frame)   # <-- the drop
-if ego_motion: detections = [apply_transform(d, pose) ...]    # stabilize
-tracker.update(frame, detections)
+tratrac VIDEO --stabilize --out run.parquet --anchors-dir anchors/
+   → anchors/frame_<i>.png   (one per ORB keyframe anchor — the frames to draw on)
+   → anchors/manifest.json   (each anchor's frame_index + global pose + image)
+
+[ draw ROI polygons on a frame_<i>.png → zones.json,
+  tagging each with reference_frame = that anchor's index ]
+
+tratrac-postprocess run.parquet --out run.trj \
+        --exclusion-zones zones.json --anchors anchors/manifest.json
+   → tracks mostly inside a zone are dropped; survivors are smoothed into the .trj
 ```
 
-`DetectionMask` (`domain/ports.py`) is a Null-Object port (default
-`NullDetectionMask` = pass-through), so a run without zones is byte-identical to
-before. The implementation is `RasterExclusionMask`
-(`infrastructure/exclusion/raster.py`).
+The run emits anchors via the ORB estimator's existing `anchor_observer` seam: an
+`AnchorRecordingEgoMotionEstimator` decorator drains each new anchor and an `AnchorManifestSink`
+writes the PNG + manifest (the perception loop is untouched). The **manifest is self-sufficient**
+for exclusion — it carries each anchor's pose — so no transform CSV is needed for this workflow.
 
 ## Zones live in the global frame; they move with the scene
 
-Each zone is authored on a **reference frame** `R` and carries `reference_frame`
-in the JSON. At load the polygon is converted **once** into the continuous global
-stabilization frame via that frame's pose: `polygon_global = pose_R.apply(verts)`
-(`application/exclusion.py:to_global_polygons`). At runtime, for frame `N` with
-pose `pose_N`, `RasterExclusionMask` maps the global polygon back into raw-`N`
-pixels with `inverse(pose_N)` before rasterizing. Detection (raw `N`) and zone
-(mapped to raw `N`) meet in the same frame, so the zone **tracks the scene** as the
-drone moves.
+Each zone is authored on a **reference frame** `R` (an anchor) and carries `reference_frame`
+in the JSON. `tratrac-postprocess` reads the anchor manifest, maps each zone once into the
+continuous global stabilization frame via that anchor's pose
+(`application/exclusion.py:to_global_polygons`, `polygon_global = pose_R.apply(verts)`), then
+tests the record's observations — which are already in the global frame — against it
+(`excluded_track_ids`). One global space, so a zone tiled from anchors covers the whole swept
+scene.
 
-A **static camera** is the degenerate case: `reference_frame = 0`, all poses
-identity, global == raw — equivalent to a fixed screen-space mask.
+A **static camera** is the degenerate case: omit `--anchors`, every pose is the identity,
+global == raw — a fixed screen-space mask authored on any frame.
 
-## Input: sidecar JSON
-
-A per-scene JSON file referenced from config (`analysis.exclusion_zones`, a
-`toggleable_path`: `""` = off), mirroring `calibration.srt`. Loaded by
-`infrastructure/exclusion/json.py` into the pure `ExclusionZones` value object.
+## Input: sidecar JSON (unchanged shape)
 
 ```json
 { "exclusion_zones": [
@@ -79,48 +72,20 @@ A per-scene JSON file referenced from config (`analysis.exclusion_zones`, a
 ] }
 ```
 
-`label` is optional. `reference_frame` defaults to `0`. `vertices` are pixel
-coordinates, ≥3 per polygon. Bad path / malformed JSON / too-few vertices fail
-fast in the CLI before the costly video open.
-
-## Moving drone: authoring reference frames via the scout
-
-For a moving drone the operator can't predict which frames to draw on, and a zone
-drawn on frame 0 isn't visible once the drone pans away. The reference frames are
-the **ORB keyframe anchors** (overlap-guaranteed to tile the traversed scene). A
-headless **scout pass** (`tratrac-scout VIDEO --out-dir DIR`) discovers them: it
-runs ORB only (via the estimator's `anchor_observer` callback), persists the
-per-frame ego-motion schedule to `transforms.csv` (reusing `CsvTransformSink`),
-and emits each anchor frame as a PNG plus `refs_manifest.json`. The operator draws
-zones over those PNGs, tagging each with `reference_frame` = the anchor index.
-
-The real run sets `ego_motion.transforms = transforms.csv`, so it **replays** the
-recorded schedule (`ReplayEgoMotionEstimator`, reading the CSV via
-`read_transforms`) instead of recomputing ORB — its poses then match the scout
-exactly. That is a **correctness requirement**: zones are converted to global with
-the scout's `pose_R` and must meet detections placed with the same `pose_N`. The
-ORB parameters are unused on a replay run.
-
-ORB feature-masking of zones is **not** done: in a moving drone the excluded
-regions are static ground, exactly the features stabilization needs — masking them
-would hurt the fit. Vehicle-masking via `observe()` is unaffected. The scout itself
-runs ORB with vehicles unmasked (it has no detector); RANSAC rejects moving-vehicle
-matches and moving-drone footage is ground-dominated, so this is acceptable.
+`label` optional; `reference_frame` defaults to `0`; `vertices` are pixel coordinates, ≥3 per
+polygon. Loaded by `infrastructure/exclusion/json.py` into the pure `ExclusionZones`. A
+`reference_frame` that isn't an anchor in the manifest is rejected.
 
 ## Files
 
-- `domain/geometry.py` — `Polygon` (pure vertex container).
+- `domain/geometry.py` — `Polygon`; `point_in_polygon` (ray casting).
 - `domain/exclusion.py` — `ExclusionZone` (`reference_frame` + polygon), `ExclusionZones`.
-- `domain/ports.py` — `DetectionMask` port.
-- `application/detection_mask.py` — `NullDetectionMask` (Null Object default).
-- `application/exclusion.py` — `to_global_polygons` (reference-frame → global).
-- `application/pipeline.py` — applies the mask post-estimate, pre-stabilize.
-- `infrastructure/exclusion/raster.py` — `RasterExclusionMask` (fillPoly union + coverage).
+- `application/exclusion.py` — `to_global_polygons` (reference-frame → global) + `excluded_track_ids`
+  (track-aware majority filter).
 - `infrastructure/exclusion/json.py` — sidecar loader.
+- `infrastructure/anchors/` — `ReferenceFrame`/`write_manifest`/`read_manifest`, `AnchorManifestSink`
+  (PNG + manifest), `AnchorRecordingEgoMotionEstimator` (tees new anchors).
 - `infrastructure/video/ego_motion_orb.py` — `anchor_observer` callback (anchor events).
-- `infrastructure/video/ego_motion_replay.py` — `ReplayEgoMotionEstimator`.
-- `infrastructure/transform/csv.py` — `read_transforms` (the replay/zone-pose source).
-- `infrastructure/scout/` — `run_scout` + `ReferenceFrame`/`write_manifest`; `cli_scout.py` (`tratrac-scout`).
-- `application/config.py` — `AnalysisConfig` + `analysis.exclusion_zones`; `ego_motion.transforms`.
-- `cli.py` — `--exclusion-zones`/`--transforms`, existence checks, `_pose_for`, builds
-  `RasterExclusionMask` and the replay/ORB estimator.
+- `cli.py` — `--anchors-dir` (export.anchors_dir) wires the anchor sink on a stabilized run.
+- `cli_postprocess.py` — `--exclusion-zones` / `--anchors` / `--exclusion-min-fraction`; filters
+  the record (drop excluded tracks) before smoothing.

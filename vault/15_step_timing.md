@@ -8,7 +8,7 @@ Opt-in **per-step latency profiling**: how long each pipeline step (detect,
 track) takes for each frame. It belongs to no MVP — it is observability plumbing,
 a sibling of progress reporting (`14_progress_reporting.md`). (Before the export
 inversion there were two more steps, `orient` and `export`; both left the run when
-kinematics and the `.trj` moved to the offline `tratrac-smooth` — see vault/22.)
+kinematics and the `.trj` moved to the offline `tratrac-postprocess` — see vault/22.)
 
 The difference from progress: progress is always-on and flows *through* the
 pipeline (the pipeline emits it). Timing is opt-in and wraps the *ports around*

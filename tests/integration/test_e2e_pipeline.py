@@ -18,7 +18,7 @@ import pytest
 from typer.testing import CliRunner
 
 from tratrac.application.pipeline import TrajectoryPipeline
-from tratrac.cli_smooth import app as smooth_app
+from tratrac.cli_postprocess import app as postprocess_app
 from tratrac.infrastructure.detection.rt_detr import RtDetrDetector
 from tratrac.infrastructure.tracking.boxmot_bot_sort import BoxmotBotSortTracker
 from tratrac.infrastructure.tracks.parquet import ParquetTrackSink, read_tracks
@@ -74,7 +74,7 @@ def test_perception_record_then_smooth_to_trj(synthetic_video: Path, tmp_path: P
 
 	# Step 2: smooth the record into a .trj via the real entry point.
 	out = tmp_path / "out.trj"
-	result = CliRunner().invoke(smooth_app, [str(record), "--out", str(out)])
+	result = CliRunner().invoke(postprocess_app, [str(record), "--out", str(out)])
 	assert result.exit_code == 0, result.output
 	data = out.read_bytes()
 

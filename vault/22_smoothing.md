@@ -31,15 +31,16 @@ pass 2 (offline):            record → forward KF + RTS per track → smoothed 
   metadata (`fps,width,height,total_frames,meters_per_pixel`) in the Parquet **schema metadata**
   so the record is self-contained. The pipeline records to a `TrackSink` (`ParquetTrackSink`) it
   owns directly. (Parquet is the MVP7 storage choice, pulled forward for the canonical record.)
-- **Pass 2** is `tratrac-smooth RECORD.csv --out final.trj [--pos-noise PX] [--jerk Q]
-  [--timestep-precision S]`: group by track → forward+RTS smooth → reconstruct `VehicleState`
+- **Pass 2** is `tratrac-postprocess RECORD.parquet --out final.trj [--exclusion-zones … --anchors …]
+  [--pos-noise PX] [--jerk Q] [--timestep-precision S]`: (optionally **filter** out tracks inside
+  exclusion zones, vault/21) → group by track → forward+RTS smooth → reconstruct `VehicleState`
   (kinematics via `build_state`) → write via `SsamTrjExporter` (wrapped in
   `DecimatingTrajectoryExporter` when `--timestep-precision` thins the TIMESTEPs). It produces
   only the smoothed `.trj`; to visualize it, render with `tratrac-render` (vault/20).
 
 **Why raw measurements, not filter state:** pass 2 re-runs the forward pass (cheap) so the
 sidecar stays small and inspectable, and the smoother can be **re-tuned offline with no
-re-detection** — rerun `tratrac-smooth` with different `--jerk`/`--pos-noise` to sweep.
+re-detection** — rerun `tratrac-postprocess` with different `--jerk`/`--pos-noise` to sweep.
 Keeping the record raw (not filtered) is what makes this re-tuning possible: smoothing
 always starts from the measurements, never from already-smoothed kinematics.
 
@@ -51,7 +52,7 @@ process model, **variable `dt`** (survives `input.process_fps` decimation). x an
 independent (a CA model has no cross-axis coupling).
 
 - `smooth_track(xs, ys, timestamps, *, pos_noise, jerk)` — forward Kalman + RTS over a whole
-  track; zero-phase. This is what `tratrac-smooth` uses.
+  track; zero-phase. This is what `tratrac-postprocess` uses.
 - `KinematicKalmanFilter` — stateful forward-only filter. Currently unused by the (offline)
   smoother; kept as the primitive for a future streaming/RT `.trj` path.
 
@@ -75,4 +76,4 @@ physically-impossible-jerk violations than the EMA `.trj` (the Punzo metric, §1
   `infrastructure/tracks/parquet.py` — `ParquetTrackSink` + `read_tracks` (Parquet, `pyarrow`).
   The pipeline records to the sink directly (it owns its lifecycle); there is no
   `RecordingTracker` decorator anymore.
-- `cli_smooth.py` — `tratrac-smooth`; `cli.py`/`config.py` — `export.out` is the record.
+- `cli_postprocess.py` — `tratrac-postprocess` (filter + smooth); `cli.py`/`config.py` — `export.out` is the record.

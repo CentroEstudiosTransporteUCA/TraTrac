@@ -68,12 +68,12 @@ pipeline, exporter, or test changes outside the new adapter and its own tests.
 
 | | |
 | --- | --- |
-| **Seam** | the offline `tratrac-smooth` pass over the track record |
+| **Seam** | the offline `tratrac-postprocess` pass over the track record |
 | **Target** | constant-acceleration **Kalman/RTS** smoother (`application/kalman.py`) |
 | **Trigger** | acceleration/jerk noise in the `.trj` (the standing accel-noise issue) |
 
 The offline two-pass has **shipped** (`22_smoothing.md`): the perception run writes the raw
-track record, and `tratrac-smooth` runs a forward+RTS smoother to reconstruct kinematics and
+track record, and `tratrac-postprocess` runs a forward+RTS smoother to reconstruct kinematics and
 write the `.trj`. The **export inversion** removed the in-pipeline EMA/forward-Kalman
 orientation entirely — there is no longer a streaming/inline `.trj`, so kinematics is always
 the offline smoother. What remains deferred: **tuning** `pos_noise`/`jerk` against real

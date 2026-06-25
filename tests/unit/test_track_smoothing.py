@@ -1,7 +1,8 @@
-"""Tests for the smoothing post-pass: smooth_to_states and the tratrac-smooth CLI."""
+"""Tests for the post-process pass: smooth_to_states, exclusion, and the tratrac-postprocess CLI."""
 
 from __future__ import annotations
 
+import json
 import struct
 from pathlib import Path
 
@@ -9,7 +10,7 @@ import pytest
 from typer.testing import CliRunner
 
 from tratrac.application.track_smoothing import TrackSample, smooth_to_states
-from tratrac.cli_smooth import app
+from tratrac.cli_postprocess import app
 from tratrac.domain.detection import Detection, TrackedDetection, VehicleClass
 from tratrac.domain.frame import VideoMetadata
 from tratrac.domain.geometry import BoundingBox, Point2D
@@ -100,3 +101,43 @@ class TestSmoothCli:
 		result = CliRunner().invoke(app, [str(tracks), "--out", str(out)])
 		assert result.exit_code != 0
 		assert "force" in result.output.lower()
+
+
+def _track(track_id: int, cx: float, cy: float) -> TrackedDetection:
+	# bbox centred on (cx, cy).
+	return TrackedDetection(
+		track_id=track_id,
+		detection=Detection(
+			bbox=BoundingBox(x=cx - 2.0, y=cy - 2.0, width=4.0, height=4.0),
+			score=0.9,
+			vehicle_class=VehicleClass.CAR,
+		),
+	)
+
+
+class TestExclusion:
+	def test_drops_a_track_mostly_inside_a_zone(self, tmp_path: Path) -> None:
+		record = tmp_path / "record.parquet"
+		meta = VideoMetadata(width=400, height=400, fps=10.0, total_frames=5)
+		with ParquetTrackSink(record, meta, scale=1.0) as sink:
+			for i in range(5):
+				# track 1 sits inside the zone [0,50]^2; track 2 is far outside.
+				sink.record(i, [_track(1, 10.0, 10.0), _track(2, 300.0, 300.0)])
+
+		zones = tmp_path / "zones.json"
+		zones.write_text(
+			json.dumps(
+				{
+					"exclusion_zones": [
+						{"reference_frame": 0, "vertices": [[0, 0], [50, 0], [50, 50], [0, 50]]}
+					]
+				}
+			)
+		)
+		out = tmp_path / "out.trj"
+		result = CliRunner().invoke(
+			app, [str(record), "--out", str(out), "--exclusion-zones", str(zones)]
+		)
+		assert result.exit_code == 0, result.output
+		assert "dropped 1 excluded tracks" in result.output
+		assert out.exists()

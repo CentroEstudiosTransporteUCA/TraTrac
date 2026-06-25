@@ -39,11 +39,11 @@ def _complete(tmp_path: Path, **overrides: Any) -> dict[str, Any]:
 		"ego_motion": {"enabled": False},
 		"tracker": {"det_thresh": 0.1},
 		"export": {
-			"out": str(tmp_path / "record.csv"),
+			"out": str(tmp_path / "record.parquet"),
 			"transform_csv": "",
+			"anchors_dir": "",
 		},
 		"window": {"start": "", "end": ""},
-		"analysis": {"exclusion_zones": ""},
 		"run": {"force": False, "timing_csv": ""},
 	}
 	file_values.update(overrides)
@@ -59,7 +59,7 @@ class TestResolveComplete:
 		assert run.runtime.device == "cpu"
 		assert run.calibration.meters_per_pixel == 0.05
 		assert run.tracker.det_thresh == 0.1
-		assert run.export.out == tmp_path / "record.csv"
+		assert run.export.out == tmp_path / "record.parquet"
 		assert run.window.start_seconds is None
 		assert run.window.end_seconds is None
 		assert run.options.force is False
@@ -198,7 +198,6 @@ class TestEgoMotion:
 		"min_matches": 10,
 		"ransac_threshold": 3.0,
 		"min_anchor_overlap": 0.6,
-		"transforms": "",
 	}
 
 	def test_disabled_needs_no_orb_params(self, tmp_path: Path) -> None:
@@ -229,31 +228,6 @@ class TestEgoMotion:
 		assert "ego_motion.min_matches is missing." in problems
 		assert "ego_motion.ransac_threshold is missing." in problems
 		assert "ego_motion.min_anchor_overlap is missing." in problems
-
-	def test_replay_transforms_resolves_without_orb_params(self, tmp_path: Path) -> None:
-		# A replay source makes the ORB params unnecessary (poses are read back).
-		run = RunConfig.resolve(
-			_complete(
-				tmp_path,
-				ego_motion={"enabled": True, "transforms": str(tmp_path / "transforms.csv")},
-			),
-			{},
-		)
-		assert run.ego_motion.enabled is True
-		assert run.ego_motion.transforms == tmp_path / "transforms.csv"
-
-	def test_transforms_requires_enabled(self, tmp_path: Path) -> None:
-		# A replay source with stabilization off is a contradictory spec: transforms is
-		# only read when enabled, so it is silently dropped — assert it is None.
-		run = RunConfig.resolve(
-			_complete(
-				tmp_path,
-				ego_motion={"enabled": False, "transforms": str(tmp_path / "transforms.csv")},
-			),
-			{},
-		)
-		assert run.ego_motion.enabled is False
-		assert run.ego_motion.transforms is None
 
 	def test_out_of_range_anchor_overlap_is_an_error(self, tmp_path: Path) -> None:
 		bad = {**self._ENABLED, "min_anchor_overlap": 1.5}
@@ -316,7 +290,6 @@ class TestTransformCsv:
 		"min_matches": 10,
 		"ransac_threshold": 3.0,
 		"min_anchor_overlap": 0.6,
-		"transforms": "",
 	}
 
 	def test_off_resolves_to_none(self, tmp_path: Path) -> None:
@@ -344,28 +317,36 @@ class TestTransformCsv:
 			RunConfig.resolve(file_values, {})
 
 
-class TestAnalysis:
-	def test_off_resolves_to_none(self, tmp_path: Path) -> None:
-		run = RunConfig.resolve(_complete(tmp_path), {})
-		assert run.analysis.exclusion_zones is None  # "" disables
+class TestAnchorsDir:
+	_ENABLED: ClassVar[dict[str, Any]] = {
+		"enabled": True,
+		"n_features": 2000,
+		"match_ratio": 0.75,
+		"min_matches": 10,
+		"ransac_threshold": 3.0,
+		"min_anchor_overlap": 0.6,
+	}
 
-	def test_path_resolves(self, tmp_path: Path) -> None:
-		file_values = _complete(tmp_path)
-		file_values["analysis"]["exclusion_zones"] = str(tmp_path / "zones.json")
-		run = RunConfig.resolve(file_values, {})
-		assert run.analysis.exclusion_zones == tmp_path / "zones.json"
+	def test_off_resolves_to_none(self, tmp_path: Path) -> None:
+		assert RunConfig.resolve(_complete(tmp_path), {}).export.anchors_dir is None  # "" disables
 
 	def test_missing_key_is_an_error(self, tmp_path: Path) -> None:
 		file_values = _complete(tmp_path)
-		del file_values["analysis"]["exclusion_zones"]
-		with pytest.raises(ConfigError, match="exclusion_zones is missing"):
+		del file_values["export"]["anchors_dir"]
+		with pytest.raises(ConfigError, match="anchors_dir is missing"):
 			RunConfig.resolve(file_values, {})
 
-	def test_cli_override_enables(self, tmp_path: Path) -> None:
-		run = RunConfig.resolve(
-			_complete(tmp_path), {"analysis.exclusion_zones": tmp_path / "zones.json"}
-		)
-		assert run.analysis.exclusion_zones == tmp_path / "zones.json"
+	def test_path_resolves_when_ego_motion_enabled(self, tmp_path: Path) -> None:
+		file_values = _complete(tmp_path, ego_motion=self._ENABLED)
+		file_values["export"]["anchors_dir"] = str(tmp_path / "anchors")
+		run = RunConfig.resolve(file_values, {})
+		assert run.export.anchors_dir == tmp_path / "anchors"
+
+	def test_set_without_stabilization_is_an_error(self, tmp_path: Path) -> None:
+		file_values = _complete(tmp_path)
+		file_values["export"]["anchors_dir"] = str(tmp_path / "anchors")
+		with pytest.raises(ConfigError, match=r"anchors_dir requires ego_motion\.enabled"):
+			RunConfig.resolve(file_values, {})
 
 
 class TestLoadToml:

@@ -9,13 +9,15 @@ config file key-for-key; the positional ``video`` overrides ``input.video`` and
 
 The run is **perception only**: it writes the track record (the raw tracked
 measurements, the run's canonical output). It does not produce an SSAM ``.trj`` —
-run ``tratrac-smooth`` on the record to get a de-jittered ``.trj`` (vault/22).
+run ``tratrac-postprocess`` on the record to filter/smooth it into a ``.trj`` (vault/22).
+With ``--anchors-dir`` it also exports the ORB keyframe anchors (PNGs + manifest) an
+operator draws exclusion zones on (vault/21).
 """
 
 from __future__ import annotations
 
 import sys
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import Annotated, Any
@@ -28,12 +30,10 @@ from tratrac.application.config import (
 	DetectorConfig,
 	RunConfig,
 )
-from tratrac.application.exclusion import to_global_polygons
 from tratrac.application.pipeline import TrajectoryPipeline
-from tratrac.domain.exclusion import ExclusionZones
 from tratrac.domain.geometry import Transform2D
 from tratrac.domain.ports import (
-	DetectionMask,
+	AnchorSink,
 	DetectionObserver,
 	Detector,
 	EgoMotionEstimator,
@@ -41,20 +41,19 @@ from tratrac.domain.ports import (
 	Tracker,
 	TransformSink,
 )
+from tratrac.infrastructure.anchors.recording import AnchorRecordingEgoMotionEstimator
+from tratrac.infrastructure.anchors.sink import AnchorManifestSink
 from tratrac.infrastructure.config.toml import load_toml
 from tratrac.infrastructure.detection.rt_detr import RtDetrDetector
 from tratrac.infrastructure.detection.yolov8_visdrone import YoloV8VisDroneDetector
-from tratrac.infrastructure.exclusion.json import load_exclusion_zones
-from tratrac.infrastructure.exclusion.raster import RasterExclusionMask
 from tratrac.infrastructure.progress.console import ConsoleProgressReporter
 from tratrac.infrastructure.timing.csv import CsvTimingSink
 from tratrac.infrastructure.timing.decorators import TimedDetector, TimedTracker
 from tratrac.infrastructure.tracking.boxmot_bot_sort import BoxmotBotSortTracker
 from tratrac.infrastructure.tracks.parquet import ParquetTrackSink
-from tratrac.infrastructure.transform.csv import CsvTransformSink, read_transforms
+from tratrac.infrastructure.transform.csv import CsvTransformSink
 from tratrac.infrastructure.transform.recording import RecordingEgoMotionEstimator
 from tratrac.infrastructure.video.ego_motion_orb import OrbEgoMotionEstimator
-from tratrac.infrastructure.video.ego_motion_replay import ReplayEgoMotionEstimator
 from tratrac.infrastructure.video.opencv import OpenCvVideoSource
 
 app = typer.Typer(
@@ -94,7 +93,7 @@ def process(
 			"--out",
 			"-o",
 			dir_okay=False,
-			help="Output track-record path (export.out). Feed it to tratrac-smooth for a .trj.",
+			help="Output track-record path (export.out). Feed it to tratrac-postprocess for a .trj.",
 		),
 	] = None,
 	detector: Annotated[
@@ -174,15 +173,6 @@ def process(
 			"(ego_motion.min_anchor_overlap).",
 		),
 	] = None,
-	transforms: Annotated[
-		Path | None,
-		typer.Option(
-			"--transforms",
-			dir_okay=False,
-			help='Scout transform CSV to REPLAY instead of computing ORB; "" computes live '
-			"(ego_motion.transforms). Required for moving-frame exclusion zones.",
-		),
-	] = None,
 	det_thresh: Annotated[
 		float | None,
 		typer.Option("--det-thresh", help="Tracker detection threshold (tracker.det_thresh)."),
@@ -196,6 +186,15 @@ def process(
 			"(export.transform_csv).",
 		),
 	] = None,
+	anchors_dir: Annotated[
+		Path | None,
+		typer.Option(
+			"--anchors-dir",
+			file_okay=False,
+			help="Directory for keyframe-anchor PNGs + manifest (draw exclusion zones on these); "
+			'"" disables. Requires --stabilize (export.anchors_dir).',
+		),
+	] = None,
 	start: Annotated[
 		str | None,
 		typer.Option(
@@ -205,15 +204,6 @@ def process(
 	end: Annotated[
 		str | None,
 		typer.Option("--end", help='Analysis-window end timecode; "" = clip end (window.end).'),
-	] = None,
-	exclusion_zones: Annotated[
-		Path | None,
-		typer.Option(
-			"--exclusion-zones",
-			dir_okay=False,
-			help='Sidecar JSON of image-space polygons to exclude from analysis; "" disables '
-			"(analysis.exclusion_zones).",
-		),
 	] = None,
 	force: Annotated[
 		bool | None,
@@ -230,7 +220,7 @@ def process(
 		),
 	] = None,
 ) -> None:
-	"""Track a video into a record file (run tratrac-smooth on it to get a .trj)."""
+	"""Track a video into a record file (run tratrac-postprocess on it to get a .trj)."""
 	overrides: dict[str, Any] = {
 		"input.video": video,
 		"input.process_fps": process_fps,
@@ -250,12 +240,11 @@ def process(
 		"ego_motion.min_matches": orb_min_matches,
 		"ego_motion.ransac_threshold": orb_ransac_threshold,
 		"ego_motion.min_anchor_overlap": min_anchor_overlap,
-		"ego_motion.transforms": transforms,
 		"tracker.det_thresh": det_thresh,
 		"export.transform_csv": transform_csv,
+		"export.anchors_dir": anchors_dir,
 		"window.start": start,
 		"window.end": end,
-		"analysis.exclusion_zones": exclusion_zones,
 		"run.force": force,
 		"run.timing_csv": timing_csv,
 	}
@@ -276,36 +265,6 @@ def process(
 	# --- Fail-fast checks that need the filesystem but not the (costly) video open. ---
 	if not run.input.video.is_file():
 		raise typer.BadParameter(f"input video {run.input.video} does not exist or is not a file.")
-	# Load the exclusion-zone polygons up front (pure, cheap file read) so a bad path
-	# or malformed JSON fails before the costly video open. None when the feature is off.
-	zones: ExclusionZones | None = None
-	if run.analysis.exclusion_zones is not None:
-		if not run.analysis.exclusion_zones.is_file():
-			raise typer.BadParameter(
-				f"analysis.exclusion_zones {run.analysis.exclusion_zones} does not exist "
-				"or is not a file."
-			)
-		try:
-			zones = load_exclusion_zones(run.analysis.exclusion_zones)
-		except (ValueError, OSError) as exc:
-			raise typer.BadParameter(str(exc)) from exc
-	# Load the ego-motion schedule to replay, if requested. A cheap CSV read that also
-	# resolves the reference-frame poses for moving exclusion zones (vault/21).
-	transforms_map: dict[int, Transform2D] | None = None
-	if run.ego_motion.transforms is not None:
-		if not run.ego_motion.transforms.is_file():
-			raise typer.BadParameter(
-				f"ego_motion.transforms {run.ego_motion.transforms} does not exist or is not a file."
-			)
-		try:
-			transforms_map = read_transforms(run.ego_motion.transforms)
-		except (ValueError, OSError) as exc:
-			raise typer.BadParameter(str(exc)) from exc
-	# Convert each zone to the global frame once, using its reference frame's pose
-	# (identity for frame 0 / a static run); the mask maps them back per raw frame.
-	detection_mask: DetectionMask | None = None
-	if zones is not None:
-		detection_mask = RasterExclusionMask(to_global_polygons(zones, _pose_for(transforms_map)))
 	if (
 		run.options.timing_csv is not None
 		and run.export.out.resolve() == run.options.timing_csv.resolve()
@@ -337,25 +296,28 @@ def process(
 			# the calibration chain; report it cleanly rather than as a traceback.
 			raise typer.BadParameter(str(exc)) from exc
 		# Coordinate stabilization (MVP1.9, vault/05_75_mvp1_9.md): the detector and
-		# tracker run on the raw frame; the ego-motion transform is applied to the
-		# detections (not the pixels) inside the pipeline. None when stabilization is
-		# off. Live ORB is also the DetectionObserver (masking vehicles out of its own
-		# feature extraction); a replay estimator just serves the scout's schedule.
+		# tracker run on the raw frame; the live ORB ego-motion transform is applied to
+		# the detections (not the pixels) inside the pipeline. None when stabilization
+		# is off. The ORB estimator is also the DetectionObserver (masking vehicles out
+		# of its own feature extraction), and — when exporting anchors — notifies a queue
+		# the anchor recorder drains.
+		anchor_poses: list[Transform2D] = []
+		emit_anchors = run.export.anchors_dir is not None
 		ego_motion: EgoMotionEstimator | None = None
 		detection_observer: DetectionObserver | None = None
 		if run.ego_motion.enabled:
-			if transforms_map is not None:
-				ego_motion = ReplayEgoMotionEstimator(transforms_map)
-			else:
-				orb = OrbEgoMotionEstimator(
-					n_features=run.ego_motion.n_features,
-					match_ratio=run.ego_motion.match_ratio,
-					min_matches=run.ego_motion.min_matches,
-					ransac_threshold=run.ego_motion.ransac_threshold,
-					min_anchor_overlap=run.ego_motion.min_anchor_overlap,
-				)
-				ego_motion = orb
-				detection_observer = orb
+			orb = OrbEgoMotionEstimator(
+				n_features=run.ego_motion.n_features,
+				match_ratio=run.ego_motion.match_ratio,
+				min_matches=run.ego_motion.min_matches,
+				ransac_threshold=run.ego_motion.ransac_threshold,
+				min_anchor_overlap=run.ego_motion.min_anchor_overlap,
+				anchor_observer=(
+					(lambda _index, pose: anchor_poses.append(pose)) if emit_anchors else None
+				),
+			)
+			ego_motion = orb
+			detection_observer = orb
 		det: Detector = _build_detector(run.detector, device=run.runtime.device)
 		# When we stabilize coordinates ourselves, disable BoT-SORT's own camera-motion
 		# compensation so it does not double-correct the already-stabilized boxes.
@@ -367,17 +329,21 @@ def process(
 		with (
 			_timing_sink(run.options.timing_csv) as sink,
 			_transform_sink(run.export.transform_csv) as transform_sink,
+			_anchor_sink(run.export.anchors_dir, video_label=str(run.input.video)) as anchor_sink,
 		):
 			if sink is not None:
 				det = TimedDetector(det, sink)
 				tracker = TimedTracker(tracker, sink)
-			# Persist the per-frame transform by decorating the estimator (the pipeline
-			# stays untouched). The concrete estimator above keeps serving the
-			# DetectionObserver; the pipeline drives the recorder. Guaranteed present
-			# when transform_csv is set (config guard).
+			# Decorate the estimator to tee the per-frame transform and/or export anchors;
+			# the pipeline stays untouched. The concrete ORB above keeps serving the
+			# DetectionObserver and the anchor queue.
 			pipeline_ego_motion: EgoMotionEstimator | None = ego_motion
 			if transform_sink is not None and ego_motion is not None:
 				pipeline_ego_motion = RecordingEgoMotionEstimator(ego_motion, transform_sink)
+			if anchor_sink is not None and pipeline_ego_motion is not None:
+				pipeline_ego_motion = AnchorRecordingEgoMotionEstimator(
+					pipeline_ego_motion, anchor_poses, anchor_sink
+				)
 			# The track record is the run's output. The pipeline owns its lifecycle
 			# (open on enter, close on exit), so it is passed unopened.
 			track_sink = ParquetTrackSink(run.export.out, source.metadata, scale=scale)
@@ -388,43 +354,14 @@ def process(
 				sink=track_sink,
 				reporter=ConsoleProgressReporter(),
 				detection_observer=detection_observer,
-				detection_mask=detection_mask,
 				ego_motion=pipeline_ego_motion,
 			)
 			n_frames = pipeline.run()
 
 	typer.echo(
 		f"Recorded {n_frames} frames -> {run.export.out} (scale={scale} m/px). "
-		"Run tratrac-smooth on it to produce a .trj."
+		"Run tratrac-postprocess on it to produce a .trj."
 	)
-
-
-def _pose_for(
-	transforms_map: dict[int, Transform2D] | None,
-) -> Callable[[int], Transform2D]:
-	"""Resolve an exclusion zone's reference-frame pose (raw -> global).
-
-	With a replay schedule, every reference frame's pose comes from it. Without one,
-	only static (frame-0) zones are meaningful; a ``reference_frame > 0`` then needs
-	the scout's transform CSV and is rejected.
-	"""
-
-	def pose(reference_frame: int) -> Transform2D:
-		if transforms_map is not None:
-			resolved = transforms_map.get(reference_frame)
-			if resolved is None:
-				raise typer.BadParameter(
-					f"exclusion zone reference_frame {reference_frame} is not in the transforms CSV."
-				)
-			return resolved
-		if reference_frame != 0:
-			raise typer.BadParameter(
-				f"exclusion zone reference_frame {reference_frame} needs ego_motion.transforms "
-				"(a scout transforms.csv) to resolve its pose."
-			)
-		return Transform2D.identity()
-
-	return pose
 
 
 @contextmanager
@@ -519,6 +456,16 @@ def _transform_sink(path: Path | None) -> Iterator[TransformSink | None]:
 		yield None
 		return
 	with CsvTransformSink(path) as sink:
+		yield sink
+
+
+@contextmanager
+def _anchor_sink(out_dir: Path | None, *, video_label: str) -> Iterator[AnchorSink | None]:
+	"""Yield an anchor PNG+manifest sink when a directory is given, else ``None`` (off)."""
+	if out_dir is None:
+		yield None
+		return
+	with AnchorManifestSink(out_dir, video_label=video_label) as sink:
 		yield sink
 
 
