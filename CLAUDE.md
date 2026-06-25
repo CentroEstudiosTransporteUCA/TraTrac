@@ -102,22 +102,30 @@ These are project-defining decisions from `vault/`. Do not violate them without 
 
 ## MVP Roadmap
 
-Work is staged so each MVP delivers an end-to-end runnable system that improves trajectory quality:
+Each MVP delivers an end-to-end runnable system that improves trajectory quality. **The MVP
+number is a capability ID (a dependency ladder), not execution order** — work has crossed MVP
+boundaries (shortcuts inserted, later foundations pulled forward, one milestone skipped). The
+authoritative planned-vs-actual reconciliation is in `vault/00_system_overview.md` → "Roadmap:
+Capability IDs vs Execution Order"; each `vault/05*..11*` file carries a Status banner. Status
+below: ✅ shipped · 🟡 partially pulled forward · ❌ not started.
 
-| MVP | Adds |
-| --- | --- |
-| 1 | RT-DETR + BoT-SORT, approximate orientation, image-space SSAM `.trj`. **Shipped with a temporary YOLOv8-VisDrone detector adapter** (see `vault/05_mvp1.md`) because COCO-RT-DETR doesn't see aerial cars and fine-tuning was out of timebox. |
-| 1.5 | Fine-tune RT-DETR on VisDrone/UAVDT; remove the YOLOv8 adapter, restore RT-DETR as default. |
-| 1.75 | **Metric sizes and speeds from drone metadata.** GSD calibration from sensor + focal + altitude; `Length` / `Width` / `Speed` / `Acceleration` in real metres / m·s⁻¹ / m·s⁻²; `DIMENSIONS.Scale` populated. No homography. See `vault/05_5_mvp1_75.md`. |
-| 1.9 | **ORB ego-motion (intermediate).** Keyframe-anchored ORB + RANSAC 4-DOF similarity behind the `EgoMotionEstimator` port. Detection/tracking run on the **raw frame**; the transform is applied to **detections** (coordinates, not pixels) before tracking, so nothing is cropped. Still image-space. Optional + off by default; "keep if good enough" before MVP2's learned stabilizer. See `vault/05_75_mvp1_9.md`. |
-| 2 | SuperPoint+LightGlue stabilization, single-homography world projection (handles moving drones, non-nadir gimbals, fixed cameras without telemetry) |
-| 3 | Multi-homography + polygon-based plane assignment + **Link ID assignment from hand-drawn polygons** (see `vault/13_road_topology.md`) |
-| 4 | SAM2 segmentation, mask-based orientation, dual export begins |
-| 5 | FastReID + embedding memory for long-term identity persistence |
-| 6 | Lane-graph topology constraints + **Lane ID assignment from hand-drawn lane polygons** |
-| 7 | Apache Parquet storage, FiftyOne visualization, async/Docker deployment |
+| MVP | Adds | Status |
+| --- | --- | --- |
+| 1 | RT-DETR + BoT-SORT, approximate orientation, image-space SSAM `.trj`. **Shipped with a temporary YOLOv8-VisDrone detector adapter** (see `vault/05_mvp1.md`) because COCO-RT-DETR doesn't see aerial cars and fine-tuning was out of timebox. | ✅ (with YOLOv8 emergency) |
+| 1.5 | Fine-tune RT-DETR on VisDrone/UAVDT; remove the YOLOv8 adapter, restore RT-DETR as default. | ❌ skipped (leapfrogged) |
+| 1.75 | **Metric sizes and speeds from drone metadata.** GSD calibration from sensor + focal + altitude; `Length` / `Width` / `Speed` / `Acceleration` in real metres / m·s⁻¹ / m·s⁻²; `DIMENSIONS.Scale` populated. No homography. See `vault/05_5_mvp1_75.md`. | ✅ |
+| 1.9 | **ORB ego-motion (intermediate).** Keyframe-anchored ORB + RANSAC 4-DOF similarity behind the `EgoMotionEstimator` port. Detection/tracking run on the **raw frame**; the transform is applied to **detections** (coordinates, not pixels) before tracking, so nothing is cropped. Still image-space. Optional + off by default; "keep if good enough" before MVP2's learned stabilizer. See `vault/05_75_mvp1_9.md`. | ✅ |
+| 2 | SuperPoint+LightGlue stabilization, single-homography world projection (handles moving drones, non-nadir gimbals, fixed cameras without telemetry) | ❌ not started (**load-bearing gap**: SSAM still image-space) |
+| 3 | Multi-homography + polygon-based plane assignment + **Link ID assignment from hand-drawn polygons** (see `vault/13_road_topology.md`) | ❌ not started |
+| 4 | SAM2 segmentation, mask-based orientation, dual export begins | 🟡 dual-export **B-first** pulled forward (now core); SAM2 not started |
+| 5 | FastReID + embedding memory for long-term identity persistence | ❌ not started |
+| 6 | Lane-graph topology constraints + **Lane ID assignment from hand-drawn lane polygons** | ❌ not started |
+| 7 | Apache Parquet storage, FiftyOne visualization, async/Docker deployment | 🟡 Parquet record pulled forward; FiftyOne/Docker not started |
 
-When proposing changes, identify which MVP the work belongs to and avoid pulling capabilities forward without justification.
+A **supporting layer** (vault 14–22 + `final_polish.md`: progress, timing, validation, time-window,
+timestep, config, render, exclusion, smoothing) was built **outside** this numbering. When proposing
+changes, identify which MVP (capability) the work belongs to; pulling a capability forward is allowed
+but say so and record it in the `00` reconciliation.
 
 ## Target Tech Stack
 
