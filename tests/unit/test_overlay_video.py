@@ -183,6 +183,38 @@ class TestReuse:
 		assert draw.calls[1][2][1] == [(20, 20)]
 
 
+class TestAnnotateHook:
+	def test_annotate_runs_after_draw_on_the_same_canvas_with_frame_index(self) -> None:
+		writer, draw = _FakeWriter(), _RecordingDraw()
+		seen: list[tuple[int, Transform2D]] = []
+
+		def annotate(canvas: NDArray[np.uint8], frame_index: int, to_raw: Transform2D) -> None:
+			assert canvas[0, 0, 0] == 255  # draw already ran on this canvas
+			canvas[0, 0, 1] = 255
+			seen.append((frame_index, to_raw))
+
+		exporter = OverlayVideoExporter(
+			Path("unused.mp4"),
+			_META,
+			scale=1.0,
+			open_writer=lambda _path, _meta: writer,
+			draw=draw,
+			annotate=annotate,
+		)
+		with exporter:
+			exporter.emit_frame(0.0, [_state()], _frame(index=4))
+
+		assert [frame_index for frame_index, _ in seen] == [4]
+		assert seen[0][1] == Transform2D.identity()  # same to_raw the draw seam got
+		assert writer.frames[0][0, 0, 1] == 255  # annotate's mark reached the written frame
+
+	def test_default_annotate_is_a_noop(self) -> None:
+		writer, draw = _FakeWriter(), _RecordingDraw()
+		with _exporter(writer, draw) as exporter:  # no annotate injected
+			exporter.emit_frame(0.0, [_state()], _frame())
+		assert len(writer.frames) == 1
+
+
 class TestTransformSource:
 	def test_default_passes_identity_inverse_to_draw(self) -> None:
 		writer, draw = _FakeWriter(), _RecordingDraw()
