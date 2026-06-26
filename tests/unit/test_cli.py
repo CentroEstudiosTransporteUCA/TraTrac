@@ -4,6 +4,7 @@ config-resolution guards. The resolution logic itself is covered by
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -165,6 +166,60 @@ class TestProcessOutputPathSanitization:
 		result = CliRunner().invoke(app, ["--config", str(config)])
 		assert result.exit_code == 2
 		assert "must be a file path, not a directory" in result.output
+
+
+class TestCheckMode:
+	"""``--check`` validates a config and exits without running the pipeline."""
+
+	def test_valid_config_exits_zero(self, tmp_path: Path) -> None:
+		config = _full_config(tmp_path, video=_video(tmp_path))
+		result = CliRunner().invoke(app, ["--config", str(config), "--check"])
+		assert result.exit_code == 0
+		assert "config OK" in result.output
+
+	def test_valid_config_json_report(self, tmp_path: Path) -> None:
+		config = _full_config(tmp_path, video=_video(tmp_path))
+		result = CliRunner().invoke(app, ["--config", str(config), "--check", "--json"])
+		assert result.exit_code == 0
+		assert json.loads(result.stdout) == {"ok": True, "problems": []}
+
+	def test_reports_every_missing_key_aggregated(self, tmp_path: Path) -> None:
+		config = tmp_path / "empty.toml"
+		config.write_text("")
+		result = CliRunner().invoke(app, ["--config", str(config), "--check", "--json"])
+		assert result.exit_code == 2
+		report = json.loads(result.stdout)
+		assert report["ok"] is False
+		assert "input.video is missing." in report["problems"]
+		assert "runtime.device is missing." in report["problems"]
+
+	def test_aggregates_schema_and_static_path_problems(self, tmp_path: Path) -> None:
+		# A schema problem (out-of-range conf via a bad config) and a static path problem
+		# (out is a directory) are reported together, not one-at-a-time.
+		a_dir = tmp_path / "outdir"
+		a_dir.mkdir()
+		config = _full_config(tmp_path, video=_video(tmp_path), out=a_dir)
+		result = CliRunner().invoke(app, ["--config", str(config), "--check", "--json"])
+		assert result.exit_code == 2
+		problems = json.loads(result.stdout)["problems"]
+		assert any("must be a file path, not a directory" in p for p in problems)
+
+	def test_missing_video_is_a_problem_not_a_crash(self, tmp_path: Path) -> None:
+		# The video path need not exist for --check: it is reported, not opened.
+		config = _full_config(tmp_path, video=tmp_path / "absent.mp4")
+		result = CliRunner().invoke(app, ["--config", str(config), "--check", "--json"])
+		assert result.exit_code == 2
+		problems = json.loads(result.stdout)["problems"]
+		assert any("input.video" in p and "does not exist" in p for p in problems)
+
+	def test_does_not_open_the_video(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+		def _boom(*args: object, **kwargs: object) -> object:
+			raise AssertionError("--check must not open the video")
+
+		monkeypatch.setattr(cli, "OpenCvVideoSource", _boom)
+		config = _full_config(tmp_path, video=_video(tmp_path))
+		result = CliRunner().invoke(app, ["--config", str(config), "--check"])
+		assert result.exit_code == 0
 
 
 class TestOpenVideo:

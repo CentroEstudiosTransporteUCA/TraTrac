@@ -135,6 +135,28 @@ but the CLI now feeds it an empty map.
 
 ---
 
+## Validation Without Running (`--check`)
+
+`tratrac --config run.toml --check` validates and exits — it **never** opens the video,
+downloads a checkpoint, or writes outputs — so a client (the Tauri config editor, CI) can
+verify a config on every edit. `--json` emits `{"ok": bool, "problems": [str]}` to stdout;
+without it the problems print human-readable to stderr. Exit `0` = valid, `2` = invalid
+(the code `ConfigError` already uses). It is a **flag on the single `process` command**,
+not a subcommand, preserving the config-only design.
+
+Three layers, cheapest first, each gated on the previous parsing: TOML parse →
+`RunConfig.resolve` (the schema) → `static_run_problems(run)` (the static path guards:
+video exists, path-types, output collisions — everything detectable without decoding the
+video). Deliberately **out of scope**: anything that opens the video or the network
+(`resolve_scale` for `drone_model`, `.SRT` parsing, checkpoint availability) — those are
+run-time, not config-shape, concerns; a future `--check-deep` could add them.
+
+`static_run_problems` was extracted from `process`, which previously raised the path guards
+one-at-a-time; both paths now report them **aggregated**, matching how `resolve` already
+behaves. See `docs/check_command_scope.md`.
+
+---
+
 ## Consequence: No Library Pixel Fallback
 
 Removing defaults is **package-wide**, not CLI-only. The adapter constructors
