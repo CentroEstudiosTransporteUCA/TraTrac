@@ -44,7 +44,7 @@ def _complete(tmp_path: Path, **overrides: Any) -> dict[str, Any]:
 			"anchors_dir": "",
 		},
 		"window": {"start": "", "end": ""},
-		"run": {"force": False, "timing_csv": ""},
+		"run": {"timing_csv": ""},
 	}
 	file_values.update(overrides)
 	return file_values
@@ -62,7 +62,6 @@ class TestResolveComplete:
 		assert run.export.out == tmp_path / "record.parquet"
 		assert run.window.start_seconds is None
 		assert run.window.end_seconds is None
-		assert run.options.force is False
 		assert run.options.timing_csv is None  # "" disables
 
 	def test_off_values_are_explicit_and_legal(self, tmp_path: Path) -> None:

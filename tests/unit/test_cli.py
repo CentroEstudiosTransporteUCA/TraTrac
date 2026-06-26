@@ -118,7 +118,6 @@ def _full_config(
 		'start = ""\n'
 		'end = ""\n'
 		"[run]\n"
-		"force = false\n"
 		f'timing_csv = "{timing_csv}"\n'
 	)
 	return config
