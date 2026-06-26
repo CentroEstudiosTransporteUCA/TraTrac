@@ -2,10 +2,11 @@
 
 A run is fully described by a persisted ``RunConfig`` (see
 ``tratrac.application.config`` and ``vault/19_config_file.md``). There are no
-built-in defaults: every value comes from the ``--config`` TOML or a flag, and a
-missing value fails the run listing exactly what is absent. Flags override the
-config file key-for-key; the positional ``video`` overrides ``input.video`` and
-``--out`` overrides ``export.out``. A complete config replays with no arguments.
+built-in defaults and **no per-key override flags**: every value comes from the
+``--config`` TOML, and a missing value fails the run listing exactly what is
+absent. The sole operational flag is ``--force`` (``run.force``), to overwrite
+existing outputs without editing the config. A complete config replays with just
+``--config``.
 
 The run is **perception only**: it writes the track record (the raw tracked
 measurements, the run's canonical output). It does not produce an SSAM ``.trj`` —
@@ -75,10 +76,6 @@ app = typer.Typer(
 
 @app.command()
 def process(
-	video: Annotated[
-		Path | None,
-		typer.Argument(help="Input video. Overrides input.video from the config."),
-	] = None,
 	config: Annotated[
 		Path | None,
 		typer.Option(
@@ -86,134 +83,8 @@ def process(
 			exists=True,
 			dir_okay=False,
 			readable=True,
-			help="Persisted run config (TOML). Supplies every value not given as a flag.",
+			help="Persisted run config (TOML). Supplies every value for the run.",
 		),
-	] = None,
-	process_fps: Annotated[
-		float | None,
-		typer.Option(
-			"--process-fps",
-			help="Cap processing to ~N frames/sec; 0 = every frame (input.process_fps). "
-			"Fewer frames = faster but more tracker ID switches.",
-		),
-	] = None,
-	out: Annotated[
-		Path | None,
-		typer.Option(
-			"--out",
-			"-o",
-			dir_okay=False,
-			help="Output track-record path (export.out). Feed it to tratrac-postprocess for a .trj.",
-		),
-	] = None,
-	detector: Annotated[
-		DetectorChoice | None,
-		typer.Option("--detector", help="Detector adapter (detector.name)."),
-	] = None,
-	conf: Annotated[
-		float | None, typer.Option("--conf", help="Detection confidence threshold (detector.conf).")
-	] = None,
-	checkpoint: Annotated[
-		str | None,
-		typer.Option("--checkpoint", help="Checkpoint / HF repo id (detector.checkpoint)."),
-	] = None,
-	checkpoint_file: Annotated[
-		str | None,
-		typer.Option(
-			"--checkpoint-file",
-			help="Weights filename within the repo (detector.filename; yolov8_visdrone only).",
-		),
-	] = None,
-	device: Annotated[
-		str | None,
-		typer.Option("--device", help="torch device (runtime.device): cpu, mps, cuda[:N]."),
-	] = None,
-	meters_per_pixel: Annotated[
-		float | None,
-		typer.Option("--meters-per-pixel", help="Direct GSD (calibration.meters_per_pixel)."),
-	] = None,
-	drone_model: Annotated[
-		str | None,
-		typer.Option(
-			"--drone-model", help="Drone model key for GSD lookup (calibration.drone_model)."
-		),
-	] = None,
-	altitude_m: Annotated[
-		float | None,
-		typer.Option("--altitude", help="Flight altitude in metres AGL (calibration.altitude_m)."),
-	] = None,
-	srt: Annotated[
-		Path | None,
-		typer.Option("--srt", help="DJI .SRT sidecar with per-frame altitude (calibration.srt)."),
-	] = None,
-	stabilize: Annotated[
-		bool | None,
-		typer.Option(
-			"--stabilize/--no-stabilize",
-			help="ORB ego-motion: stabilize detection coordinates (ego_motion.enabled).",
-		),
-	] = None,
-	orb_features: Annotated[
-		int | None,
-		typer.Option("--orb-features", help="ORB keypoints per frame (ego_motion.n_features)."),
-	] = None,
-	orb_match_ratio: Annotated[
-		float | None,
-		typer.Option("--orb-match-ratio", help="Lowe ratio test, (0, 1) (ego_motion.match_ratio)."),
-	] = None,
-	orb_min_matches: Annotated[
-		int | None,
-		typer.Option(
-			"--orb-min-matches",
-			help="Min good matches to fit a transform (ego_motion.min_matches).",
-		),
-	] = None,
-	orb_ransac_threshold: Annotated[
-		float | None,
-		typer.Option(
-			"--orb-ransac-threshold",
-			help="RANSAC reprojection threshold in px (ego_motion.ransac_threshold).",
-		),
-	] = None,
-	min_anchor_overlap: Annotated[
-		float | None,
-		typer.Option(
-			"--min-anchor-overlap",
-			help="Re-anchor when the keyframe's shared area drops below this, (0, 1) "
-			"(ego_motion.min_anchor_overlap).",
-		),
-	] = None,
-	det_thresh: Annotated[
-		float | None,
-		typer.Option("--det-thresh", help="Tracker detection threshold (tracker.det_thresh)."),
-	] = None,
-	transform_csv: Annotated[
-		Path | None,
-		typer.Option(
-			"--transform-csv",
-			dir_okay=False,
-			help='Per-frame ego-motion transform CSV; "" disables. Requires --stabilize '
-			"(export.transform_csv).",
-		),
-	] = None,
-	anchors_dir: Annotated[
-		Path | None,
-		typer.Option(
-			"--anchors-dir",
-			file_okay=False,
-			help="Directory for keyframe-anchor PNGs + manifest (draw exclusion zones on these); "
-			'"" disables. Requires --stabilize (export.anchors_dir).',
-		),
-	] = None,
-	start: Annotated[
-		str | None,
-		typer.Option(
-			"--start", help='Analysis-window start timecode; "" = clip start (window.start).'
-		),
-	] = None,
-	end: Annotated[
-		str | None,
-		typer.Option("--end", help='Analysis-window end timecode; "" = clip end (window.end).'),
 	] = None,
 	force: Annotated[
 		bool | None,
@@ -221,43 +92,16 @@ def process(
 			"--force/--no-force", help="Overwrite existing outputs without prompting (run.force)."
 		),
 	] = None,
-	timing_csv: Annotated[
-		Path | None,
-		typer.Option(
-			"--timing-csv",
-			dir_okay=False,
-			help='Per-frame step-timing CSV; "" disables (run.timing_csv).',
-		),
-	] = None,
 ) -> None:
-	"""Track a video into a record file (run tratrac-postprocess on it to get a .trj)."""
-	overrides: dict[str, Any] = {
-		"input.video": video,
-		"input.process_fps": process_fps,
-		"export.out": out,
-		"detector.name": detector.value if detector is not None else None,
-		"detector.conf": conf,
-		"detector.checkpoint": checkpoint,
-		"detector.filename": checkpoint_file,
-		"runtime.device": device,
-		"calibration.meters_per_pixel": meters_per_pixel,
-		"calibration.drone_model": drone_model,
-		"calibration.altitude_m": altitude_m,
-		"calibration.srt": srt,
-		"ego_motion.enabled": stabilize,
-		"ego_motion.n_features": orb_features,
-		"ego_motion.match_ratio": orb_match_ratio,
-		"ego_motion.min_matches": orb_min_matches,
-		"ego_motion.ransac_threshold": orb_ransac_threshold,
-		"ego_motion.min_anchor_overlap": min_anchor_overlap,
-		"tracker.det_thresh": det_thresh,
-		"export.transform_csv": transform_csv,
-		"export.anchors_dir": anchors_dir,
-		"window.start": start,
-		"window.end": end,
-		"run.force": force,
-		"run.timing_csv": timing_csv,
-	}
+	"""Track a video into a record file (run tratrac-postprocess on it to get a .trj).
+
+	The run is driven entirely by ``--config``; the only operational flag is
+	``--force`` (overwrite existing outputs without editing the config).
+	"""
+	# The config is the single source of truth (vault/19); ``--force`` is the lone
+	# operational override. A ``None`` override is skipped, so without ``--force`` the
+	# config's ``run.force`` stands.
+	overrides: dict[str, Any] = {"run.force": force}
 
 	file_values: dict[str, Any] = {}
 	if config is not None:

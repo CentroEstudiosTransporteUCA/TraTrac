@@ -87,8 +87,11 @@ def _video(tmp_path: Path) -> Path:
 	return video
 
 
-def _full_config(tmp_path: Path, *, video: Path) -> Path:
+def _full_config(
+	tmp_path: Path, *, video: Path, out: Path | None = None, timing_csv: str = ""
+) -> Path:
 	"""Write a complete, valid persisted run config to ``tmp_path``."""
+	out = out if out is not None else tmp_path / "out.trj"
 	config = tmp_path / "run.toml"
 	config.write_text(
 		"[input]\n"
@@ -106,34 +109,36 @@ def _full_config(tmp_path: Path, *, video: Path) -> Path:
 		"enabled = false\n"
 		"[tracker]\n"
 		"det_thresh = 0.1\n"
-		"[orientation]\n"
-		"smoothing_window = 5\n"
 		"[export]\n"
-		f'out = "{tmp_path / "out.trj"}"\n'
+		f'out = "{out}"\n'
 		"timestep_precision = 0.0\n"
 		"[window]\n"
 		'start = ""\n'
 		'end = ""\n'
 		"[run]\n"
 		"force = false\n"
-		'timing_csv = ""\n'
+		f'timing_csv = "{timing_csv}"\n'
 	)
 	return config
 
 
 class TestProcessConfigGuard:
 	def test_aborts_before_touching_outputs_when_underspecified(self, tmp_path: Path) -> None:
-		# Resolution fails (no config, no calibration/detector flags) before the
-		# overwrite step, so a pre-existing output is left untouched.
-		video = _video(tmp_path)
+		# An incomplete config fails resolution before the overwrite step, so a
+		# pre-existing output is left untouched.
 		out = tmp_path / "out.trj"
 		out.write_text("old")
-		result = CliRunner().invoke(app, [str(video), "--out", str(out)], input="")
+		config = tmp_path / "partial.toml"
+		config.write_text(f'[export]\nout = "{out}"\n')  # every other key missing
+		result = CliRunner().invoke(app, ["--config", str(config)], input="")
 		assert result.exit_code == 2
 		assert out.read_text() == "old"
 
-	def test_reports_every_missing_key_at_once(self) -> None:
-		result = CliRunner().invoke(app, [], input="")
+	def test_reports_every_missing_key_at_once(self, tmp_path: Path) -> None:
+		# An empty config surfaces every missing key at once (zero-defaults, vault/19).
+		config = tmp_path / "empty.toml"
+		config.write_text("")
+		result = CliRunner().invoke(app, ["--config", str(config)], input="")
 		assert result.exit_code == 2
 		assert "input.video is missing" in result.output
 		assert "runtime.device is missing" in result.output
@@ -141,21 +146,11 @@ class TestProcessConfigGuard:
 
 class TestProcessOutputPathSanitization:
 	def test_rejects_identical_out_and_timing_csv(self, tmp_path: Path) -> None:
+		# The out/timing-csv collision is now expressed in the config, not via flags.
 		video = _video(tmp_path)
-		config = _full_config(tmp_path, video=video)
 		shared = tmp_path / "same.trj"
-		result = CliRunner().invoke(
-			app,
-			["--config", str(config), "--out", str(shared), "--timing-csv", str(shared)],
-		)
-		assert result.exit_code == 2
-
-	def test_rejects_directory_as_output(self, tmp_path: Path) -> None:
-		# Typer's dir_okay=False on --out rejects a directory at parse time.
-		video = _video(tmp_path)
-		a_dir = tmp_path / "outdir"
-		a_dir.mkdir()
-		result = CliRunner().invoke(app, [str(video), "--out", str(a_dir)])
+		config = _full_config(tmp_path, video=video, out=shared, timing_csv=str(shared))
+		result = CliRunner().invoke(app, ["--config", str(config)])
 		assert result.exit_code == 2
 
 
