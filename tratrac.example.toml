@@ -3,16 +3,17 @@
 #
 # This file is a documentation TEMPLATE; it is not auto-loaded. A run is fully
 # described by this config: there are NO built-in defaults, so EVERY key below
-# is required. Each value may be overridden on the command line by its flag
-# (e.g. --conf 0.4). A "disabled" feature is still an explicit value, never a
-# missing key: timing_csv = "" (off), force = false, start/end = "" (whole clip).
+# is required, and there are NO per-key override flags — the config is the single
+# source of truth (the only CLI flag is --force, mapping to [run] force). A
+# "disabled" feature is still an explicit value, never a missing key:
+# timing_csv = "" (off), force = false, start/end = "" (whole clip).
 # See vault/19_config_file.md.
 #
 # The run is PERCEPTION ONLY: it writes the track record (export.out). It does not
 # produce a .trj — run `tratrac-postprocess RECORD --out run.trj` afterwards (vault/22).
 
 [input]
-# The processed video. Overridden by the positional argument: `tratrac VIDEO`.
+# The processed video.
 video = "clips/highway_run3.mp4"
 process_fps = 0.0                 # cap processing to ~N frames/sec; 0.0 = every frame.
                                   # Decode-time decimation: faster on long clips, but fewer
@@ -56,7 +57,7 @@ det_thresh = 0.1                  # BoT-SORT detection threshold (kept below det
 # tratrac-postprocess from the record, not here — there is no [orientation] section.
 
 [export]
-out = "out/highway_run3.parquet"  # the track record (run's primary output, Parquet); overridden by --out.
+out = "out/highway_run3.parquet"  # the track record (run's primary output, Parquet).
                                   # Feed it to tratrac-postprocess to get a .trj (vault/22).
 transform_csv = ""                # "" = off; else a per-frame ego-motion transform CSV. Requires ego_motion.enabled
                                   # (feeds `tratrac-render --transforms` to map global-frame coords back onto the raw video)

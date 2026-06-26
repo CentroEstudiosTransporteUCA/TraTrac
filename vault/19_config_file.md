@@ -7,17 +7,22 @@
 A TraTrac run is fully described by a **`RunConfig`** — input video, detector,
 calibration, tracker, orientation, export, analysis window, and run options.
 There are **no built-in defaults anywhere in the package**: every value must be
-supplied by a TOML config file (`--config PATH`) or a CLI flag. A missing value
-fails the run, listing every absent/invalid key at once.
+supplied by the TOML config file (`--config PATH`). A missing value fails the run,
+listing every absent/invalid key at once.
+
+The config is the **single source of truth**: the CLI exposes **no per-key override
+flags** — the run is driven entirely by `--config`. The lone operational flag is
+`--force` (`run.force`), kept because overwriting outputs is an ad-hoc decision you
+shouldn't have to edit the file for. (Earlier revisions mirrored every config key as
+a `--flag` override; those were removed — see "Design history" below.)
 
 The config is a **persisted, replayable run spec**: it names its own input video
 (`input.video`) and output (`export.out`), so a saved config reproduces a run with
-no other arguments:
+just `--config`:
 
 ```
-uv run tratrac --config run.toml          # replay; everything from the file
-uv run tratrac VIDEO --config run.toml     # positional VIDEO overrides input.video
-uv run tratrac VIDEO --config run.toml --conf 0.4   # any flag overrides its key
+uv run tratrac --config run.toml            # the whole run, from the file
+uv run tratrac --config run.toml --force    # same, overwriting existing outputs
 ```
 
 ---
@@ -36,11 +41,13 @@ defend, so none survive.
 
 ## Resolution Model
 
-- **Precedence per key:** CLI flag (if passed) > config file value > **error**.
-- **`None` is the unset sentinel.** Every value flag defaults to `None` in the
-  Typer signature, meaning "not passed on the command line" — a detection
-  mechanism, not a behavioural default. Resolution falls through `None` to the
-  file value, else records the key as missing.
+- **Precedence per key:** config file value > **error**. (The resolver still accepts
+  an `overrides` dict and applies it with highest precedence — it is now fed only
+  `run.force` from `--force`; the mechanism is retained so a future flag, or a
+  programmatic caller, can override a key without reworking resolution.)
+- **`None` is the unset sentinel.** An override of `None` means "not supplied" and
+  falls through to the file value; `--force`/`--no-force` defaults to `None` in the
+  Typer signature so an omitted flag leaves `run.force` to the config.
 - **Aggregated failure.** `RunConfig.resolve` collects *all* problems and raises a
   single `ConfigError`, so one run surfaces every missing/invalid key instead of
   one-per-attempt.
@@ -100,13 +107,24 @@ path must be given explicitly.
 - **`infrastructure/config/toml.py`**: `load_toml(path)` via stdlib `tomllib`
   (Python 3.12, no new dependency) — the lone seam where the dynamically-typed TOML
   document enters; the resolver does the type checking.
-- **`cli.py`**: parses flags as `None` sentinels, assembles the dotted-key override
-  map, loads the TOML, calls `RunConfig.resolve`, validates the resolved video on
-  disk, then builds the adapters from the typed config. Translates `ConfigError`
-  into exit code 2.
+- **`cli.py`**: loads the TOML, assembles a one-entry override map (`run.force` from
+  `--force`), calls `RunConfig.resolve`, validates the resolved video on disk, then
+  builds the adapters from the typed config. Translates `ConfigError` into exit code 2.
 
-The CLI is a single-command Typer app, so it is invoked as `tratrac VIDEO …` /
-`tratrac --config …` (no `process` subcommand).
+The CLI is a single-command Typer app, invoked as `tratrac --config …` (no `process`
+subcommand). Its only options are `--config` and `--force`.
+
+### Design history — why the override flags were removed
+
+The first revision mirrored every config key as a `--flag` (so `--conf 0.4` could tweak
+one value without editing the TOML) and allowed a positional `VIDEO` to override
+`input.video`. That was removed: the per-key flags duplicated the config surface (every
+key needed a flag + a wiring line + help text, and two ways to set one value), and they
+weakened the reproducibility argument the config exists to make — a run set partly by
+flags is no longer fully captured by its file. Collapsing to **config-only** makes the
+file the single, complete, replayable spec; `--force` survives as the one genuinely
+ad-hoc operational toggle. The `RunConfig.resolve(file_values, overrides)` signature is
+unchanged, so the override path remains available (now exercised only by `--force`).
 
 ---
 
