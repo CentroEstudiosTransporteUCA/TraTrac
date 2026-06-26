@@ -165,7 +165,9 @@ class WindowConfig:
 
 @dataclass(frozen=True, slots=True)
 class RunOptionsConfig:
-	force: bool
+	# ``force`` is intentionally absent: overwrite policy is pure I/O, never affects the
+	# trajectories, so it is not part of the reproducible run spec — it lives only on the
+	# ``--force`` CLI flag (vault/19), not in the config.
 	timing_csv: Path | None  # None = profiling off
 
 
@@ -236,7 +238,6 @@ class RunConfig:
 		)
 		_validate_window(window, resolver)
 
-		force = resolver.required_bool("run.force")
 		timing_csv = resolver.toggleable_path("run.timing_csv")
 
 		if resolver.problems:
@@ -257,7 +258,7 @@ class RunConfig:
 				anchors_dir=anchors_dir,
 			),
 			window=window,
-			options=RunOptionsConfig(force=force, timing_csv=timing_csv),
+			options=RunOptionsConfig(timing_csv=timing_csv),
 		)
 
 

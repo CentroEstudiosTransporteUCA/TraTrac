@@ -4,9 +4,9 @@ A run is fully described by a persisted ``RunConfig`` (see
 ``tratrac.application.config`` and ``vault/19_config_file.md``). There are no
 built-in defaults and **no per-key override flags**: every value comes from the
 ``--config`` TOML, and a missing value fails the run listing exactly what is
-absent. The sole operational flag is ``--force`` (``run.force``), to overwrite
-existing outputs without editing the config. A complete config replays with just
-``--config``.
+absent. The sole flag is ``--force`` (overwrite existing outputs) — overwrite
+policy is *not* a config key, since it never affects the trajectories. A complete
+config replays with just ``--config``.
 
 The run is **perception only**: it writes the track record (the raw tracked
 measurements, the run's canonical output). It does not produce an SSAM ``.trj`` —
@@ -87,22 +87,16 @@ def process(
 		),
 	] = None,
 	force: Annotated[
-		bool | None,
-		typer.Option(
-			"--force/--no-force", help="Overwrite existing outputs without prompting (run.force)."
-		),
-	] = None,
+		bool,
+		typer.Option("--force/--no-force", help="Overwrite existing outputs without prompting."),
+	] = False,
 ) -> None:
 	"""Track a video into a record file (run tratrac-postprocess on it to get a .trj).
 
 	The run is driven entirely by ``--config``; the only operational flag is
-	``--force`` (overwrite existing outputs without editing the config).
+	``--force`` (overwrite existing outputs without editing the config). Overwrite
+	policy is not part of the config — it never affects the trajectories (vault/19).
 	"""
-	# The config is the single source of truth (vault/19); ``--force`` is the lone
-	# operational override. A ``None`` override is skipped, so without ``--force`` the
-	# config's ``run.force`` stands.
-	overrides: dict[str, Any] = {"run.force": force}
-
 	file_values: dict[str, Any] = {}
 	if config is not None:
 		try:
@@ -111,7 +105,7 @@ def process(
 			raise typer.BadParameter(str(exc)) from exc
 
 	try:
-		run = RunConfig.resolve(file_values, overrides)
+		run = RunConfig.resolve(file_values, {})
 	except ConfigError as exc:
 		typer.echo(f"ERROR: {exc}", err=True)
 		raise typer.Exit(code=2) from exc
@@ -145,11 +139,11 @@ def process(
 		raise typer.BadParameter(
 			"export.transform_csv must differ from export.out and run.timing_csv."
 		)
-	_prepare_output_path(run.export.out, force=run.options.force)
+	_prepare_output_path(run.export.out, force=force)
 	if run.options.timing_csv is not None:
-		_prepare_output_path(run.options.timing_csv, force=run.options.force)
+		_prepare_output_path(run.options.timing_csv, force=force)
 	if run.export.transform_csv is not None:
-		_prepare_output_path(run.export.transform_csv, force=run.options.force)
+		_prepare_output_path(run.export.transform_csv, force=force)
 
 	with _open_video(
 		run.input.video,
