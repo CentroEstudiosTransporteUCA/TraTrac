@@ -96,6 +96,7 @@ def _full_config(
 	config.write_text(
 		"[input]\n"
 		f'video = "{video}"\n'
+		"process_fps = 0.0\n"
 		"[detector]\n"
 		'name = "yolov8_visdrone"\n'
 		'checkpoint = "repo/model"\n'
@@ -111,7 +112,8 @@ def _full_config(
 		"det_thresh = 0.1\n"
 		"[export]\n"
 		f'out = "{out}"\n'
-		"timestep_precision = 0.0\n"
+		'transform_csv = ""\n'
+		'anchors_dir = ""\n'
 		"[window]\n"
 		'start = ""\n'
 		'end = ""\n'
@@ -152,6 +154,18 @@ class TestProcessOutputPathSanitization:
 		config = _full_config(tmp_path, video=video, out=shared, timing_csv=str(shared))
 		result = CliRunner().invoke(app, ["--config", str(config)])
 		assert result.exit_code == 2
+		assert "must differ from export.out" in result.output
+
+	def test_rejects_directory_as_output(self, tmp_path: Path) -> None:
+		# The --out flag's dir_okay=False is gone; a directory export.out is now caught by
+		# a runtime guard (vault/19) instead, with the output left untouched.
+		video = _video(tmp_path)
+		a_dir = tmp_path / "outdir"
+		a_dir.mkdir()
+		config = _full_config(tmp_path, video=video, out=a_dir)
+		result = CliRunner().invoke(app, ["--config", str(config)])
+		assert result.exit_code == 2
+		assert "must be a file path, not a directory" in result.output
 
 
 class TestOpenVideo:

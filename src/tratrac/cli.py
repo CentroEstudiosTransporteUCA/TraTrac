@@ -119,6 +119,20 @@ def process(
 	# --- Fail-fast checks that need the filesystem but not the (costly) video open. ---
 	if not run.input.video.is_file():
 		raise typer.BadParameter(f"input video {run.input.video} does not exist or is not a file.")
+	# Path-type guards the per-key flags used to enforce (dir_okay/file_okay) before they
+	# were removed (vault/19): file outputs must not be directories, the anchors dir not a
+	# file — caught here cleanly rather than as an opaque writer error later.
+	for label, path in (
+		("export.out", run.export.out),
+		("export.transform_csv", run.export.transform_csv),
+		("run.timing_csv", run.options.timing_csv),
+	):
+		if path is not None and path.is_dir():
+			raise typer.BadParameter(f"{label} must be a file path, not a directory: {path}.")
+	if run.export.anchors_dir is not None and run.export.anchors_dir.is_file():
+		raise typer.BadParameter(
+			f"export.anchors_dir must be a directory, not a file: {run.export.anchors_dir}."
+		)
 	if (
 		run.options.timing_csv is not None
 		and run.export.out.resolve() == run.options.timing_csv.resolve()
