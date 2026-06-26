@@ -17,6 +17,7 @@ operator draws exclusion zones on (vault/21).
 
 from __future__ import annotations
 
+import json
 import sys
 from collections.abc import Iterator
 from contextlib import ExitStack, contextmanager
@@ -90,13 +91,38 @@ def process(
 		bool,
 		typer.Option("--force/--no-force", help="Overwrite existing outputs without prompting."),
 	] = False,
+	check: Annotated[
+		bool,
+		typer.Option(
+			"--check",
+			help="Validate the config and exit (exit 0 valid, 2 invalid); never opens the "
+			"video or writes outputs.",
+		),
+	] = False,
+	json_output: Annotated[
+		bool,
+		typer.Option(
+			"--json",
+			help="With --check, emit a machine-readable JSON report to stdout.",
+		),
+	] = False,
 ) -> None:
 	"""Track a video into a record file (run tratrac-postprocess on it to get a .trj).
 
 	The run is driven entirely by ``--config``; the only operational flag is
 	``--force`` (overwrite existing outputs without editing the config). Overwrite
 	policy is not part of the config — it never affects the trajectories (vault/19).
+
+	``--check`` short-circuits to validation only: it parses the TOML, resolves the
+	``RunConfig``, and runs the static filesystem guards, then reports every problem
+	at once (``--json`` for a machine-readable report). It never opens the video,
+	downloads a checkpoint, or writes anything — so a client can validate a config on
+	every edit. ``--force``/``--json`` are irrelevant without their partner flag.
 	"""
+	if check:
+		_run_check(config, as_json=json_output)
+		return
+
 	file_values: dict[str, Any] = {}
 	if config is not None:
 		try:
@@ -111,34 +137,12 @@ def process(
 		raise typer.Exit(code=2) from exc
 
 	# --- Fail-fast checks that need the filesystem but not the (costly) video open. ---
-	if not run.input.video.is_file():
-		raise typer.BadParameter(f"input video {run.input.video} does not exist or is not a file.")
-	# Path-type guards the per-key flags used to enforce (dir_okay/file_okay) before they
-	# were removed (vault/19): file outputs must not be directories, the anchors dir not a
-	# file — caught here cleanly rather than as an opaque writer error later.
-	for label, path in (
-		("export.out", run.export.out),
-		("export.transform_csv", run.export.transform_csv),
-		("run.timing_csv", run.options.timing_csv),
-	):
-		if path is not None and path.is_dir():
-			raise typer.BadParameter(f"{label} must be a file path, not a directory: {path}.")
-	if run.export.anchors_dir is not None and run.export.anchors_dir.is_file():
-		raise typer.BadParameter(
-			f"export.anchors_dir must be a directory, not a file: {run.export.anchors_dir}."
-		)
-	if (
-		run.options.timing_csv is not None
-		and run.export.out.resolve() == run.options.timing_csv.resolve()
-	):
-		raise typer.BadParameter("run.timing_csv must differ from export.out.")
-	if run.export.transform_csv is not None and run.export.transform_csv.resolve() in {
-		run.export.out.resolve(),
-		run.options.timing_csv.resolve() if run.options.timing_csv is not None else None,
-	}:
-		raise typer.BadParameter(
-			"export.transform_csv must differ from export.out and run.timing_csv."
-		)
+	# Aggregated (every problem at once), so a run surfaces all path issues in one go —
+	# the same shape ``--check`` reports and consistent with ConfigError. See vault/19.
+	static_problems = static_run_problems(run)
+	if static_problems:
+		_emit_check_report(static_problems, as_json=False)
+		raise typer.Exit(code=2)
 	_prepare_output_path(run.export.out, force=force)
 	if run.options.timing_csv is not None:
 		_prepare_output_path(run.options.timing_csv, force=force)
@@ -242,6 +246,84 @@ def process(
 		f"Recorded {n_frames} frames -> {run.export.out} (scale={scale} m/px). "
 		"Run tratrac-postprocess on it to produce a .trj."
 	)
+
+
+def static_run_problems(run: RunConfig) -> list[str]:
+	"""Path problems detectable without opening the video, collected (not raised).
+
+	The post-resolve guards that need only the filesystem (existence, path-type) or
+	pure path-collision arithmetic — the layer that complements ``RunConfig.resolve``'s
+	schema checks. Returned as a list so both the run and ``--check`` report them
+	aggregated rather than one failure per re-run. The video decode, scale resolution,
+	and checkpoint download stay out (those are run-time, not config-shape, concerns).
+	"""
+	problems: list[str] = []
+	if not run.input.video.is_file():
+		problems.append(f"input.video {run.input.video} does not exist or is not a file.")
+	# Path-type guards the per-key flags used to enforce (dir_okay/file_okay) before they
+	# were removed (vault/19): file outputs must not be directories, the anchors dir not a
+	# file — caught here cleanly rather than as an opaque writer error later.
+	for label, path in (
+		("export.out", run.export.out),
+		("export.transform_csv", run.export.transform_csv),
+		("run.timing_csv", run.options.timing_csv),
+	):
+		if path is not None and path.is_dir():
+			problems.append(f"{label} must be a file path, not a directory: {path}.")
+	if run.export.anchors_dir is not None and run.export.anchors_dir.is_file():
+		problems.append(
+			f"export.anchors_dir must be a directory, not a file: {run.export.anchors_dir}."
+		)
+	if (
+		run.options.timing_csv is not None
+		and run.export.out.resolve() == run.options.timing_csv.resolve()
+	):
+		problems.append("run.timing_csv must differ from export.out.")
+	if run.export.transform_csv is not None and run.export.transform_csv.resolve() in {
+		run.export.out.resolve(),
+		run.options.timing_csv.resolve() if run.options.timing_csv is not None else None,
+	}:
+		problems.append("export.transform_csv must differ from export.out and run.timing_csv.")
+	return problems
+
+
+def _run_check(config: Path | None, *, as_json: bool) -> None:
+	"""Validate ``config`` and exit (0 valid, 2 invalid) without running the pipeline.
+
+	Layers, cheapest first, each gated on the previous parsing: TOML parse, then
+	``RunConfig.resolve`` (the schema), then ``static_run_problems`` (the static path
+	guards). All problems are aggregated into a single report so a client validating a
+	config sees everything wrong at once.
+	"""
+	problems: list[str] = []
+	file_values: dict[str, Any] = {}
+	if config is not None:
+		try:
+			file_values = load_toml(config)
+		except ValueError as exc:
+			problems.append(f"config: {exc}")
+	if not problems:
+		try:
+			run = RunConfig.resolve(file_values, {})
+		except ConfigError as exc:
+			problems.extend(exc.problems)
+		else:
+			problems.extend(static_run_problems(run))
+	_emit_check_report(problems, as_json=as_json)
+	raise typer.Exit(code=0 if not problems else 2)
+
+
+def _emit_check_report(problems: list[str], *, as_json: bool) -> None:
+	"""Print a validation report: JSON to stdout, or human-readable lines to stderr."""
+	if as_json:
+		typer.echo(json.dumps({"ok": not problems, "problems": problems}))
+		return
+	if not problems:
+		typer.echo("config OK")
+		return
+	typer.echo("ERROR: invalid run configuration:", err=True)
+	for problem in problems:
+		typer.echo(f"  - {problem}", err=True)
 
 
 @contextmanager
