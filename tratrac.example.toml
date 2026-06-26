@@ -4,9 +4,9 @@
 # This file is a documentation TEMPLATE; it is not auto-loaded. A run is fully
 # described by this config: there are NO built-in defaults, so EVERY key below
 # is required, and there are NO per-key override flags — the config is the single
-# source of truth (the only CLI flag is --force, mapping to [run] force). A
-# "disabled" feature is still an explicit value, never a missing key:
-# timing_csv = "" (off), force = false, start/end = "" (whole clip).
+# source of truth. The only CLI flag is --force (overwrite policy; not a config key,
+# since it never affects the trajectories). A "disabled" feature is still an explicit
+# value, never a missing key: timing_csv = "" (off), start/end = "" (whole clip).
 # See vault/19_config_file.md.
 #
 # The run is PERCEPTION ONLY: it writes the track record (export.out). It does not
@@ -72,6 +72,7 @@ end = ""                          # "" = clip end
 # Exclusion zones are NOT a run setting anymore — they are applied post-hoc and track-aware
 # by `tratrac-postprocess --exclusion-zones zones.json [--anchors manifest.json]` (vault/21).
 
+# Overwrite policy is NOT a config key — it never affects the trajectories. Use the
+# `--force` CLI flag to overwrite existing outputs (default: off). See vault/19.
 [run]
-force = false                     # true = overwrite existing outputs without prompting
 timing_csv = ""                   # "" = profiling off; else a CSV path for per-frame timings
