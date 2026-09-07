@@ -32,6 +32,7 @@ from typing import Annotated
 import numpy as np
 import typer
 from numpy.typing import NDArray
+from tqdm import tqdm
 
 from tratrac.domain.geometry import Point2D, Transform2D
 from tratrac.domain.vehicle import VehicleState
@@ -169,7 +170,8 @@ def render(
 			annotate=_violation_annotator(violations_by_frame) if violations is not None else None,
 		)
 		with exporter:
-			for frame in source.frames():
+			total = source.metadata.total_frames if source.metadata.total_frames > 0 else None
+			for frame in tqdm(source.frames(), total=total, desc="Rendering", unit="frame"):
 				current.value = transforms_map.get(frame.index, Transform2D.identity())
 				exporter.emit_frame(frame.index / fps, states_by_frame.get(frame.index, []), frame)
 

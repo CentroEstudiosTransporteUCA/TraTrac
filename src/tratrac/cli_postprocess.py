@@ -301,9 +301,11 @@ def _smooth_recording(
 	for observation in recording.observations:
 		by_track[observation.track_id].append(observation)
 
+	from tqdm import tqdm
+
 	fps = recording.metadata.fps
 	states_by_frame: dict[int, list[VehicleState]] = defaultdict(list)
-	for track_id, observations in by_track.items():
+	for track_id, observations in tqdm(by_track.items(), desc="Smoothing", unit="track"):
 		observations.sort(key=lambda o: o.frame_index)
 		samples = [
 			TrackSample(
