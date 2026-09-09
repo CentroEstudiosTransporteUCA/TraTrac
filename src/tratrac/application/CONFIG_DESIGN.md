@@ -141,8 +141,10 @@ but the CLI now feeds it an empty map.
 downloads a checkpoint, or writes outputs — so a client (the Tauri config editor, CI) can
 verify a config on every edit. `--json` emits `{"ok": bool, "problems": [str]}` to stdout;
 without it the problems print human-readable to stderr. Exit `0` = valid, `2` = invalid
-(the code `ConfigError` already uses). It is a **flag on the single `process` command**,
-not a subcommand, preserving the config-only design.
+(the code `ConfigError` already uses). It is a **flag**, not a subcommand — `process` is
+just the internal Typer function name for the CLI's single command (invoked as `tratrac
+--config …`, never as `tratrac process`); `--check` adds no new user-facing verb, preserving
+the config-only design.
 
 Three layers, cheapest first, each gated on the previous parsing: TOML parse →
 `RunConfig.resolve` (the schema) → `static_run_problems(run)` (the static path guards:

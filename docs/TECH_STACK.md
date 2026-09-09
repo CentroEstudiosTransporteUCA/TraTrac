@@ -21,42 +21,23 @@
 
 ---
 
-## RT-DETR
+## RT-DETR vs YOLO (shipped decision)
 
-- Chosen cause it provides:
-  - transformer-based reasoning
-  - excellent aerial detection
-  - strong dense-scene handling
-  - fewer duplicate detections
-
----
-
-### Why NOT YOLO
-
-YOLO prioritizes:
-
-- speed
-- simplicity
-
-RT-DETR prioritizes:
-
-- aerial robustness
-- dense-scene quality
-- global scene reasoning
-
-#### MVP1 exception
-
-`src/tratrac/infrastructure/detection/DETECTOR_CHOICE.md` documents a temporary YOLOv8-VisDrone adapter wired in as the
-default detector at MVP1 ship. The reason is purely operational, not
-architectural: there was no GPU available in the MVP1 timebox to fine-tune
-RT-DETR on aerial data, and the COCO-pretrained RT-DETR weights are
-unusable on cenital views. The YOLO adapter is contained in a single file
-behind the existing `Detector` port and is scheduled for removal in MVP1.5
-once a fine-tuned RT-DETR checkpoint exists.
+Moved to `src/tratrac/infrastructure/detection/DETECTOR_CHOICE.md` — the detector adapters
+(`rt_detr.py`, `yolov8_visdrone.py`) live in `src/tratrac/infrastructure/detection/`, and that
+doc covers the full decision including the MVP1 YOLOv8-VisDrone emergency exception and the
+open MVP1.5 fine-tuning work.
 
 ---
 
-## SAM2
+## BoT-SORT vs SORT (shipped decision)
+
+Moved to `src/tratrac/infrastructure/tracking/TRACKER_CHOICE.md` — next to the tracker adapter
+(`infrastructure/tracking/boxmot_bot_sort.py`).
+
+---
+
+## SAM2 (not yet adopted — MVP4)
 
 - Required for:
   - precise occupancy masks
@@ -75,25 +56,7 @@ SAM2:
 
 ---
 
-## BoT-SORT
-
-- Chosen cause it combines:
-  - motion tracking
-  - appearance embeddings
-  - camera motion compensation
-
----
-
-### Why NOT SORT
-
-SORT:
-
-- motion only
-- poor long-term stability
-
----
-
-## FastReID
+## FastReID (not yet adopted — MVP5)
 
 - Used cause it provides:
   - vehicle-specific embeddings

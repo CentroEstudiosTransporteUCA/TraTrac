@@ -1,4 +1,4 @@
-# MVP 1.9 — ORB EGO-MOTION (COORDINATE STABILIZATION, INTERMEDIATE)
+# Ego-Motion Estimation: Keyframe-Anchored ORB (MVP1.9, intermediate)
 
 > **Status — ✅ Shipped** (optional, off by default). The MVP number is a capability ID, not
 > execution order — see the roadmap reconciliation in `docs/ROADMAP.md`. An intermediate

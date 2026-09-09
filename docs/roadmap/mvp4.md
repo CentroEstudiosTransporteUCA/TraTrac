@@ -3,7 +3,7 @@
 > **Status — 🟡 Partially pulled forward.** The MVP number is a capability ID, not execution
 > order — see the roadmap reconciliation in `docs/ROADMAP.md`. This MVP's **dual-export
 > "B-first" architecture** ("dual export begins") was pulled forward and is already the core
-> design (perception run → Parquet record → post-hoc `.trj`, src/tratrac/application/SMOOTHING.md). The SAM2
+> design (perception run → Parquet record → post-hoc `.trj` — see `src/tratrac/application/SMOOTHING.md`). The SAM2
 > segmentation + mask-based orientation in this milestone are **not started**.
 
 ---

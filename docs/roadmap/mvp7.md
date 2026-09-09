@@ -3,7 +3,7 @@
 > **Status — 🟡 Partially pulled forward.** The MVP number is a capability ID, not execution
 > order — see the roadmap reconciliation in `docs/ROADMAP.md`. This milestone's **Apache
 > Parquet storage** was pulled forward and is already the canonical track record
-> (`infrastructure/tracks/parquet.py`, src/tratrac/application/SMOOTHING.md). FiftyOne visualization + async/Docker
+> (`infrastructure/tracks/parquet.py` — see `src/tratrac/application/SMOOTHING.md`). FiftyOne visualization + async/Docker
 > deployment are **not started**.
 
 ---

@@ -13,7 +13,7 @@ Read `docs/ROADMAP.md` first for the project's status; everything else is detail
 | --- | --- |
 | [`ROADMAP.md`](ROADMAP.md) | System objective, core philosophy, and the MVP capability-ladder-vs-execution-order reconciliation table. Start here. |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | The end-state pipeline diagram (final architecture vision). |
-| [`TECH_STACK.md`](TECH_STACK.md) | Stack choices **not yet adopted** (SAM2, FastReID, Lane Graph, EKF, multi-homography, FiftyOne, CVAT, Docker/CUDA). Already-shipped choices (RT-DETR/YOLO, BoT-SORT) are documented next to their adapters instead — see the tables below. |
+| [`TECH_STACK.md`](TECH_STACK.md) | Stack choices **not yet adopted** (SAM2, FastReID, Lane Graph, EKF, multi-homography, FiftyOne, CVAT, Docker/CUDA). Already-shipped choices (RT-DETR/YOLO, BoT-SORT) are documented next to their adapters instead — see `DETECTOR_CHOICE.md` and `TRACKER_CHOICE.md` in the table below. |
 | [`BACKLOG.md`](BACKLOG.md) | "Shipped cheaper now, upgrade later" tracker — deliberate quality upgrades deferred behind a stable port (ego-motion estimator, video I/O). |
 | [`roadmap/`](roadmap/) | Not-yet-started MVPs (3–7) and road-topology (Link/Lane ID) sourcing strategy — kept together because none of this has a code location yet. |
 
@@ -37,6 +37,7 @@ Read `docs/ROADMAP.md` first for the project's status; everything else is detail
 | [`application/SMOOTHING.md`](../src/tratrac/application/SMOOTHING.md) | Constant-acceleration Kalman/RTS trajectory de-jittering (the only `.trj` path) | `application/kalman.py`, `application/track_smoothing.py` |
 | [`application/RESEARCH_NOTES.md`](../src/tratrac/application/RESEARCH_NOTES.md) | External literature review backing the smoothing + stabilization design | (supports `application/kalman.py` + ego-motion masking) |
 | [`infrastructure/detection/DETECTOR_CHOICE.md`](../src/tratrac/infrastructure/detection/DETECTOR_CHOICE.md) | MVP1 YOLOv8-VisDrone emergency adapter + the open MVP1.5 RT-DETR fine-tune plan | `infrastructure/detection/rt_detr.py`, `yolov8_visdrone.py` |
+| [`infrastructure/tracking/TRACKER_CHOICE.md`](../src/tratrac/infrastructure/tracking/TRACKER_CHOICE.md) | Why BoT-SORT over plain SORT; current IoU-only state pending MVP5 ReID | `infrastructure/tracking/boxmot_bot_sort.py` |
 | [`infrastructure/video/EGO_MOTION.md`](../src/tratrac/infrastructure/video/EGO_MOTION.md) | MVP1.9 keyframe-anchored ORB ego-motion estimator design | `infrastructure/video/ego_motion_orb.py` |
 | [`infrastructure/video/TIME_WINDOW.md`](../src/tratrac/infrastructure/video/TIME_WINDOW.md) | `--start`/`--end` analysis-window trimming | `infrastructure/video/window.py`, `opencv.py` |
 | [`infrastructure/transform/TRANSFORM_SINK.md`](../src/tratrac/infrastructure/transform/TRANSFORM_SINK.md) | Persisting the per-frame global↔raw transform sidecar | `infrastructure/transform/recording.py`, `csv.py` |

@@ -1,4 +1,4 @@
-# MVP 1.75 — METRIC SIZES AND SPEEDS FROM DRONE METADATA
+# GSD Calibration: Metric Sizes and Speeds from Drone Metadata (MVP1.75)
 
 > **Status — ✅ Shipped.** The MVP number is a capability ID, not execution order — see the
 > roadmap reconciliation in `docs/ROADMAP.md`. Delivered before MVP1.5 as an independent

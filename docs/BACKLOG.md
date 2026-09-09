@@ -9,8 +9,8 @@ where we shipped a cheaper implementation behind a stable port and recorded the
 intended final-product replacement here. Each entry names the seam, the current
 adapter, the target adapter, and *why* the upgrade is worth it.
 
-This is not the MVP roadmap (`src/tratrac/infrastructure/detection/DETECTOR_CHOICE.md` … `docs/roadmap/mvp7.md`) — those add *new
-capabilities*. This file tracks *quality upgrades to existing capabilities* that
+This is not the MVP roadmap (see `docs/ROADMAP.md` and the per-MVP docs it indexes) — those
+add *new capabilities*. This file tracks *quality upgrades to existing capabilities* that
 were intentionally deferred. An item leaves this file when it ships.
 
 The recurring pattern: a port isolates the seam, so each upgrade is a one-adapter

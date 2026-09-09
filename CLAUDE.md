@@ -90,25 +90,13 @@ These are project-defining decisions recorded across the repo's design docs (see
 ## MVP Roadmap
 
 Each MVP delivers an end-to-end runnable system that improves trajectory quality. **The MVP
-number is a capability ID (a dependency ladder), not execution order** — work has crossed MVP
-boundaries (shortcuts inserted, later foundations pulled forward, one milestone skipped). The
-authoritative planned-vs-actual reconciliation is in `docs/ROADMAP.md` → "Roadmap:
-Capability IDs vs Execution Order"; each MVP doc (now scattered across the code-adjacent
-design docs and `docs/roadmap/` — see `docs/README.md`) carries a Status banner. Status
-below: ✅ shipped · 🟡 partially pulled forward · ❌ not started.
-
-| MVP | Adds | Status |
-| --- | --- | --- |
-| 1 | RT-DETR + BoT-SORT, approximate orientation, image-space SSAM `.trj`. **Shipped with a temporary YOLOv8-VisDrone detector adapter** (see `src/tratrac/infrastructure/detection/DETECTOR_CHOICE.md`) because COCO-RT-DETR doesn't see aerial cars and fine-tuning was out of timebox. | ✅ (with YOLOv8 emergency) |
-| 1.5 | Fine-tune RT-DETR on VisDrone/UAVDT; remove the YOLOv8 adapter, restore RT-DETR as default. | ❌ skipped (leapfrogged) |
-| 1.75 | **Metric sizes and speeds from drone metadata.** GSD calibration from sensor + focal + altitude; `Length` / `Width` / `Speed` / `Acceleration` in real metres / m·s⁻¹ / m·s⁻²; `DIMENSIONS.Scale` populated. No homography. See `src/tratrac/calibration/GSD_CALIBRATION.md`. | ✅ |
-| 1.9 | **ORB ego-motion (intermediate).** Keyframe-anchored ORB + RANSAC 4-DOF similarity behind the `EgoMotionEstimator` port. Detection/tracking run on the **raw frame**; the transform is applied to **detections** (coordinates, not pixels) before tracking, so nothing is cropped. Still image-space. Optional + off by default; "keep if good enough" before MVP2's learned stabilizer. See `src/tratrac/infrastructure/video/EGO_MOTION.md`. | ✅ |
-| 2 | SuperPoint+LightGlue stabilization, single-homography world projection (handles moving drones, non-nadir gimbals, fixed cameras without telemetry) | 🟡 **world projection shipped post-hoc** (`tratrac-postprocess --calibration`, Approach A single-homography; see `src/tratrac/application/WORLD_PROJECTION.md`) — SSAM can now be metric world-space. Deferred: SuperPoint+LightGlue (ORB still does ego-motion) + the multi-anchor projector (C/D) |
-| 3 | Multi-homography + polygon-based plane assignment + **Link ID assignment from hand-drawn polygons** (see `docs/roadmap/road_topology.md`) | ❌ not started |
-| 4 | SAM2 segmentation, mask-based orientation, dual export begins | 🟡 dual-export **B-first** pulled forward (now core); SAM2 not started |
-| 5 | FastReID + embedding memory for long-term identity persistence | ❌ not started |
-| 6 | Lane-graph topology constraints + **Lane ID assignment from hand-drawn lane polygons** | ❌ not started |
-| 7 | Apache Parquet storage, FiftyOne visualization, async/Docker deployment | 🟡 Parquet record pulled forward; FiftyOne/Docker not started |
+number is a capability ID (a dependency ladder, `1 → 1.5 → 1.75 → 1.9 → 2 → 3 → 4 → 5 → 6 → 7`),
+not execution order** — work has crossed MVP boundaries (shortcuts inserted, later foundations
+pulled forward, one milestone skipped). **The single, authoritative status table lives in
+`docs/ROADMAP.md`** ("Roadmap: Capability IDs vs Execution Order") — read it there, not here,
+so this file and that one don't drift out of sync. Each MVP doc (now scattered across the
+code-adjacent design docs and `docs/roadmap/` — see `docs/README.md`) carries its own Status
+banner too.
 
 A **supporting layer** (the cross-cutting docs indexed in `docs/README.md`: progress, timing,
 validation, time-window, timestep, config, render, exclusion, smoothing) was built **outside**

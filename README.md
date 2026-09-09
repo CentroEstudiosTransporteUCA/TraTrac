@@ -1,21 +1,22 @@
 # TraTrac
 
-Vehicle tracking and trajectory export for cenital / nadir aerial video. The pipeline detects vehicles, maintains identities across frames, estimates orientation, and writes [SSAM](https://highways.dot.gov/safety/rsa/ssam/surrogate-safety-assessment-model-ssam) `.trj` files ready for traffic safety analytics.
+Vehicle tracking and trajectory export for cenital / nadir aerial video. The pipeline detects vehicles, tracks identities across frames, and — via an offline pass — reconstructs kinematics and writes [SSAM](https://highways.dot.gov/safety/rsa/ssam/surrogate-safety-assessment-model-ssam) `.trj` files ready for traffic safety analytics.
 
 ## Status
 
-**MVP1 — basic SSAM trajectory generation.** The first runnable end-to-end pipeline:
+**MVP1.75 and MVP1.9 shipped; MVP2 partially shipped (post-hoc world projection).** Three tools, run in sequence:
 
-- **YOLOv8-VisDrone** detection (community checkpoint from HuggingFace, fine-tuned on aerial drone imagery) + **BoT-SORT** tracking (IoU-only).
-- Approximate orientation: motion-magnitude-weighted EMA of velocity direction with cached last-good heading, falling back to bbox major axis for freshly-seen stationary tracks.
-- Binary **SSAM `.trj` v1.04** output (FORMAT → DIMENSIONS → TIMESTEP → VEHICLE records).
-- Image-space coordinates — syntactically valid SSAM, **not yet physically meaningful**. Real metric coordinates land in MVP2 (single homography); multi-plane geometry in MVP3.
+1. **`tratrac`** — perception only. Detects (**YOLOv8-VisDrone** by default, aerial-trained; **RT-DETR** exists as an adapter but isn't yet fine-tuned for aerial footage — MVP1.5, still open), tracks (**BoT-SORT**, IoU-only), optionally removes drone ego-motion (MVP1.9, off by default), and writes the raw **track record** — a Parquet file, the pipeline's only output.
+2. **`tratrac-postprocess`** — offline. Optionally filters exclusion zones and optionally projects onto metric world coordinates (MVP2 Approach A: a post-hoc single homography), then runs a Kalman/RTS smoother to reconstruct kinematics and writes the binary **SSAM `.trj`**. This is the only path that produces a `.trj`.
+3. **`tratrac-render`** — optional. Draws the trajectories (and, optionally, validator violations) back onto the source video.
+
+Metric calibration is mandatory, not a default: every run requires either a direct `meters_per_pixel` value or drone-model + altitude metadata (MVP1.75 GSD calibration), so a `.trj` is never silently pixel-space passed off as metres.
 
 ### A note on the detector
 
-`docs/TECH_STACK.md` selects RT-DETR over YOLO for long-term aerial robustness. At MVP1 ship the COCO-pretrained RT-DETR was unable to detect aerial cars (it labelled them as `bird` and `traffic light` — verifiable with `scripts/probe_detector.py`), and there was no GPU available in the timebox to fine-tune. YOLOv8-VisDrone is wired in as a separate `Detector` adapter behind the same port; RT-DETR coexists unchanged. The YOLO override is a single file + one CLI enum value + two extra dependencies, scheduled for removal in MVP1.5 once a fine-tuned RT-DETR checkpoint exists.
+`docs/TECH_STACK.md` selects RT-DETR over YOLO for long-term aerial robustness. At MVP1 ship the COCO-pretrained RT-DETR was unable to detect aerial cars (it labelled them as `bird` and `traffic light`), and there was no GPU available in the timebox to fine-tune. YOLOv8-VisDrone is wired in as a separate `Detector` adapter behind the same port; RT-DETR coexists unchanged and is selectable via `detector.name = "rt_detr"` in the config. The YOLO override is scheduled for removal in MVP1.5 once a fine-tuned RT-DETR checkpoint exists — see `src/tratrac/infrastructure/detection/DETECTOR_CHOICE.md` for the full plan.
 
-See `src/tratrac/infrastructure/detection/DETECTOR_CHOICE.md` through `docs/roadmap/mvp7.md` for the full staged roadmap.
+See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the full staged roadmap and what's actually shipped vs. planned.
 
 ## Install
 
@@ -29,65 +30,66 @@ uv sync
 
 ## Usage
 
+There are **no CLI flags for run parameters** — every value comes from a TOML config, so a
+`.trj` is always reconstructable from the file that produced it. Copy the template, edit it,
+then run the three tools in sequence:
+
 ```bash
-uv run tratrac path/to/video.mp4 --out out/trajectory.trj
+cp tratrac.example.toml my_run.toml   # edit: input.video, export.out, [calibration], ...
+uv run tratrac --config my_run.toml                            # → track record (Parquet)
+uv run tratrac-postprocess my_run.parquet --out my_run.trj     # → SSAM .trj
+uv run tratrac-render my_run.mp4 --trj my_run.trj --out my_run_overlay.mp4  # optional
 ```
 
-Options:
+Validate a config without running anything: `uv run tratrac --config my_run.toml --check`.
+Overwrite existing outputs: add `--force` to any of the three commands.
 
-| Flag | Default | Description |
-| --- | --- | --- |
-| `--out / -o` | required | Output `.trj` path. |
-| `--detector` | `yolov8_visdrone` | `yolov8_visdrone` (default, aerial-trained) or `rt_detr` (HF transformers, COCO weights — currently weak on aerial). |
-| `--conf` | `0.25` | Detection confidence threshold (0–1). |
-| `--checkpoint` | depends on detector | YOLO: HF repo id (default `Mahadih534/YoloV8-VisDrone`). RT-DETR: HF checkpoint name (default `PekingU/rtdetr_r18vd`). |
-| `--device` | `cpu` | `cpu`, `cuda`, or `mps`. |
+See [`CONFIG.md`](CONFIG.md) for the full config schema, `tratrac.example.toml` for a
+documented template, and `CLAUDE.md`'s Commands table for every flag on all three tools
+(exclusion zones, world projection, smoother tuning, violation overlays, ...).
 
-The first run downloads the chosen detector's checkpoint into the HuggingFace cache (YOLOv8-VisDrone ≈ 20 MB; RT-DETR-R18 ≈ 80 MB).
+The first run downloads the chosen detector's checkpoint into the HuggingFace cache
+(YOLOv8-VisDrone ≈ 20 MB; RT-DETR-R18 ≈ 80 MB).
 
 ## Diagnostic scripts
 
 Standalone tools that don't depend on the package internals — they keep working even when something else is broken.
 
 ```bash
-# Dump a binary .trj into human-readable text.
-uv run python scripts/dump_trj.py path/to/file.trj                  # full dump
-uv run python scripts/dump_trj.py path/to/file.trj --summary        # totals only
-uv run python scripts/dump_trj.py path/to/file.trj --max-frames 50  # first 50 timesteps
+# Semantically validate a .trj: continuity, orientation smoothness, kinematic plausibility.
+uv run python scripts/validate_trj.py my_run.trj [--violations-csv out.csv] [--fail-under PCT]
 
-# Probe a detector on one chosen video frame: every detection, every class, every
-# score, no filtering. Also writes an annotated PNG alongside the video.
-uv run python scripts/probe_detector.py path/to/video.mp4 --frame 1000
+# Per-run diagnostic figures (speed/accel/jerk, track lifespans, ...) from an outputs folder.
+uv run python scripts/plot_run.py OUTPUTS_DIR [--out DIR] [--video CLIP_OR_FOLDER]
 
-# Render the overlay video (frame + trajectories) directly from a run by setting
-# export.video_out (or --video-out); see src/tratrac/infrastructure/export/VIDEO_EXPORT.md. Then mark
-# validator violations on top of that overlay .mp4:
-uv run python scripts/render_violations.py path/to/overlay.mp4 \
-    --violations-csv path/to/violations.csv --out path/to/marked.mp4 \
-    [--start SEC --end SEC --checks appearance,...]
+# Eyeball ORB ego-motion drift before deciding whether stabilization is worth enabling.
+uv run python scripts/visualize_stabilization.py my_run.mp4 [--mask] [--no-window --save out.mp4]
 ```
 
 ## Architecture
 
-Onion layers under `src/tratrac/`:
+Onion layers under `src/tratrac/` (`domain/` → `application/` → `infrastructure/`), plus three
+Typer CLI entry points — `cli.py` (`tratrac`, perception), `cli_postprocess.py`
+(`tratrac-postprocess`, smoothing/export), `cli_render.py` (`tratrac-render`, visualization).
+The perception run is a **streaming per-frame pipeline** (`TrajectoryPipeline`); it computes no
+kinematics and writes no `.trj` — it records raw tracked observations to a `TrackSink`
+(Parquet). Kinematics (orientation, speed, acceleration) are reconstructed entirely offline by
+`tratrac-postprocess`'s Kalman/RTS smoother.
 
-- `domain/` — Frozen value objects (`Point2D`, `Vector2D`, `Heading`, `Dimensions`, `BoundingBox`, `Frame`, `VehicleState`, …) and Protocol ports (`VideoSource`, `Detector`, `Tracker`, `TrajectoryExporter`). Pure Python — no framework imports.
-- `application/` — `OrientationEstimator` (motion-weighted EMA on heading, last-good cache, bbox fallback) and `TrajectoryPipeline` (per-frame orchestrator). Depends only on domain types.
-- `infrastructure/` — adapters behind the ports:
-  - `video/opencv.py` — `cv2.VideoCapture` reader.
-  - `detection/yolov8_visdrone.py` — **MVP1 emergency default.** Wraps `Mahadih534/YoloV8-VisDrone`.
-  - `detection/rt_detr.py` — HuggingFace `transformers` RT-DETR. Coexists; selectable via `--detector rt_detr`.
-  - `tracking/boxmot_bot_sort.py` — `boxmot.trackers.BotSort` (IoU-only; ReID arrives in MVP5).
-  - `export/ssam_trj.py` — binary SSAM `.trj` v1.04 writer (`struct`-based, no external deps).
-- `cli.py` — Typer CLI installed as the `tratrac` script.
+For the full directory-by-directory breakdown (every adapter, every port, every design doc),
+see `CLAUDE.md`'s Repository Status section and [`docs/README.md`](docs/README.md) — this
+README stays intentionally brief so it doesn't drift out of sync with those.
 
 ### Load-bearing invariants
 
 - **SSAM is an export format, never the internal representation.** The canonical in-memory type is `VehicleState`, which carries fields SSAM cannot represent (segmentation polygons, embeddings, plane metadata in later MVPs).
-- **Dual export.** Two exporter ports — SSAM (`.trj`) plus a richer internal format that arrives with segmentation in MVP4.
-- **Every MVP emits valid SSAM from MVP1.** MVPs differ in trajectory *quality*, not whether trajectories exist.
+- **Dual export, B-first.** The track record (raw measurements now; richer fields later) is the pipeline's primary output; the SSAM `.trj` is a derived, post-hoc product built from it.
+- **Every MVP emits valid SSAM from MVP1.** MVPs differ in trajectory *quality*, not whether trajectories exist — since the export inversion this takes two steps (`tratrac` → record, `tratrac-postprocess` → `.trj`) instead of one.
 
-The full design rationale lives in `docs/ROADMAP.md` through `docs/roadmap/road_topology.md`. The SSAM `.trj` byte-level spec is in `src/tratrac/infrastructure/export/SSAM_FORMAT.md`, derived from the two PDFs alongside it. Where SSAM's `Link ID` and `Lane ID` come from at each MVP is in `docs/roadmap/road_topology.md`.
+See `src/tratrac/domain/ARCHITECTURE.md` for the full rationale behind these invariants. The
+SSAM `.trj` byte-level spec is in `src/tratrac/infrastructure/export/SSAM_FORMAT.md`, derived
+from the two PDFs alongside it. Where SSAM's `Link ID` and `Lane ID` come from at each MVP is
+in `docs/roadmap/road_topology.md`.
 
 ## Development
 
@@ -102,26 +104,18 @@ uv run pytest -m slow     # end-to-end smoke (downloads a detector checkpoint)
 
 All checked-in code passes ruff + strict mypy. Indentation is tabs.
 
-## Known limitations of MVP1
+## Known limitations
 
-- Trajectory numbers (length, speed, accel) are in pixel units labelled as meters — physically meaningless. Fixed by MVP2's homography.
-- Stationary vehicles can still show some residual heading flicker when bbox jitter is comparable to the EMA's full-trust speed threshold. Worse on motorcycles than cars.
+- Coordinates are metric only when calibration is given; without world projection (MVP2 Approach A) they're still a single flat plane, not corrected for non-nadir gimbals or multi-level roads (bridges/overpasses need MVP3's multi-homography).
+- Stabilization (MVP1.9) is feature-based ORB, not the target SuperPoint + LightGlue — fine for most footage, but the upgrade is tracked in `docs/BACKLOG.md` if measurement ever shows it's needed.
 - Object shadows on the ground are occasionally detected as separate vehicles — a YOLOv8-VisDrone weakness, not a pipeline bug.
 - No occlusion bridging: BoT-SORT is configured IoU-only with prediction-only tracks dropped from the output. Identity persistence arrives in MVP5 with FastReID.
 
 ## Roadmap
 
-| MVP | Adds |
-| --- | --- |
-| 1 (this) | YOLOv8-VisDrone (emergency override) + BoT-SORT, EMA orientation, image-space SSAM `.trj` |
-| 1.5 | Fine-tune RT-DETR on VisDrone / UAVDT, restore RT-DETR as default, drop ultralytics |
-| **1.75** | **Metric sizes and speeds from drone metadata.** GSD calibration from sensor + focal + altitude; populates `DIMENSIONS.Scale` and writes `Length` / `Width` / `Speed` / `Acceleration` in real units. No homography needed for hovering, nadir drone footage. See `src/tratrac/calibration/GSD_CALIBRATION.md`. |
-| 2 | SuperPoint + LightGlue stabilization, single-homography world projection (handles moving drones, non-nadir gimbals, fixed cameras without telemetry) |
-| 3 | Multi-homography + polygon-based plane assignment (bridges / overpasses) + Link ID assignment from hand-drawn polygons (see `docs/roadmap/road_topology.md`) |
-| 4 | SAM2 segmentation, mask-based orientation, dual export |
-| 5 | FastReID + embedding memory for long-term identity persistence |
-| 6 | Lane-graph topology constraints + Lane ID assignment from hand-drawn lane polygons |
-| 7 | Apache Parquet storage, FiftyOne visualization, async / Docker deployment |
+See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the full MVP-by-MVP status table (capability ladder
+vs. what's actually shipped) — kept in one place so it doesn't drift out of sync with copies
+elsewhere.
 
 ## License
 
