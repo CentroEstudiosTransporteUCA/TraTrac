@@ -35,7 +35,12 @@ import typer
 from numpy.typing import NDArray
 
 from tratrac.application.exclusion import excluded_track_ids, to_global_polygons
-from tratrac.application.road_graph import link_id_for_point, to_global_link_polygons
+from tratrac.application.road_graph import (
+	lane_id_for_point,
+	link_id_for_point,
+	to_global_lane_polygons,
+	to_global_link_polygons,
+)
 from tratrac.application.track_smoothing import TrackSample, smooth_to_states
 from tratrac.application.world_projection import (
 	PerAnchorWorldProjector,
@@ -45,13 +50,14 @@ from tratrac.application.world_projection import (
 from tratrac.domain.frame import VideoMetadata
 from tratrac.domain.geometry import Point2D, Transform2D
 from tratrac.domain.ports import TrajectoryExporter, WorldProjector
+from tratrac.domain.road_graph import LaneZones, LinkZones
 from tratrac.domain.vehicle import VehicleState
 from tratrac.domain.world import Calibration, Correspondence
 from tratrac.infrastructure.anchors.manifest import ReferenceFrame, read_manifest
 from tratrac.infrastructure.exclusion.json import load_exclusion_zones
 from tratrac.infrastructure.export.decimating import DecimatingTrajectoryExporter
 from tratrac.infrastructure.export.ssam_trj import SsamTrjExporter
-from tratrac.infrastructure.road_graph.json import load_link_zones
+from tratrac.infrastructure.road_graph.json import load_lane_zones, load_link_zones
 from tratrac.infrastructure.tracks.parquet import TrackObservation, TrackRecording, read_tracks
 from tratrac.infrastructure.world.calibration import compute_homography, load_calibration
 
@@ -95,6 +101,16 @@ def postprocess(
 			dir_okay=False,
 			help="Sidecar JSON of image-space Link ID polygons (src/tratrac/domain/road_graph.py); "
 			"surviving observations are classified per-frame and stamped onto VehicleState.link_id.",
+		),
+	] = None,
+	lane_zones: Annotated[
+		Path | None,
+		typer.Option(
+			"--lane-zones",
+			exists=True,
+			dir_okay=False,
+			help="Sidecar JSON of image-space Lane ID polygons (src/tratrac/domain/road_graph.py); "
+			"surviving observations are classified per-frame and stamped onto VehicleState.lane_id.",
 		),
 	] = None,
 	calibration: Annotated[
@@ -157,7 +173,25 @@ def postprocess(
 
 	link_ids: dict[tuple[int, int], int] = {}
 	if link_zones is not None:
-		link_ids = _assign_link_ids(recording, link_zones, anchors)
+		link_ids = _assign_labels(
+			recording,
+			link_zones,
+			anchors,
+			load_zones=load_link_zones,
+			to_global_polygons=to_global_link_polygons,
+			label_for_point=link_id_for_point,
+		)
+
+	lane_ids: dict[tuple[int, int], int] = {}
+	if lane_zones is not None:
+		lane_ids = _assign_labels(
+			recording,
+			lane_zones,
+			anchors,
+			load_zones=load_lane_zones,
+			to_global_polygons=to_global_lane_polygons,
+			label_for_point=lane_id_for_point,
+		)
 
 	if calibration is not None:
 		recording, pos_noise, jerk = _project_to_world(
@@ -167,6 +201,8 @@ def postprocess(
 	states_by_frame = _smooth_recording(recording, pos_noise=pos_noise, jerk=jerk)
 	if link_ids:
 		states_by_frame = _apply_link_ids(states_by_frame, link_ids)
+	if lane_ids:
+		states_by_frame = _apply_lane_ids(states_by_frame, lane_ids)
 	out.parent.mkdir(parents=True, exist_ok=True)
 	_emit_trj(out, recording, states_by_frame, timestep_precision=timestep_precision)
 
@@ -175,6 +211,8 @@ def postprocess(
 		notes.append(f"dropped {dropped} excluded tracks")
 	if link_zones is not None:
 		notes.append(f"assigned link ids to {len(link_ids)} observations")
+	if lane_zones is not None:
+		notes.append(f"assigned lane ids to {len(lane_ids)} observations")
 	if calibration is not None:
 		notes.append("projected to world coordinates")
 	note = f", {', '.join(notes)}" if notes else ""
@@ -207,25 +245,36 @@ def _filter_excluded(
 	return filtered, len(excluded)
 
 
-def _assign_link_ids(
-	recording: TrackRecording, zones_path: Path, anchors_path: Path | None
-) -> dict[tuple[int, int], int]:
-	"""Classify each surviving observation into a Link ID, keyed by ``(track_id, frame_index)``.
+_GlobalLabeledPolygons = tuple[tuple[int, tuple[Point2D, ...]], ...]
 
-	Per-observation, not per-track (src/tratrac/domain/ARCHITECTURE.md / IMPLEMENTATION_PLAN.md
-	Group C1): a vehicle can cross links mid-track, and SSAM's Link ID is a per-VEHICLE-RECORD
-	field. Runs on image-space coordinates (before ``--calibration`` projects them), the same
-	stage exclusion filtering already runs at.
+
+def _assign_labels[Zones: (LinkZones, LaneZones)](
+	recording: TrackRecording,
+	zones_path: Path,
+	anchors_path: Path | None,
+	*,
+	load_zones: Callable[[Path], Zones],
+	to_global_polygons: Callable[[Zones, Callable[[int], Transform2D]], _GlobalLabeledPolygons],
+	label_for_point: Callable[[Point2D, _GlobalLabeledPolygons], int],
+) -> dict[tuple[int, int], int]:
+	"""Classify each surviving observation into a label (Link ID or Lane ID), keyed by
+	``(track_id, frame_index)``.
+
+	Shared by ``--link-zones`` and ``--lane-zones`` (src/tratrac/domain/ARCHITECTURE.md /
+	docs/IMPLEMENTATION_PLAN.md Groups C1/C2): per-observation, not per-track, since a vehicle
+	can cross links/lanes mid-track and SSAM's Link ID / Lane ID are per-VEHICLE-RECORD fields.
+	Runs on image-space coordinates (before ``--calibration`` projects them), the same stage
+	exclusion filtering already runs at.
 	"""
 	try:
-		zones = load_link_zones(zones_path)
+		zones = load_zones(zones_path)
 		references = read_manifest(anchors_path) if anchors_path is not None else None
 	except (ValueError, OSError) as exc:
 		raise typer.BadParameter(str(exc)) from exc
 
-	polygons = to_global_link_polygons(zones, _pose_for(references))
+	polygons = to_global_polygons(zones, _pose_for(references))
 	return {
-		(o.track_id, o.frame_index): link_id_for_point(Point2D(o.cx, o.cy), polygons)
+		(o.track_id, o.frame_index): label_for_point(Point2D(o.cx, o.cy), polygons)
 		for o in recording.observations
 	}
 
@@ -237,6 +286,19 @@ def _apply_link_ids(
 	return {
 		frame_index: [
 			replace(state, link_id=link_ids.get((state.vehicle_id, frame_index), 0))
+			for state in states
+		]
+		for frame_index, states in states_by_frame.items()
+	}
+
+
+def _apply_lane_ids(
+	states_by_frame: dict[int, list[VehicleState]], lane_ids: dict[tuple[int, int], int]
+) -> dict[int, list[VehicleState]]:
+	"""Stamp each smoothed state's ``lane_id`` from the pre-smoothing per-observation assignment."""
+	return {
+		frame_index: [
+			replace(state, lane_id=lane_ids.get((state.vehicle_id, frame_index), 0))
 			for state in states
 		]
 		for frame_index, states in states_by_frame.items()

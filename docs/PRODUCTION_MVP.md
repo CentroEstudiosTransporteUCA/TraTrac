@@ -27,7 +27,7 @@ checklist draws its "shipped" checkmarks from, and [`BACKLOG.md`](BACKLOG.md) fo
 - [ ] Long-term identity persistence through occlusion — ReID (MVP5); occlusion is routine in dense urban traffic, and conflict metrics on fragmented tracks aren't trustworthy
 - [ ] Learned ego-motion stabilization — SuperPoint + LightGlue replacing ORB where the cheap estimator measurably struggles (Backlog #1)
 - [x] Multi-anchor world projection for moving, wide-swept drone footage (MVP2 remainder; `PerAnchorWorldProjector`, nearest-anchor by frame-index — see `application/WORLD_PROJECTION.md`). The remaining MVP2 gap is the SuperPoint+LightGlue stabilization upgrade (`docs/BACKLOG.md` #1), tracked separately below.
-- [ ] Lane-level assignment + lane-change conflict classification (MVP6)
+- [x] Lane-level assignment (MVP6; `LaneZone`/`--lane-zones`, same hand-drawn-polygon mechanism as Link ID — see `docs/roadmap/road_topology.md`). Lane-change *conflict classification* itself is a downstream SSAM-reader concern, not TraTrac's — out of this repo's scope.
 - [ ] Segmentation-based precise occupancy footprint — SAM 3, not SAM2 (MVP4 remainder; orientation is no longer this item's job, MVP1.5's OBB detector already provides it)
 - [x] Link-ID road-segment identity for multi-link scenes — single-plane classification (rest of MVP3; multi-homography/plane assignment for grade-separated sites is the item above, not this one)
 - [ ] Faster, hardware-accelerated video decode — TorchCodec + NVDEC, not PyAV (Backlog #3; PyAV stays for encode, which already shipped)

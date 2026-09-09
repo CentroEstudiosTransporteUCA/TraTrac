@@ -1,10 +1,9 @@
-"""Sidecar JSON reader for road-link zones.
+"""Sidecar JSON readers for road-topology zones (Link ID, Lane ID).
 
-Thin I/O adapter mirroring ``infrastructure/exclusion/json.py``: reads a
-per-scene JSON file listing labeled link polygons into the pure ``LinkZones``
-value object.
+Thin I/O adapters mirroring ``infrastructure/exclusion/json.py``: read a per-scene JSON
+file listing labeled polygons into the pure ``LinkZones``/``LaneZones`` value objects.
 
-Schema::
+Link schema::
 
     { "link_zones": [
         { "link_id": 1,
@@ -12,11 +11,19 @@ Schema::
           "vertices": [[x1, y1], [x2, y2], [x3, y3]] }
     ] }
 
-``link_id`` is required and must be a positive integer (``0`` is the SSAM
-"unknown" sentinel, reserved for points outside every zone).
-``reference_frame`` is the frame index the vertices are drawn on (optional,
-defaults to ``0`` for a static camera; for a moving drone it is one of the
-scout's anchor frame indices). ``vertices`` are pixel coordinates; each
+Lane schema::
+
+    { "lane_zones": [
+        { "link_id": 1, "lane_id": 1,
+          "reference_frame": 0,
+          "vertices": [[x1, y1], [x2, y2], [x3, y3]] }
+    ] }
+
+``link_id``/``lane_id`` are required and must be positive integers (``0`` is the SSAM
+"unknown" sentinel, reserved for points outside every zone); ``lane_id`` is additionally
+capped at 255 (a Byte field in the SSAM record). ``reference_frame`` is the frame index the
+vertices are drawn on (optional, defaults to ``0`` for a static camera; for a moving drone
+it is one of the scout's anchor frame indices). ``vertices`` are pixel coordinates; each
 polygon needs at least three.
 """
 
@@ -27,7 +34,7 @@ from pathlib import Path
 from typing import Any
 
 from tratrac.domain.geometry import Point2D, Polygon
-from tratrac.domain.road_graph import LinkZone, LinkZones
+from tratrac.domain.road_graph import LaneZone, LaneZones, LinkZone, LinkZones
 
 
 def load_link_zones(path: Path) -> LinkZones:
@@ -38,26 +45,57 @@ def load_link_zones(path: Path) -> LinkZones:
 	fewer than three vertices), each re-wrapped with the file path so the CLI
 	can report it cleanly.
 	"""
+	document = _load_document(path, "link_zones")
+	raw_zones = document["link_zones"]
+	zones = [_parse_link_zone(raw, index, path) for index, raw in enumerate(raw_zones)]
+	return LinkZones(zones=tuple(zones))
+
+
+def load_lane_zones(path: Path) -> LaneZones:
+	"""Parse a sidecar JSON file into ``LaneZones``. Mirrors ``load_link_zones``."""
+	document = _load_document(path, "lane_zones")
+	raw_zones = document["lane_zones"]
+	zones = [_parse_lane_zone(raw, index, path) for index, raw in enumerate(raw_zones)]
+	return LaneZones(zones=tuple(zones))
+
+
+def _load_document(path: Path, key: str) -> dict[str, Any]:
 	try:
 		with path.open("rb") as handle:
 			document: Any = json.load(handle)
 	except json.JSONDecodeError as exc:
 		raise ValueError(f"{path} is not valid JSON: {exc}") from exc
 
-	if not isinstance(document, dict) or "link_zones" not in document:
-		raise ValueError(f'{path} must be a JSON object with a "link_zones" array.')
-	raw_zones = document["link_zones"]
-	if not isinstance(raw_zones, list):
-		raise ValueError(f'{path}: "link_zones" must be an array.')
-
-	zones = [_parse_zone(raw, index, path) for index, raw in enumerate(raw_zones)]
-	return LinkZones(zones=tuple(zones))
+	if not isinstance(document, dict) or key not in document:
+		raise ValueError(f'{path} must be a JSON object with a "{key}" array.')
+	if not isinstance(document[key], list):
+		raise ValueError(f'{path}: "{key}" must be an array.')
+	return document
 
 
-def _parse_zone(raw: Any, index: int, path: Path) -> LinkZone:
+def _parse_link_zone(raw: Any, index: int, path: Path) -> LinkZone:
+	link_id, reference_frame, polygon = _parse_zone_common(raw, index, path)
+	try:
+		return LinkZone(link_id=link_id, reference_frame=reference_frame, polygon=polygon)
+	except ValueError as exc:
+		raise ValueError(f"{path}: zone {index}: {exc}") from exc
+
+
+def _parse_lane_zone(raw: Any, index: int, path: Path) -> LaneZone:
+	link_id, reference_frame, polygon = _parse_zone_common(raw, index, path)
+	lane_id = _parse_positive_int(raw.get("lane_id"), index, path, field="lane_id")
+	try:
+		return LaneZone(
+			link_id=link_id, lane_id=lane_id, reference_frame=reference_frame, polygon=polygon
+		)
+	except ValueError as exc:
+		raise ValueError(f"{path}: zone {index}: {exc}") from exc
+
+
+def _parse_zone_common(raw: Any, index: int, path: Path) -> tuple[int, int, Polygon]:
 	if not isinstance(raw, dict) or "vertices" not in raw:
 		raise ValueError(f'{path}: zone {index} must be an object with a "vertices" array.')
-	link_id = _parse_link_id(raw.get("link_id"), index, path)
+	link_id = _parse_positive_int(raw.get("link_id"), index, path, field="link_id")
 	reference_frame = _parse_reference_frame(raw.get("reference_frame", 0), index, path)
 	raw_vertices = raw["vertices"]
 	if not isinstance(raw_vertices, list):
@@ -75,17 +113,14 @@ def _parse_zone(raw: Any, index: int, path: Path) -> LinkZone:
 		polygon = Polygon(vertices=tuple(vertices))
 	except ValueError as exc:
 		raise ValueError(f"{path}: zone {index}: {exc}") from exc
-	try:
-		return LinkZone(link_id=link_id, reference_frame=reference_frame, polygon=polygon)
-	except ValueError as exc:
-		raise ValueError(f"{path}: zone {index}: {exc}") from exc
+	return link_id, reference_frame, polygon
 
 
-def _parse_link_id(raw: Any, index: int, path: Path) -> int:
+def _parse_positive_int(raw: Any, index: int, path: Path, *, field: str) -> int:
 	if raw is None:
-		raise ValueError(f"{path}: zone {index} is missing required field link_id.")
+		raise ValueError(f"{path}: zone {index} is missing required field {field}.")
 	if isinstance(raw, bool) or not isinstance(raw, int):
-		raise ValueError(f"{path}: zone {index} link_id must be an integer.")
+		raise ValueError(f"{path}: zone {index} {field} must be an integer.")
 	return raw
 
 

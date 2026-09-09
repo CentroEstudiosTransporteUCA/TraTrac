@@ -1,5 +1,13 @@
 # Road Topology Sourcing
 
+> **Status — Strategy A (hand-drawn polygons) shipped for both Link ID and Lane ID**
+> (`docs/IMPLEMENTATION_PLAN.md` Groups C1/C2): `domain/road_graph.py`'s `LinkZone`/`LaneZone`,
+> `application/road_graph.py`'s per-observation classification, and `infrastructure/road_graph/json.py`'s
+> sidecar loaders are wired into `tratrac-postprocess` as `--link-zones`/`--lane-zones`, each
+> classifying every surviving observation per-frame (not per-track) and stamping the result onto
+> `VehicleState.link_id`/`lane_id`. Strategies B/C below remain unexplored future upgrades — see
+> "Sourcing strategies" for the tradeoffs that would motivate moving to them.
+
 SSAM's `Link ID` and `Lane ID` fields (see `src/tratrac/infrastructure/export/SSAM_FORMAT.md`, VEHICLE
 record) require knowledge of the road network that does not fall out of
 detection or tracking alone. This document defines what those identifiers

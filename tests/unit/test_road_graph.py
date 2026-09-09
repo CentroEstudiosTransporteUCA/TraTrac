@@ -8,10 +8,15 @@ from pathlib import Path
 
 import pytest
 
-from tratrac.application.road_graph import link_id_for_point, to_global_link_polygons
+from tratrac.application.road_graph import (
+	lane_id_for_point,
+	link_id_for_point,
+	to_global_lane_polygons,
+	to_global_link_polygons,
+)
 from tratrac.domain.geometry import Point2D, Polygon, Transform2D
-from tratrac.domain.road_graph import LinkZone, LinkZones
-from tratrac.infrastructure.road_graph.json import load_link_zones
+from tratrac.domain.road_graph import LaneZone, LaneZones, LinkZone, LinkZones
+from tratrac.infrastructure.road_graph.json import load_lane_zones, load_link_zones
 
 
 def _square(x0: float, y0: float, x1: float, y1: float) -> tuple[Point2D, ...]:
@@ -150,3 +155,96 @@ class TestLoadLinkZones:
 		)
 		with pytest.raises(ValueError, match="reference_frame"):
 			load_link_zones(path)
+
+
+class TestLaneZone:
+	def test_rejects_non_positive_lane_id(self) -> None:
+		with pytest.raises(ValueError, match="lane_id"):
+			LaneZone(link_id=1, lane_id=0, reference_frame=0, polygon=Polygon(_square(0, 0, 1, 1)))
+
+	def test_rejects_lane_id_above_byte_range(self) -> None:
+		with pytest.raises(ValueError, match="lane_id"):
+			LaneZone(
+				link_id=1, lane_id=256, reference_frame=0, polygon=Polygon(_square(0, 0, 1, 1))
+			)
+
+	def test_rejects_non_positive_link_id(self) -> None:
+		with pytest.raises(ValueError, match="link_id"):
+			LaneZone(link_id=0, lane_id=1, reference_frame=0, polygon=Polygon(_square(0, 0, 1, 1)))
+
+
+class TestToGlobalLanePolygons:
+	def test_identity_pose_keeps_raw_coordinates(self) -> None:
+		zones = LaneZones(
+			zones=(
+				LaneZone(
+					link_id=1, lane_id=2, reference_frame=0, polygon=Polygon(_square(1, 2, 3, 4))
+				),
+			)
+		)
+		out = to_global_lane_polygons(zones, lambda _f: Transform2D.identity())
+		assert out == ((2, _square(1, 2, 3, 4)),)
+
+
+class TestLaneIdForPoint:
+	_ZONES = ((1, _square(0.0, 0.0, 100.0, 100.0)), (2, _square(200.0, 200.0, 300.0, 300.0)))
+
+	def test_point_inside_a_zone_gets_its_lane_id(self) -> None:
+		assert lane_id_for_point(Point2D(50.0, 50.0), self._ZONES) == 1
+		assert lane_id_for_point(Point2D(250.0, 250.0), self._ZONES) == 2
+
+	def test_point_outside_every_zone_is_unassigned(self) -> None:
+		assert lane_id_for_point(Point2D(500.0, 500.0), self._ZONES) == 0
+
+
+class TestLoadLaneZones:
+	def test_reads_polygons_with_link_lane_and_reference_frame(self, tmp_path: Path) -> None:
+		path = tmp_path / "lanes.json"
+		path.write_text(
+			json.dumps(
+				{
+					"lane_zones": [
+						{
+							"link_id": 1,
+							"lane_id": 2,
+							"reference_frame": 12,
+							"vertices": [[0, 0], [10, 0], [10, 10], [0, 10]],
+						}
+					]
+				}
+			)
+		)
+		zones = load_lane_zones(path)
+		assert len(zones.zones) == 1
+		assert zones.zones[0].link_id == 1
+		assert zones.zones[0].lane_id == 2
+		assert zones.zones[0].reference_frame == 12
+
+	def test_missing_lane_id_raises(self, tmp_path: Path) -> None:
+		path = tmp_path / "lanes.json"
+		path.write_text(
+			json.dumps({"lane_zones": [{"link_id": 1, "vertices": [[0, 0], [1, 0], [0, 1]]}]})
+		)
+		with pytest.raises(ValueError, match="lane_id"):
+			load_lane_zones(path)
+
+	def test_non_positive_lane_id_raises(self, tmp_path: Path) -> None:
+		path = tmp_path / "lanes.json"
+		path.write_text(
+			json.dumps(
+				{"lane_zones": [{"link_id": 1, "lane_id": 0, "vertices": [[0, 0], [1, 0], [0, 1]]}]}
+			)
+		)
+		with pytest.raises(ValueError, match="lane_id"):
+			load_lane_zones(path)
+
+	def test_missing_top_level_key_raises(self, tmp_path: Path) -> None:
+		path = tmp_path / "lanes.json"
+		path.write_text(json.dumps({"polygons": []}))
+		with pytest.raises(ValueError, match="lane_zones"):
+			load_lane_zones(path)
+
+	def test_empty_list_is_legal(self, tmp_path: Path) -> None:
+		path = tmp_path / "lanes.json"
+		path.write_text(json.dumps({"lane_zones": []}))
+		assert load_lane_zones(path).zones == ()
