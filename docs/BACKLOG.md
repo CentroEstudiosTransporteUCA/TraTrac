@@ -29,6 +29,15 @@ swap with no change to the domain, the pipeline, or the other adapters.
 | Target | SuperPoint + LightGlue adapter (`kornia` or the standalone `lightglue`) |
 | Trigger to upgrade | Measured stabilization error on real aerial footage exceeds tolerance |
 
+> **Real-footage check (Group B1, `docs/IMPLEMENTATION_PLAN.md`):** the trigger hasn't fired,
+> but not because ORB was measured and found adequate — the one real clip validated so far
+> (`src/tratrac/application/REID_MERGE.md`'s real-footage findings) is a **stationary drone
+> hover**: frames sampled across its full ~15-minute length (start, middle, end) show
+> pixel-identical framing, no measurable camera motion. `ego_motion.enabled = false` was
+> correctly used for this clip — there's no ego-motion to estimate, so ORB's quality can't be
+> evaluated here either way. This trigger needs footage with actual camera movement to mean
+> anything; it remains untested, not passed.
+
 **Why ORB ships first (chosen over ECC).** The interim stabilizer is **ORB**, not
 the ECC adapter this entry originally proposed. Both are zero-new-dependency
 (`cv2` is already present), but they differ on the axis that matters for this
