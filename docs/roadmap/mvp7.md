@@ -1,12 +1,13 @@
 # MVP 7 — PRODUCTION-GRADE ANALYTICS PLATFORM
 
-> **Status — 🟡 Partially pulled forward; exploration pass done (Group F, no code).** The MVP
-> number is a capability ID, not execution order — see the roadmap reconciliation in
-> `docs/ROADMAP.md`. This milestone's **Apache Parquet storage** was pulled forward and is
-> already the canonical track record (`infrastructure/tracks/parquet.py` — see
-> `src/tratrac/application/SMOOTHING.md`). FiftyOne visualization, async pipelines, and
-> Docker/CUDA deployment are **not implemented**, but `docs/IMPLEMENTATION_PLAN.md` Group F's
-> "needs its own exploration/design pass" has now had a first pass — see "Exploration pass"
+> **Status — 🟡 Partially pulled forward; exploration pass done, one finding now measured
+> against real footage (Group F, no code).** The MVP number is a capability ID, not execution
+> order — see the roadmap reconciliation in `docs/ROADMAP.md`. This milestone's **Apache
+> Parquet storage** was pulled forward and is already the canonical track record
+> (`infrastructure/tracks/parquet.py` — see `src/tratrac/application/SMOOTHING.md`). FiftyOne
+> visualization, async pipelines, and Docker/CUDA deployment are **not implemented**, but
+> `docs/IMPLEMENTATION_PLAN.md` Group F's "needs its own exploration/design pass" has now had a
+> first pass — see "Exploration pass"
 > below for each of the three, including a concrete Docker build shape and a reasoned
 > recommendation to measure before building the async runtime.
 
@@ -74,23 +75,34 @@ This is a straightforward *reader*, not a pipeline change — it would live as i
 `cli_fiftyone.py`, reading already-produced artifacts, the same "post-hoc tool over existing
 outputs" shape as `scripts/plot_run.py` and `scripts/validate_trj.py`.
 
-### Runtime: measure before building an async pipeline
+### Runtime: measured — decode is not the bottleneck on this workload (CPU baseline)
 
 "Async Pipelines" in the original stack table names an architecture, not a specific finding.
 2026 evidence for GPU-video-inference pipelines in general is unambiguous that overlapping
 decode with inference (rather than doing them serially) meaningfully improves GPU utilization
-and latency — but *TraTrac doesn't yet know whether decode-vs-inference serialization is
-actually its bottleneck*, because no run has ever been profiled on a GPU (the CPU torch index
-in `pyproject.toml` is why — see `CLAUDE.md` Dependency Notes and `docs/IMPLEMENTATION_PLAN.md`
-Group A1). Recommendation: **don't design the async runtime speculatively.**
-`infrastructure/timing/STEP_TIMING.md`'s per-step profiling (`decode → detect → observe →
-ego_motion → stabilize → track → record`, already opt-in via `--timing-csv`) is exactly the
-tool to run on a real GPU deployment first — if it shows the GPU sitting idle during decode (the
-literature's default expectation), the answer is the well-established pattern of overlapping
-decode and inference on separate CUDA streams/threads; if decode isn't actually the bottleneck
-once detection runs on a GPU instead of CPU, an async redesign would be solving the wrong
-problem. Building this now, with zero profiling evidence from this project's own workload,
-risks exactly the kind of invented-detail Group F was flagged to avoid.
+and latency — but *TraTrac didn't know whether decode-vs-inference serialization is actually
+its bottleneck*, because no run had ever been profiled. That's no longer true: a real 10-second
+window of the same real intersection clip Group B1 validated against
+(`src/tratrac/application/REID_MERGE.md`) was run with `--timing-csv` on (CPU, the only runtime
+available in this environment):
+
+| Step | Mean | Share of measured time |
+| --- | --- | --- |
+| `detect` (YOLOv8-VisDrone) | 114.2 ms/frame | **87.4%** |
+| `track` (BoT-SORT) | 16.4 ms/frame | 12.6% |
+| `record` (Parquet write) | 0.02 ms/frame | ~0% |
+
+The timed steps summed to 98.3% of total wall time (39.33s of ~40s) — meaning **decode +
+Python loop overhead is only ~1.7%** on this CPU run. Decode is emphatically not idle-waiting on
+anything here; inference (`detect`) dominates by nearly an order of magnitude over the next
+largest step. **This is CPU-only evidence, not GPU evidence** — swapping the detector onto a
+GPU (Group A1) would shrink `detect` by roughly an order of magnitude and could plausibly make
+decode relatively significant enough to matter, which this measurement can't rule out. But it
+does rule out the naive worry that decode is *already* silently serialized behind something
+else on this codebase's actual per-frame loop shape — there's no such stall to find here. The
+recommendation stands: re-run this same `--timing-csv` profile once a GPU is available (Group
+A1) before designing an async runtime, now with a real CPU baseline to compare against instead
+of zero data.
 
 ### Deployment: Docker + CUDA — a concrete multi-stage shape
 
