@@ -26,7 +26,7 @@ checklist draws its "shipped" checkmarks from, and [`BACKLOG.md`](BACKLOG.md) fo
 - [ ] Multi-level road support — multi-homography + plane assignment for bridges, ramps, overpasses (MVP3); without it, any site with grade separation produces false conflicts
 - [ ] Long-term identity persistence through occlusion — ReID (MVP5); occlusion is routine in dense urban traffic, and conflict metrics on fragmented tracks aren't trustworthy
 - [ ] Learned ego-motion stabilization — SuperPoint + LightGlue replacing ORB where the cheap estimator measurably struggles (Backlog #1)
-- [ ] Multi-anchor / full world projection for moving, wide-swept drone footage (MVP2 remainder)
+- [x] Multi-anchor world projection for moving, wide-swept drone footage (MVP2 remainder; `PerAnchorWorldProjector`, nearest-anchor by frame-index — see `application/WORLD_PROJECTION.md`). The remaining MVP2 gap is the SuperPoint+LightGlue stabilization upgrade (`docs/BACKLOG.md` #1), tracked separately below.
 - [ ] Lane-level assignment + lane-change conflict classification (MVP6)
 - [ ] Segmentation-based precise occupancy footprint — SAM 3, not SAM2 (MVP4 remainder; orientation is no longer this item's job, MVP1.5's OBB detector already provides it)
 - [x] Link-ID road-segment identity for multi-link scenes — single-plane classification (rest of MVP3; multi-homography/plane assignment for grade-separated sites is the item above, not this one)

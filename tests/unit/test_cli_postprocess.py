@@ -116,6 +116,60 @@ class TestPostprocessCalibration:
 				assert 0.0 <= state.centroid.x <= recording.width
 				assert 0.0 <= state.centroid.y <= recording.height
 
+	def test_multi_anchor_calibration_fits_one_homography_per_anchor(self, tmp_path: Path) -> None:
+		# Two anchors, half-scale near frame 0 and quarter-scale near frame 9 (no --anchors
+		# manifest -> every reference_frame's pose is identity, matching the single-anchor
+		# tests above; reference_frame is purely a grouping label here).
+		record = tmp_path / "tracks.parquet"
+		out = tmp_path / "multi.trj"
+		calibration = tmp_path / "calibration.json"
+		with ParquetTrackSink(
+			record, VideoMetadata(width=300, height=300, fps=10.0, total_frames=10), scale=1.0
+		) as sink:
+			for frame in range(10):
+				sink.record(frame, [_tracked(x=10.0 * frame, y=50.0)])
+		calibration.write_text(
+			json.dumps(
+				{
+					"correspondences": [
+						{"reference_frame": 0, "image": [0, 0], "world": [0.0, 0.0]},
+						{"reference_frame": 0, "image": [100, 0], "world": [50.0, 0.0]},
+						{"reference_frame": 0, "image": [100, 100], "world": [50.0, 50.0]},
+						{"reference_frame": 0, "image": [0, 100], "world": [0.0, 50.0]},
+						{"reference_frame": 9, "image": [0, 0], "world": [0.0, 0.0]},
+						{"reference_frame": 9, "image": [100, 0], "world": [25.0, 0.0]},
+						{"reference_frame": 9, "image": [100, 100], "world": [25.0, 25.0]},
+						{"reference_frame": 9, "image": [0, 100], "world": [0.0, 25.0]},
+					]
+				}
+			)
+		)
+
+		result = CliRunner().invoke(
+			app,
+			[
+				str(record),
+				"--out",
+				str(out),
+				"--calibration",
+				str(calibration),
+				# Near-zero measurement noise + a very responsive process model: the smoother
+				# tracks the projected measurements closely instead of blending across the
+				# mid-track scale switch, so the per-anchor displacement stays measurable.
+				"--pos-noise",
+				"0.01",
+				"--jerk",
+				"1e6",
+			],
+		)
+		assert result.exit_code == 0, result.output
+
+		near_anchor_0 = _centroid_at(out, 1)[0] - _centroid_at(out, 0)[0]
+		near_anchor_9 = _centroid_at(out, 9)[0] - _centroid_at(out, 8)[0]
+		# 10 px/frame at 0.5 m/px near anchor 0, at 0.25 m/px near anchor 9.
+		assert near_anchor_0 == pytest.approx(5.0, abs=0.5)
+		assert near_anchor_9 == pytest.approx(2.5, abs=0.5)
+
 	def test_calibration_scales_metric_dimensions(self, tmp_path: Path) -> None:
 		record = tmp_path / "tracks.parquet"
 		out = tmp_path / "world.trj"

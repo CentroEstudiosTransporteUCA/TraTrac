@@ -1,15 +1,18 @@
 # World Projection — MVP 2 (Coordinate Systems + Approach A)
 
-> **Status — 🟡 Partially shipped (world projection landed; stabilization upgrade deferred).**
-> The MVP number is a capability ID, not execution order — see the roadmap reconciliation in
-> `docs/ROADMAP.md`. **World projection** is now implemented as a **post-hoc, single-homography
-> shortcut (Approach A)** in `tratrac-postprocess` — see "Implementation (Approach A — shipped)"
-> below. The two pieces still **not** done: the SuperPoint + LightGlue stabilization upgrade
-> (MVP1.9's ORB still does ego-motion; `docs/BACKLOG.md` item 1), and the multi-anchor projector
-> (Approach C/D) — Approach A is a deliberate "ship cheaper now, upgrade behind the port later"
-> intermediate, exactly like MVP1.9 was for stabilization. With Approach A wired, SSAM positions
-> can now be metric world coordinates; the load-bearing gap is closed for single-/few-anchor
-> bounded scenes.
+> **Status — 🟡 Partially shipped (world projection + multi-anchor landed; stabilization upgrade
+> deferred).** The MVP number is a capability ID, not execution order — see the roadmap
+> reconciliation in `docs/ROADMAP.md`. **World projection** is implemented as a **post-hoc
+> homography** in `tratrac-postprocess` — see "Implementation (Approach A — shipped)" below.
+> **Multi-anchor projection** (`docs/IMPLEMENTATION_PLAN.md` Group C3) has also landed:
+> `PerAnchorWorldProjector` (`application/world_projection.py`) fits one homography per anchor
+> and picks the nearest one by frame-index distance (not interpolated between neighbors — see
+> its docstring for why); `cli_postprocess.py`'s `_fit_projector` dispatches to it automatically
+> when a calibration's correspondences span more than one `reference_frame`, falling back to the
+> original single-homography path unchanged for one anchor. The one piece still **not** done: the
+> SuperPoint + LightGlue stabilization upgrade (MVP1.9's ORB still does ego-motion;
+> `docs/BACKLOG.md` item 1). With both landed, SSAM positions can be metric world coordinates for
+> wide-swept, many-anchor scenes, not just bounded ones.
 
 ---
 
@@ -364,25 +367,33 @@ world metres with pixel-tuned noise would mis-scale the filter. Fix: multiply
 Q/R *ratio* (hence the filter's behaviour) while matching the world magnitudes —
 the filter de-jitters identically, just in metres.
 
-### Forward-compatible seams (the C/D migration)
+### Multi-anchor projection — landed (Group C3)
 
-Approach A is single-homography, but every seam is shaped for the multi-anchor
-projector (Approach C/D — per-anchor georeferencing / pose-interpolated control
-regions; see the approach comparison from the design session) to drop in **behind
-the same port**:
+The seams described below (written when only Approach A existed) let the multi-anchor
+projector drop in **behind the same port**, with no caller changes — and that's exactly
+what happened:
 
-- `WorldProjector.to_world` already takes `frame_index`. `SingleHomographyProjector`
-  ignores it; a future `PerAnchorWorldProjector` uses it to pick the right anchor's
-  homography. **Callers do not change.**
-- `Calibration`/`Correspondence` already carry `reference_frame` per correspondence,
-  so a calibration spanning many anchors parses today — only the *fitter* changes
-  (one `H` per anchor instead of one global `H`).
-- The anchor-manifest lift (`pose(reference_frame)`) is already in place.
+- `WorldProjector.to_world` already took `frame_index`; `SingleHomographyProjector` ignores
+  it, and `PerAnchorWorldProjector` (`application/world_projection.py`) now uses it to pick
+  the nearest anchor's homography (nearest by frame-index distance — a deliberate hard
+  switch, not an interpolated blend between neighboring anchors' homographies; see the
+  class's docstring for why interpolation isn't the simple choice it sounds like for
+  projective transforms).
+- `Calibration`/`Correspondence` already carried `reference_frame` per correspondence, so a
+  calibration spanning many anchors parsed before this landed — only the *fitter* changed:
+  `cli_postprocess._fit_projector` groups correspondences by `reference_frame` and fits one
+  `H` per group when there's more than one, instead of pooling everything into one global
+  `H`. A single-anchor (or static) calibration is unaffected — same code path as before.
+- The anchor-manifest lift (`pose(reference_frame)`) was already in place and needed no
+  changes.
 
-Why A is enough for now: a clip that stays over **one (or few) anchor(s)** has no
-large inter-anchor displacement, so there is no drift for C/D to eliminate and no
-seam risk to manage. C/D solve a problem (unbounded drift across many anchors) that
-a bounded scene does not have. We ship A, and migrate when scenes outgrow it.
+**Not done by this landing:** each anchor's `pos_noise`/`jerk` scale conversion is
+approximated as the *average* of every anchor's local scale, not tracked per-observation —
+the smoother still takes one global `(pos_noise, jerk)` pair for a track, so a track crossing
+an anchor boundary mid-life gets a slightly-off noise model near the switch. Revisit if
+`scripts/validate_trj.py` shows this mattering in practice. Full pose-interpolated control
+regions (the "Approach D" end of the original comparison) remain unimplemented — the nearest-
+anchor hard switch was judged sufficient unless real footage shows a visible seam.
 
 ### Operator workflow
 

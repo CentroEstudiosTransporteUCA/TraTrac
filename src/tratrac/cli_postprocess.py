@@ -30,16 +30,23 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Annotated
 
+import numpy as np
 import typer
+from numpy.typing import NDArray
 
 from tratrac.application.exclusion import excluded_track_ids, to_global_polygons
 from tratrac.application.road_graph import link_id_for_point, to_global_link_polygons
 from tratrac.application.track_smoothing import TrackSample, smooth_to_states
-from tratrac.application.world_projection import SingleHomographyProjector, local_scale_at
+from tratrac.application.world_projection import (
+	PerAnchorWorldProjector,
+	SingleHomographyProjector,
+	local_scale_at,
+)
 from tratrac.domain.frame import VideoMetadata
 from tratrac.domain.geometry import Point2D, Transform2D
 from tratrac.domain.ports import TrajectoryExporter, WorldProjector
 from tratrac.domain.vehicle import VehicleState
+from tratrac.domain.world import Calibration, Correspondence
 from tratrac.infrastructure.anchors.manifest import ReferenceFrame, read_manifest
 from tratrac.infrastructure.exclusion.json import load_exclusion_zones
 from tratrac.infrastructure.export.decimating import DecimatingTrajectoryExporter
@@ -98,7 +105,9 @@ def postprocess(
 			dir_okay=False,
 			help="World-projection calibration JSON (image<->world ground correspondences). When "
 			"given, trajectories are projected to metric world coordinates before smoothing "
-			"(MVP2); DIMENSIONS.Scale becomes 1.0. See src/tratrac/application/WORLD_PROJECTION.md.",
+			"(MVP2); DIMENSIONS.Scale becomes 1.0. Correspondences spanning more than one "
+			"anchor fit one homography per anchor (each needs its own >= 4 correspondences) "
+			"instead of pooling into a single one. See src/tratrac/application/WORLD_PROJECTION.md.",
 		),
 	] = None,
 	exclusion_min_fraction: Annotated[
@@ -289,23 +298,63 @@ def _project_to_world(
 		raise typer.BadParameter(str(exc)) from exc
 
 	pose_for = _pose_for(references)
-	image_points = [pose_for(c.reference_frame).apply(c.image) for c in calibration.correspondences]
-	world_points = [c.world for c in calibration.correspondences]
-	try:
-		matrix = compute_homography(image_points, world_points)
-	except ValueError as exc:
-		raise typer.BadParameter(str(exc)) from exc
-	projector = SingleHomographyProjector(matrix)
+	projector, scale = _fit_projector(calibration, pose_for)
 
 	projected = [_project_observation(o, projector) for o in recording.observations]
 	world_recording = _normalize_world_recording(recording.metadata, projected)
-
-	center = Point2D(
-		sum(p.x for p in image_points) / len(image_points),
-		sum(p.y for p in image_points) / len(image_points),
-	)
-	scale = local_scale_at(projector, center)
 	return world_recording, pos_noise * scale, jerk * scale * scale
+
+
+def _fit_projector(
+	calibration: Calibration, pose_for: Callable[[int], Transform2D]
+) -> tuple[WorldProjector, float]:
+	"""Fit a ``WorldProjector`` from calibration correspondences, plus a representative
+	local scale (metres/pixel) for converting ``pos_noise``/``jerk`` into world units.
+
+	A calibration authored on a single anchor (or a static run, where every correspondence's
+	``reference_frame`` collapses to the same pose) fits one global homography
+	(``SingleHomographyProjector``) — the original Approach A behaviour, unchanged. A
+	calibration spanning multiple anchors (Group C3, ``docs/IMPLEMENTATION_PLAN.md``) fits one
+	homography per anchor (``PerAnchorWorldProjector``), grouping correspondences by their
+	``reference_frame``; each group needs its own >= 4 correspondences (``compute_homography``
+	enforces this and its ``ValueError`` is reported the same way for either path).
+	"""
+	by_anchor: dict[int, list[Correspondence]] = defaultdict(list)
+	for correspondence in calibration.correspondences:
+		by_anchor[correspondence.reference_frame].append(correspondence)
+
+	if len(by_anchor) == 1:
+		[(anchor, group)] = by_anchor.items()
+		matrix = _fit_homography(group, pose_for)
+		single: WorldProjector = SingleHomographyProjector(matrix)
+		return single, local_scale_at(single, _centroid(group, pose_for), frame_index=anchor)
+
+	homographies: dict[int, NDArray[np.float64]] = {}
+	scales: list[float] = []
+	for anchor, group in by_anchor.items():
+		homographies[anchor] = _fit_homography(group, pose_for)
+		per_anchor = SingleHomographyProjector(homographies[anchor])
+		scales.append(local_scale_at(per_anchor, _centroid(group, pose_for), frame_index=anchor))
+	# One global pos_noise/jerk feeds the smoother for the whole recording (it isn't
+	# per-observation), so multiple anchors' local scales are averaged into one
+	# representative value rather than tracked per anchor.
+	return PerAnchorWorldProjector(homographies), sum(scales) / len(scales)
+
+
+def _fit_homography(
+	group: list[Correspondence], pose_for: Callable[[int], Transform2D]
+) -> NDArray[np.float64]:
+	image_points = [pose_for(c.reference_frame).apply(c.image) for c in group]
+	world_points = [c.world for c in group]
+	try:
+		return compute_homography(image_points, world_points)
+	except ValueError as exc:
+		raise typer.BadParameter(str(exc)) from exc
+
+
+def _centroid(group: list[Correspondence], pose_for: Callable[[int], Transform2D]) -> Point2D:
+	points = [pose_for(c.reference_frame).apply(c.image) for c in group]
+	return Point2D(sum(p.x for p in points) / len(points), sum(p.y for p in points) / len(points))
 
 
 def _normalize_world_recording(

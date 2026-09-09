@@ -12,6 +12,7 @@ import pytest
 
 from tratrac.application.world_projection import (
 	IdentityWorldProjector,
+	PerAnchorWorldProjector,
 	SingleHomographyProjector,
 	local_scale_at,
 )
@@ -60,6 +61,37 @@ class TestSingleHomographyProjector:
 		projector = SingleHomographyProjector(matrix)
 		with pytest.raises(ValueError, match="infinity"):
 			projector.to_world(Point2D(3.0, 5.0), frame_index=0)
+
+
+class TestPerAnchorWorldProjector:
+	def test_rejects_empty_mapping(self) -> None:
+		with pytest.raises(ValueError, match="at least one anchor"):
+			PerAnchorWorldProjector({})
+
+	def test_uses_the_exact_anchors_homography(self) -> None:
+		projector = PerAnchorWorldProjector(
+			{0: _scale_homography(1.0), 100: _scale_homography(10.0)}
+		)
+		assert projector.to_world(Point2D(2.0, 2.0), frame_index=0) == Point2D(2.0, 2.0)
+		assert projector.to_world(Point2D(2.0, 2.0), frame_index=100) == Point2D(20.0, 20.0)
+
+	def test_picks_the_nearer_anchor_for_an_in_between_frame(self) -> None:
+		projector = PerAnchorWorldProjector(
+			{0: _scale_homography(1.0), 100: _scale_homography(10.0)}
+		)
+		assert projector.to_world(Point2D(1.0, 1.0), frame_index=30) == Point2D(1.0, 1.0)
+		assert projector.to_world(Point2D(1.0, 1.0), frame_index=70) == Point2D(10.0, 10.0)
+
+	def test_ties_break_toward_the_earlier_anchor(self) -> None:
+		projector = PerAnchorWorldProjector(
+			{0: _scale_homography(1.0), 100: _scale_homography(10.0)}
+		)
+		assert projector.to_world(Point2D(1.0, 1.0), frame_index=50) == Point2D(1.0, 1.0)
+
+	def test_clamps_outside_the_anchor_range(self) -> None:
+		projector = PerAnchorWorldProjector({50: _scale_homography(2.0)})
+		assert projector.to_world(Point2D(1.0, 1.0), frame_index=-1000) == Point2D(2.0, 2.0)
+		assert projector.to_world(Point2D(1.0, 1.0), frame_index=1000) == Point2D(2.0, 2.0)
 
 
 class TestLocalScaleAt:
