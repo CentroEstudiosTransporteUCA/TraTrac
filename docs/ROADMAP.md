@@ -70,7 +70,7 @@ per-MVP files carry a **Status** banner; this is the single reconciliation of pl
 | 4 | Segmentation-derived occupancy geometry (target: SAM 3, not SAM2); **dual export begins** | 🟡 **Partially pulled forward** — the dual-export "B-first" architecture is already core; segmentation not started, and its scope narrowed now that MVP1.5's OBB detector already reports orientation (see `docs/roadmap/mvp4.md`) |
 | 5 | Long-term identity persistence (target: DINOv3 ReID + motion-plausibility gating, not FastReID) | 🟡 **Partially shipped** — the merge-decision + apply stages landed (`application/reid_merge.py`, `tratrac-postprocess --reid-merge`); the DINOv3 embed stage needs a GPU + real footage and hasn't (see `docs/roadmap/mvp5.md`) |
 | 6 | Lane graph + Lane ID | 🟡 **Partially shipped** — Lane ID (Strategy A hand-drawn polygons, Group C2) landed in `tratrac-postprocess --lane-zones`, mirroring Link ID. Lane *graph* sourcing (Strategies B/C, `docs/roadmap/road_topology.md`) and lane-change conflict classification (a downstream SSAM-reader concern) are unstarted. |
-| 7 | **Parquet storage** + FiftyOne + Docker | 🟡 **Partially pulled forward** — Parquet is the canonical record; FiftyOne/Docker not started |
+| 7 | **Parquet storage** + FiftyOne + Docker | 🟡 **Partially pulled forward** — Parquet is the canonical record; FiftyOne/async/Docker not implemented, but Group F's exploration pass (`docs/roadmap/mvp7.md`) confirmed FiftyOne still fits, proposed a concrete Docker multi-stage build shape, and recommends profiling (`STEP_TIMING.md`) before designing an async runtime |
 
 **Pulled forward, out of ladder order:** Parquet storage (7) and the dual-export "B-first"
 inversion (4) — both landed early because the canonical *track record* needed them now.
