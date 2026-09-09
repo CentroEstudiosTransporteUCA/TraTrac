@@ -75,19 +75,15 @@ physically-impossible-jerk violations than the EMA `.trj` (the Punzo metric, §1
 (constant-acceleration Kalman + RTS is confirmed against the literature, see
 `RESEARCH_NOTES.md`), but not the current research frontier. 2025 work has moved toward
 **hybrid classical+learned filters**: keep the Kalman structure (interpretable, physically
-grounded — worth preserving, not replacing wholesale) but learn the process/measurement noise
-covariances from data instead of hand-tuning them. **KalmanNet** is the foundational named
-approach; **MAML-KalmanNet** (meta-learning, relevant here since TraTrac won't have a large
-labeled-trajectory dataset to train on) and **Recursive KalmanNet** (couples neural and analytic
-covariance propagation to keep error estimates positive-definite and unbiased) are more targeted
-descendants. This is a genuine design-pass item, not a drop-in swap — unlike the detector pivot
-in `docs/TECH_STACK.md`, there's no off-the-shelf checkpoint to fine-tune here.
-
-**Sources:**
-- [KalmanNet — neural-aided Kalman filtering, foundational method](https://www.emergentmind.com/topics/neural-network-aided-kalman-filtering)
-- [MAML-KalmanNet — meta-learning for low-data regimes (IEEE TSP 2025)](https://dl.acm.org/doi/abs/10.1109/TSP.2025.3540018)
-- [Recursive KalmanNet — positive-definite/unbiased covariance propagation](https://onlinelibrary.wiley.com/doi/10.1002/acs.3982)
-- [Latent-KalmanNet — learned Kalman filtering from high-dimensional signals](https://arxiv.org/pdf/2304.07827)
+grounded — worth preserving, not replacing wholesale) but learn the Kalman gain from data
+instead of computing it analytically from hand-tuned noise parameters. **This is now a design
+spike, not just a flagged frontier** — see `application/KALMANNET_DESIGN.md` (Group E,
+`docs/IMPLEMENTATION_PLAN.md`) for the architecture mechanics, a reconsidered recommendation
+(plain **unsupervised** KalmanNet trained on TraTrac's own recorded track data, not
+MAML-KalmanNet — TraTrac's blocker turned out to be data *diversity*, not the presence of
+labels), a proposed integration surface, and what's still genuinely open. Still not a drop-in
+swap — unlike the detector pivot in `docs/TECH_STACK.md`, there's no off-the-shelf checkpoint
+to fine-tune here, and no code has been written yet.
 
 ## Files
 - `application/kalman.py` — CA filter + RTS core.

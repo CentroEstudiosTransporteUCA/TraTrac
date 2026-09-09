@@ -175,20 +175,19 @@ highD/Punzo literature it cites.
 
 What's genuinely open is that `--pos-noise`/`--jerk` are **fixed, hand-tuned hyperparameters**.
 2025 research consensus has moved toward **hybrid classical+learned** filters that keep the
-Kalman structure (interpretable, physically grounded — worth preserving) but learn the process/
-measurement noise covariances from data instead: **KalmanNet** is the foundational named
-approach, with **MAML-KalmanNet** (meta-learning, relevant here given TraTrac won't have a huge
-labeled-trajectory dataset to train on) and **Recursive KalmanNet** (couples neural and analytic
-covariance propagation to keep error estimates positive-definite and unbiased) as more targeted
-descendants. This is a genuine frontier direction, not an off-the-shelf checkpoint swap the way
-the detector pivot was — it needs its own design pass. See `src/tratrac/application/SMOOTHING.md`.
+Kalman structure (interpretable, physically grounded — worth preserving) but learn the Kalman
+gain from data instead of computing it analytically. This is no longer just a flagged
+direction — `src/tratrac/application/KALMANNET_DESIGN.md` (Group E, `docs/IMPLEMENTATION_PLAN.md`)
+is a research/design spike into it: architecture mechanics, a reconsidered recommendation
+(plain **unsupervised** KalmanNet trained on TraTrac's own recorded track data — the real
+blocker turned out to be data *diversity*, not the presence of ground-truth labels, which
+undercuts the earlier assumption that **MAML-KalmanNet**'s meta-learning was the necessary
+first step), a proposed integration surface, and what's still open. Still a genuine frontier
+direction, not an off-the-shelf checkpoint swap the way the detector pivot was, and no code has
+been written yet. See `src/tratrac/application/SMOOTHING.md` + `KALMANNET_DESIGN.md`.
 
-**Sources:**
-- [KalmanNet — neural-aided Kalman filtering, foundational method](https://www.emergentmind.com/topics/neural-network-aided-kalman-filtering)
-- [MAML-KalmanNet — meta-learning for low-data regimes (IEEE TSP 2025)](https://dl.acm.org/doi/abs/10.1109/TSP.2025.3540018)
-- [Recursive KalmanNet — positive-definite/unbiased covariance propagation](https://onlinelibrary.wiley.com/doi/10.1002/acs.3982)
-- [Latent-KalmanNet — learned Kalman filtering from high-dimensional signals](https://arxiv.org/pdf/2304.07827)
-- [Differentiable Adaptive Kalman Filtering via Optimal Transport](https://arxiv.org/pdf/2508.07037)
+**Sources:** see `src/tratrac/application/KALMANNET_DESIGN.md`'s "Sources" section for the full,
+current citation list (superseding the list previously here).
 
 ---
 
