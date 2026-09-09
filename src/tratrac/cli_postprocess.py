@@ -33,6 +33,7 @@ from typing import Annotated
 import typer
 
 from tratrac.application.exclusion import excluded_track_ids, to_global_polygons
+from tratrac.application.road_graph import link_id_for_point, to_global_link_polygons
 from tratrac.application.track_smoothing import TrackSample, smooth_to_states
 from tratrac.application.world_projection import SingleHomographyProjector, local_scale_at
 from tratrac.domain.frame import VideoMetadata
@@ -43,6 +44,7 @@ from tratrac.infrastructure.anchors.manifest import ReferenceFrame, read_manifes
 from tratrac.infrastructure.exclusion.json import load_exclusion_zones
 from tratrac.infrastructure.export.decimating import DecimatingTrajectoryExporter
 from tratrac.infrastructure.export.ssam_trj import SsamTrjExporter
+from tratrac.infrastructure.road_graph.json import load_link_zones
 from tratrac.infrastructure.tracks.parquet import TrackObservation, TrackRecording, read_tracks
 from tratrac.infrastructure.world.calibration import compute_homography, load_calibration
 
@@ -76,6 +78,16 @@ def postprocess(
 			dir_okay=False,
 			help="The run's anchor manifest.json (from --anchors-dir); maps zones/correspondences "
 			"authored on an anchor into the global frame. Omit for a static run (identity poses).",
+		),
+	] = None,
+	link_zones: Annotated[
+		Path | None,
+		typer.Option(
+			"--link-zones",
+			exists=True,
+			dir_okay=False,
+			help="Sidecar JSON of image-space Link ID polygons (src/tratrac/domain/road_graph.py); "
+			"surviving observations are classified per-frame and stamped onto VehicleState.link_id.",
 		),
 	] = None,
 	calibration: Annotated[
@@ -134,18 +146,26 @@ def postprocess(
 			recording, exclusion_zones, anchors, exclusion_min_fraction
 		)
 
+	link_ids: dict[tuple[int, int], int] = {}
+	if link_zones is not None:
+		link_ids = _assign_link_ids(recording, link_zones, anchors)
+
 	if calibration is not None:
 		recording, pos_noise, jerk = _project_to_world(
 			recording, calibration, anchors, pos_noise, jerk
 		)
 
 	states_by_frame = _smooth_recording(recording, pos_noise=pos_noise, jerk=jerk)
+	if link_ids:
+		states_by_frame = _apply_link_ids(states_by_frame, link_ids)
 	out.parent.mkdir(parents=True, exist_ok=True)
 	_emit_trj(out, recording, states_by_frame, timestep_precision=timestep_precision)
 
 	notes = []
 	if exclusion_zones is not None:
 		notes.append(f"dropped {dropped} excluded tracks")
+	if link_zones is not None:
+		notes.append(f"assigned link ids to {len(link_ids)} observations")
 	if calibration is not None:
 		notes.append("projected to world coordinates")
 	note = f", {', '.join(notes)}" if notes else ""
@@ -176,6 +196,42 @@ def _filter_excluded(
 	kept = [o for o in recording.observations if o.track_id not in excluded]
 	filtered = TrackRecording(metadata=recording.metadata, scale=recording.scale, observations=kept)
 	return filtered, len(excluded)
+
+
+def _assign_link_ids(
+	recording: TrackRecording, zones_path: Path, anchors_path: Path | None
+) -> dict[tuple[int, int], int]:
+	"""Classify each surviving observation into a Link ID, keyed by ``(track_id, frame_index)``.
+
+	Per-observation, not per-track (src/tratrac/domain/ARCHITECTURE.md / IMPLEMENTATION_PLAN.md
+	Group C1): a vehicle can cross links mid-track, and SSAM's Link ID is a per-VEHICLE-RECORD
+	field. Runs on image-space coordinates (before ``--calibration`` projects them), the same
+	stage exclusion filtering already runs at.
+	"""
+	try:
+		zones = load_link_zones(zones_path)
+		references = read_manifest(anchors_path) if anchors_path is not None else None
+	except (ValueError, OSError) as exc:
+		raise typer.BadParameter(str(exc)) from exc
+
+	polygons = to_global_link_polygons(zones, _pose_for(references))
+	return {
+		(o.track_id, o.frame_index): link_id_for_point(Point2D(o.cx, o.cy), polygons)
+		for o in recording.observations
+	}
+
+
+def _apply_link_ids(
+	states_by_frame: dict[int, list[VehicleState]], link_ids: dict[tuple[int, int], int]
+) -> dict[int, list[VehicleState]]:
+	"""Stamp each smoothed state's ``link_id`` from the pre-smoothing per-observation assignment."""
+	return {
+		frame_index: [
+			replace(state, link_id=link_ids.get((state.vehicle_id, frame_index), 0))
+			for state in states
+		]
+		for frame_index, states in states_by_frame.items()
+	}
 
 
 def _pose_for(references: list[ReferenceFrame] | None) -> Callable[[int], Transform2D]:
