@@ -36,7 +36,7 @@ Video
     ↓
 Stabilization
     ↓
-RT-DETR
+YOLO-OBB (MVP1.5)
     ↓
 BoT-SORT
     ↓

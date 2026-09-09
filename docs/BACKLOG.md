@@ -82,13 +82,13 @@ a streaming path built on the kept `KinematicKalmanFilter` (or a **fixed-lag** m
 
 ---
 
-### 3. Video I/O: cv2 decode → PyAV (+ NVDEC)
+### 3. Video I/O: cv2 decode → TorchCodec (+ NVDEC)
 
 | | |
 | --- | --- |
 | Port | `VideoSource` (`infrastructure/video/opencv.py`, `OpenCvVideoSource`) |
 | Ships with | `cv2.VideoCapture` — decode, `--start`/`--end` seeking (`src/tratrac/infrastructure/video/TIME_WINDOW.md`), and the `cv2.grab()`-without-decode skip used by `--process-fps` (`src/tratrac/infrastructure/TIMESTEP_PRECISION.md`) |
-| Target | PyAV decode, with NVIDIA NVDEC hardware acceleration — `docs/TECH_STACK.md`'s "Video Decoding: NVIDIA NVDEC + PyAV" row |
+| Target | **TorchCodec** decode, with NVIDIA NVDEC hardware acceleration — `docs/TECH_STACK.md`'s Video Decoding row. **Revised from an earlier PyAV-for-decode target** — TorchCodec is PyTorch's own official media library, under active development specifically to replace ad-hoc PyAV/torchaudio usage in PyTorch pipelines, and supports NVDEC directly. Given TraTrac's runtime is already PyTorch, it's the better final target than PyAV for decode; see `docs/TECH_STACK.md` for the comparison and sources. PyAV stays for **encode**, which already shipped and isn't part of this item. |
 | Trigger to upgrade | decode throughput becomes the pipeline bottleneck, or the `mp4v`-style codec gaps below start affecting decode too |
 
 **How this gap was found.** `overlay_video.py`'s writer was found producing overlay
@@ -106,17 +106,21 @@ decode is deferred, and it should stay tracked next time.
 post-hoc tool, so it carries real behavioral risk the writer didn't: `--start`/
 `--end` window seeking and, more importantly, `--process-fps` decimation depends on
 `cv2.grab()` to skip a frame's *full decode* cost, not just discard it after
-decoding. PyAV has no direct one-line equivalent — the same effect needs discarding
-undecoded packets before the decoder, which is a real reimplementation to verify
-against the existing `FrameWindow`/`DecimationGrid` tests, not a drop-in adapter
-swap like the writer was.
+decoding. Neither PyAV nor TorchCodec has a direct one-line equivalent — the same
+effect needs discarding undecoded packets before the decoder, which is a real
+reimplementation to verify against the existing `FrameWindow`/`DecimationGrid`
+tests, not a drop-in adapter swap like the writer was. This risk is unchanged by
+the PyAV→TorchCodec revision above — it was never about which library, only about
+`cv2.grab()`'s specific no-decode-skip behavior.
 
 **Why NVDEC is bundled into the same upgrade, not split further.** `docs/TECH_STACK.md`
-pairs PyAV with NVDEC specifically for the decode *performance* win; adopting PyAV
-for decode without NVDEC gets consistency with the target stack but not the payoff
-the stack entry is actually about, so there's no reason to make it a two-step migration.
+pairs the decode library with NVDEC specifically for the decode *performance* win;
+adopting a new decode library without NVDEC gets consistency with the target stack
+but not the payoff the stack entry is actually about, so there's no reason to make
+it a two-step migration.
 
 **Why it is a clean swap (once done).** `VideoSource` is a Protocol port; replacing
-`OpenCvVideoSource` with a PyAV(+NVDEC) adapter is a single new adapter behind the
-existing seam, same as the other entries in this file — no domain or pipeline change,
-only `FrameWindow`/`DecimationGrid`'s interaction with the new adapter needs re-verifying.
+`OpenCvVideoSource` with a TorchCodec(+NVDEC) adapter is a single new adapter behind
+the existing seam, same as the other entries in this file — no domain or pipeline
+change, only `FrameWindow`/`DecimationGrid`'s interaction with the new adapter needs
+re-verifying.

@@ -6,7 +6,7 @@ Vehicle tracking and trajectory export for cenital / nadir aerial video. The pip
 
 **MVP1.75 and MVP1.9 shipped; MVP2 partially shipped (post-hoc world projection).** Three tools, run in sequence:
 
-1. **`tratrac`** — perception only. Detects (**YOLOv8-VisDrone** by default, aerial-trained; **RT-DETR** exists as an adapter but isn't yet fine-tuned for aerial footage — MVP1.5, still open), tracks (**BoT-SORT**, IoU-only), optionally removes drone ego-motion (MVP1.9, off by default), and writes the raw **track record** — a Parquet file, the pipeline's only output.
+1. **`tratrac`** — perception only. Detects (**YOLOv8-VisDrone** by default, aerial-trained; a fine-tuned **YOLO-OBB** oriented detector is the MVP1.5 target, still open — an unused `rt_detr` adapter also exists, no longer the planned upgrade), tracks (**BoT-SORT**, IoU-only), optionally removes drone ego-motion (MVP1.9, off by default), and writes the raw **track record** — a Parquet file, the pipeline's only output.
 2. **`tratrac-postprocess`** — offline. Optionally filters exclusion zones and optionally projects onto metric world coordinates (MVP2 Approach A: a post-hoc single homography), then runs a Kalman/RTS smoother to reconstruct kinematics and writes the binary **SSAM `.trj`**. This is the only path that produces a `.trj`.
 3. **`tratrac-render`** — optional. Draws the trajectories (and, optionally, validator violations) back onto the source video.
 
@@ -14,7 +14,7 @@ Metric calibration is mandatory, not a default: every run requires either a dire
 
 ### A note on the detector
 
-`docs/TECH_STACK.md` selects RT-DETR over YOLO for long-term aerial robustness. At MVP1 ship the COCO-pretrained RT-DETR was unable to detect aerial cars (it labelled them as `bird` and `traffic light`), and there was no GPU available in the timebox to fine-tune. YOLOv8-VisDrone is wired in as a separate `Detector` adapter behind the same port; RT-DETR coexists unchanged and is selectable via `detector.name = "rt_detr"` in the config. The YOLO override is scheduled for removal in MVP1.5 once a fine-tuned RT-DETR checkpoint exists — see `src/tratrac/infrastructure/detection/DETECTOR_CHOICE.md` for the full plan.
+At MVP1 ship, `docs/TECH_STACK.md` selected RT-DETR over YOLO for long-term aerial robustness, but COCO-pretrained RT-DETR was unable to detect aerial cars (it labelled them as `bird` and `traffic light`), and there was no GPU available in the timebox to fine-tune anything. YOLOv8-VisDrone was wired in as a separate `Detector` adapter behind the same port as an emergency measure; an unused `rt_detr` adapter still exists (selectable via `detector.name = "rt_detr"`) but is no longer the planned upgrade path — research since found RT-DETR doesn't fit this project's nadir-only footage and doesn't support oriented bounding boxes. The YOLO emergency adapter is scheduled for removal in MVP1.5 once a fine-tuned **YOLO-OBB** checkpoint exists instead — see `src/tratrac/infrastructure/detection/DETECTOR_CHOICE.md` for the full, current plan.
 
 See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the full staged roadmap and what's actually shipped vs. planned.
 
@@ -109,7 +109,7 @@ All checked-in code passes ruff + strict mypy. Indentation is tabs.
 - Coordinates are metric only when calibration is given; without world projection (MVP2 Approach A) they're still a single flat plane, not corrected for non-nadir gimbals or multi-level roads (bridges/overpasses need MVP3's multi-homography).
 - Stabilization (MVP1.9) is feature-based ORB, not the target SuperPoint + LightGlue — fine for most footage, but the upgrade is tracked in `docs/BACKLOG.md` if measurement ever shows it's needed.
 - Object shadows on the ground are occasionally detected as separate vehicles — a YOLOv8-VisDrone weakness, not a pipeline bug.
-- No occlusion bridging: BoT-SORT is configured IoU-only with prediction-only tracks dropped from the output. Identity persistence arrives in MVP5 with FastReID.
+- No occlusion bridging: BoT-SORT is configured IoU-only with prediction-only tracks dropped from the output. Identity persistence arrives in MVP5, via DINOv3 appearance embeddings + motion-plausibility gating (not the originally planned FastReID — nadir footage discards too much of what vehicle-ReID models are trained to see; see `src/tratrac/infrastructure/tracking/TRACKER_CHOICE.md`).
 
 ## Roadmap
 

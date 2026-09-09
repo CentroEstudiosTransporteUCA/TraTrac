@@ -19,7 +19,7 @@ checklist draws its "shipped" checkmarks from, and [`BACKLOG.md`](BACKLOG.md) fo
 - [x] Drone ego-motion removed from trajectories, so camera movement isn't mistaken for vehicle movement (MVP1.9)
 - [x] Metric world-space coordinates via post-hoc homography projection for calibrated scenes (MVP2 Approach A)
 - [ ] **Validated against real congress-site footage** — calibration, exclusion zones, smoother tuned until results are demonstrably clean (`validate_trj` compliance)
-- [ ] **Aerial-robust detector** — fine-tuned RT-DETR replacing the YOLOv8 emergency adapter (MVP1.5), time-boxed with a fallback to a tuned YOLOv8 baseline if not clearly ahead by the mid-week checkpoint
+- [ ] **Aerial-robust detector** — fine-tuned YOLO-OBB replacing the YOLOv8 axis-aligned emergency adapter (MVP1.5, replanned from an earlier RT-DETR target — see `src/tratrac/infrastructure/detection/DETECTOR_CHOICE.md`), time-boxed with a fallback to a tuned YOLOv8 baseline if not clearly ahead by the mid-week checkpoint
 
 **— 🏛️ realistic congress-day line — everything above is shipped or targeted for this window; everything below is real production-MVP work that stays open after —**
 
@@ -28,7 +28,7 @@ checklist draws its "shipped" checkmarks from, and [`BACKLOG.md`](BACKLOG.md) fo
 - [ ] Learned ego-motion stabilization — SuperPoint + LightGlue replacing ORB where the cheap estimator measurably struggles (Backlog #1)
 - [ ] Multi-anchor / full world projection for moving, wide-swept drone footage (MVP2 remainder)
 - [ ] Lane-level assignment + lane-change conflict classification (MVP6)
-- [ ] Segmentation-based precise vehicle geometry & orientation — SAM2 (MVP4 remainder)
+- [ ] Segmentation-based precise occupancy footprint — SAM 3, not SAM2 (MVP4 remainder; orientation is no longer this item's job, MVP1.5's OBB detector already provides it)
 - [ ] Link-ID road-segment identity for multi-link scenes (rest of MVP3)
 - [ ] Faster, hardware-accelerated video decode — PyAV + NVDEC (Backlog #3; encode side already shipped)
 - [ ] Production-scale platform: FiftyOne visualization, async pipelines, Docker/CUDA deployment (MVP7 remainder)

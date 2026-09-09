@@ -1,9 +1,13 @@
-# Detector Choice: YOLOv8-VisDrone (MVP1 emergency) vs RT-DETR (MVP1.5, target)
+# Detector Choice: YOLOv8-VisDrone AABB (MVP1 emergency) vs YOLO-OBB (MVP1.5, target)
 
-> **Status — MVP1 ✅ Shipped, MVP1.5 ❌ Open.** The MVP number is a capability ID, not execution
-> order — see the roadmap reconciliation in `docs/ROADMAP.md`. Detection shipped with the
-> YOLOv8-VisDrone *emergency* adapter, not the planned RT-DETR (that swap is MVP1.5, still open,
-> detailed in "MVP1.5 — RT-DETR fine-tune, remove the YOLOv8 emergency adapter" below).
+> **Status — MVP1 ✅ Shipped, MVP1.5 ❌ Open, replanned.** The MVP number is a capability ID, not
+> execution order — see the roadmap reconciliation in `docs/ROADMAP.md`. Detection shipped with
+> the YOLOv8-VisDrone *emergency* axis-aligned-box adapter. **The original MVP1.5 plan (fine-tune
+> RT-DETR) was superseded** after research found RT-DETR doesn't fit this project's nadir-only use
+> case and doesn't support oriented bounding boxes (OBB) — see `docs/TECH_STACK.md`'s Detection
+> section for the full comparison and sources. The replanned MVP1.5, detailed below, fine-tunes a
+> **YOLO-OBB** model instead — same detector *family* as the MVP1 emergency adapter, upgraded to
+> report each vehicle's orientation directly instead of via the downstream EMA-heading hack.
 
 ---
 
@@ -33,14 +37,17 @@ This is the FIRST usable system.
 
 ### Detection override
 
-`docs/TECH_STACK.md` selects RT-DETR for long-term aerial robustness. At MVP1 ship,
+At the time, `docs/TECH_STACK.md` selected RT-DETR for long-term aerial robustness. At MVP1 ship,
 COCO-pretrained RT-DETR-R18 misclassified aerial cars as `bird` and `traffic light`
 (confirmed via `scripts/probe_detector.py`). No GPU was available within the MVP1
 timebox to fine-tune RT-DETR on aerial data, so a community YOLOv8 checkpoint
 trained on VisDrone (`Mahadih534/YoloV8-VisDrone` on HuggingFace) was wired in as
 a parallel `Detector` adapter, defaulted in the CLI. RT-DETR adapter coexists
-unchanged. The YOLO override is contained in a single file and one CLI enum
-value, so removal in MVP1.5 is mechanical:
+unchanged. **That RT-DETR plan has since been superseded** (see the status banner
+above and `docs/TECH_STACK.md`); MVP1.5's replacement is a YOLO-OBB fine-tune, not
+a restoration of RT-DETR. The YOLOv8-VisDrone axis-aligned adapter is still
+contained in a single file and one CLI enum value, so its removal in MVP1.5
+remains mechanical once the OBB adapter is proven:
 
 1. delete `src/tratrac/infrastructure/detection/yolov8_visdrone.py`
 2. drop the `yolov8_visdrone` value from `DetectorChoice` in `cli.py`
@@ -129,11 +136,13 @@ them — the exporter does not change.
 
 ---
 
-# MVP 1.5 — RT-DETR fine-tune, remove the YOLOv8 emergency adapter
+# MVP 1.5 — YOLO-OBB fine-tune, oriented detection replaces the axis-aligned emergency adapter
 
-> **Status — ❌ Skipped (open).** The MVP number is a capability ID, not execution order — see
-> the roadmap reconciliation in `docs/ROADMAP.md`. Leapfrogged by 1.75 + 1.9; this is the
-> open detection-quality upgrade. (Details below.)
+> **Status — ❌ Skipped (open), replanned.** The MVP number is a capability ID, not execution
+> order — see the roadmap reconciliation in `docs/ROADMAP.md`. Leapfrogged by 1.75 + 1.9; this is
+> the open detection-quality upgrade. **This plan replaces an earlier one that targeted a from-scratch
+> RT-DETR fine-tune** — see "Why this replan happened" below and `docs/TECH_STACK.md`'s Detection
+> section for the full comparison and sources.
 
 ## Status
 
@@ -144,44 +153,55 @@ that is its place in the *quality* roadmap, not the order it was delivered.
 
 ## Goal
 
-Replace the MVP1 emergency detector with the detector the tech stack actually
-selected:
+Replace the MVP1 emergency detector with an **oriented-box (OBB) detector**,
+fine-tuned for TraTrac's actual footage regime:
 
-- **Fine-tune RT-DETR** on aerial data (VisDrone and/or UAVDT) so it detects
-  aerial vehicles instead of misclassifying them.
-- **Restore RT-DETR as the default detector.**
-- **Remove the YOLOv8-VisDrone emergency adapter** and its dependencies.
+- **Fine-tune a YOLO-OBB model** (`yolo11-obb` or `yolo26-obb`) on drone-altitude,
+  nadir-matched data so it both detects aerial vehicles reliably *and* reports
+  each vehicle's heading directly, rather than needing it inferred downstream.
+- **Make YOLO-OBB the default detector.**
+- **Remove the YOLOv8-VisDrone axis-aligned emergency adapter** once the OBB
+  adapter is proven.
 
-No change to coordinate semantics, calibration, tracking, or export. MVP1.5
-improves *detection quality only*; everything downstream of the `Detector` port
-is untouched.
+Unlike the original plan, this one **does** change something downstream of
+detection: the orientation pipeline needs to consume the detected angle. See
+"Downstream integration" below — this is not detection-quality-only work.
 
-## Why this MVP exists
+## Why this replan happened
 
-`docs/TECH_STACK.md` chose RT-DETR over YOLO deliberately — aerial
-robustness over raw speed. But at MVP1 ship, COCO-pretrained RT-DETR-R18
-misclassified aerial cars as `bird` and `traffic light` (confirmed via
-`scripts/probe_detector.py`), and no GPU was available within the MVP1 timebox
-to fine-tune. A community YOLOv8 checkpoint trained on VisDrone
-(`Mahadih534/YoloV8-VisDrone`) was wired in as a parallel `Detector` adapter and
-defaulted in the CLI (see "MVP 1" above).
+The original MVP1.5 chose RT-DETR because `docs/TECH_STACK.md` picked it over
+YOLO for "aerial robustness" in general — dense, oblique, cluttered scenes.
+Re-examined against TraTrac's *actual* use case (consistently nadir/cenital
+street video, not arbitrary oblique aerial imagery), that rationale turned out
+to be weaker than assumed, and a bigger problem surfaced: **RT-DETR does not
+support oriented bounding boxes** (confirmed against the Hugging Face
+`transformers` implementation), so it can't solve TraTrac's actual persistent
+weak point — orientation estimation currently relies on an EMA-smoothed-heading
+hack (`OrientationEstimator`) that the validator specifically catches producing
+sudden front/rear flips. An OBB detector reports orientation at detection time,
+solving it at the source. `ultralytics` YOLO has first-class OBB support and is
+already TraTrac's dependency (no new training framework needed), which also
+makes this a materially cheaper integration than the from-scratch HuggingFace
+RT-DETR harness the original plan required. Full comparison, alternatives
+considered, and sources: `docs/TECH_STACK.md`.
 
-MVP1.5 is defined by removing that constraint. Its core deliverable is the
-fine-tuned checkpoint that the MVP1 emergency override was a placeholder for. The
-YOLOv8 path is AGPL-3.0 (`ultralytics`), so its removal also clears a
-distribution-licensing concern (see the dependency notes in `CLAUDE.md`).
+**This reopens the licensing trade-off, it doesn't resolve it.** The original
+plan's other selling point was clearing the AGPL-3.0 `ultralytics` dependency
+(see `CLAUDE.md` Dependency Notes). Staying on `ultralytics` for OBB does not
+clear that — it deepens it. Needs an explicit decision before distribution, not
+a silent carry-over.
 
 ## Technologies
 
 | Component | Technology |
 | --- | --- |
-| Detection | **RT-DETR** (fine-tuned), via HuggingFace `transformers` |
-| Training data | VisDrone and/or UAVDT |
+| Detection | **YOLO-OBB** (`yolo11-obb` or `yolo26-obb`, fine-tuned), via `ultralytics` |
+| Training data | **UAV-OBB** (nadir, 75–108m altitude, already YOLO-OBB label format) — **DroneVehicle** (28K pairs, more robust) if UAV-OBB alone underperforms |
 | Training compute | **GPU required** (the project torch pin is CPU-only today) |
-| Eval | `scripts/probe_detector.py`, `scripts/validate_trj.py` |
+| Eval | `scripts/probe_detector.py` (**currently missing from the repo — must be restored or replaced first**, see below), `scripts/validate_trj.py` |
 
-The RT-DETR adapter (`src/tratrac/infrastructure/detection/rt_detr.py`) already
-exists and coexists with the YOLOv8 one — MVP1.5 makes it the only adapter, not
+The `ultralytics` package is already a TraTrac dependency (the MVP1 emergency
+adapter uses it) — this is a task/checkpoint swap within the same library, not
 a new one.
 
 ## Pipeline
@@ -189,22 +209,40 @@ a new one.
 ```text
 Video
     ↓
-RT-DETR (fine-tuned on aerial data)   ← was: YOLOv8-VisDrone (emergency)
+YOLO-OBB (fine-tuned, oriented boxes)   ← was: YOLOv8-VisDrone axis-aligned (emergency)
     ↓
-BoT-SORT (IoU-only)
+BoT-SORT (OBB-aware tracking — boxmot supports this natively, see TRACKER_CHOICE.md)
     ↓
-Orientation Estimator (unit-aware, from MVP1.75)
+Orientation from detected angle (replaces/supplements the EMA heading estimator)
     ↓
 SSAM .trj Export
 ```
 
-The only pipeline change from MVP1.75 is the detector box.
+## Downstream integration this requires (not detection-quality-only)
+
+Unlike the original RT-DETR plan, this one has real reach beyond the `Detector`
+port:
+
+- `VehicleState`/the orientation pipeline needs to accept a per-detection angle
+  instead of, or blended with, the EMA-smoothed heading estimate — this is
+  where the actual payoff is, so it should be designed properly rather than
+  bolted on.
+- Tracking: `boxmot` natively supports OBB tracking (confirmed, not assumed —
+  see `TRACKER_CHOICE.md`), so the oriented box can survive into the track
+  rather than being collapsed to an axis-aligned box first.
 
 ## Work breakdown
 
-The milestone decomposes into three parts of very different character. **They
-must land in this order** — the YOLOv8 scaffolding is the only working detector
-until A+B are proven, so removing it first would leave no detector.
+The milestone decomposes into parts of very different character. **They must
+land in this order** — the YOLOv8 scaffolding is the only working detector
+until the OBB adapter is proven, so removing it first would leave no detector.
+
+### Part 0 — Restore the eval tool (blocks everything else)
+
+`scripts/probe_detector.py` is referenced throughout this doc and the original
+plan as the tool that validates detector quality before/after a swap, but it
+does not currently exist in the repo. Credible before/after comparison for this
+MVP depends on it (or an equivalent) existing first.
 
 ### Part A — Train the model (the real deliverable; currently undocumented)
 
@@ -214,35 +252,34 @@ This is where MVP1.5 actually lives, and the repo provides no harness for it.
    `torchvision` to the CPU wheel index; fine-tuning on CPU is impractical.
    Switching to a CUDA index is a prerequisite (both packages must come from the
    same index or `torchvision::nms` won't register — see `CLAUDE.md`).
-2. **Acquire and prepare the dataset** — VisDrone and/or UAVDT, converted to the
-   format the RT-DETR training loop expects.
-3. **Fine-tune RT-DETR** on aerial vehicle classes, producing a checkpoint.
-4. **Validate it beats the YOLOv8 baseline** on representative aerial footage,
-   using `scripts/probe_detector.py` (the same tool that confirmed COCO RT-DETR
-   was broken) and end-to-end `.trj` quality via `scripts/validate_trj.py`.
-5. **Publish/store the checkpoint** where the adapter can load it — an HF repo
-   id (`--checkpoint`) or a local weights file.
+2. **Acquire the UAV-OBB dataset** (Mendeley Data) — already in YOLO-OBB label
+   format, so no conversion step is needed, unlike the original VisDrone-for-RT-DETR
+   plan. Layer in DroneVehicle if more data/robustness is needed.
+3. **Fine-tune** `yolo11-obb`/`yolo26-obb` (Ultralytics-pretrained on DOTA as a
+   starting point — note DOTA is satellite/very-high-altitude imagery, a real
+   domain gap from drone altitude, so treat it as initialization, not a
+   substitute for fine-tuning on UAV-OBB/DroneVehicle) on the vehicle classes.
+4. **Validate it beats the YOLOv8-VisDrone axis-aligned baseline** on
+   representative real footage, using `scripts/probe_detector.py` (Part 0) and
+   end-to-end `.trj` quality via `scripts/validate_trj.py`.
+5. **Publish/store the checkpoint** where the adapter can load it.
 
 > The fine-tuning + eval workflow is not yet designed. Treat its design as a
 > sub-task of this MVP; do not assume a training script exists.
 
-### Part B — Adapt the RT-DETR adapter to the new classes (required, not yet noted elsewhere)
+### Part B — Build the YOLO-OBB adapter and class mapping (required, not yet noted elsewhere)
 
-`rt_detr.py` is currently **hardwired to COCO label strings**: it maps
-detections through `_COCO_LABEL_TO_VEHICLE_CLASS` keyed on `"car"`,
-`"motorcycle"`, `"bus"`, `"truck"`, read from `model.config.id2label`.
+No OBB adapter exists yet behind the `Detector` port — this is new code, not a
+modification of `rt_detr.py` (which stays as an unused axis-aligned option, see
+"Open questions"). It needs to:
 
-A VisDrone/UAVDT-fine-tuned model emits **different class indices and label
-strings**. So MVP1.5 requires:
-
-- Rewriting the label → `VehicleClass` mapping to match the fine-tuned model's
-  `id2label`.
-- Deciding how aerial-dataset classes that have no COCO equivalent collapse into
-  the `VehicleClass` enum. VisDrone, for example, distinguishes `car`, `van`,
-  `truck`, `bus`, plus non-vehicle and `tricycle`/`awning-tricycle` classes.
-
-This is the seam where Part A meets the codebase. Neither "MVP 1" above nor
-the removal note below currently mention it.
+- Wrap `ultralytics`'s OBB task (distinct from its detection task) and surface
+  the per-detection orientation angle, not just a box.
+- Map UAV-OBB's six classes (`bike`, `bus`, `car`, `other_vehicle`, `taxi`,
+  `truck`) — or DroneVehicle's five (`car`, `truck`, `bus`, `van`,
+  `freight-car`) if that dataset is used — into TraTrac's `VehicleClass` enum,
+  the same *kind* of mapping work the original RT-DETR plan required, against a
+  better-matched taxonomy this time.
 
 ### Part C — Remove the YOLOv8 emergency scaffolding (mechanical; do last)
 
@@ -251,21 +288,21 @@ note predates the zero-defaults config refactor (`src/tratrac/application/CONFIG
 set:
 
 - **Delete** `src/tratrac/infrastructure/detection/yolov8_visdrone.py`.
-- **`uv remove ultralytics dill`** (`dill` exists only because the YOLOv8
-  checkpoint was pickled with it).
+- **`uv remove dill`** (existed only because the YOLOv8-VisDrone checkpoint was
+  pickled with it). **`ultralytics` itself is NOT removed** — the OBB adapter
+  still needs it, unlike the original plan where RT-DETR would have let it go.
 - `application/config.py` — drop `YOLOV8_VISDRONE` from `DetectorChoice` and
-  update its docstring.
+  update its docstring; add the new OBB choice.
 - `application/config.py` — `_resolve_detector_name` currently **defaults to
-  `YOLOV8_VISDRONE`** when unset. Post-removal this must default to `RT_DETR` —
-  or, better, be reconsidered, since a silent detector default sits oddly against
-  the project's zero-defaults stance (`src/tratrac/application/CONFIG_DESIGN.md`). Decide
-  explicitly.
+  `YOLOV8_VISDRONE`** when unset. Post-removal this must default to the new
+  OBB choice — or, better, be reconsidered, since a silent detector default
+  sits oddly against the project's zero-defaults stance
+  (`src/tratrac/application/CONFIG_DESIGN.md`). Decide explicitly.
 - `application/config.py` — the `DetectorConfig.filename` field exists only for
   the YOLOv8 adapter (`detector.filename`, "yolov8_visdrone only"). Decide
-  whether to drop it.
-- `cli.py` — remove the `YoloV8VisDroneDetector` import, its `DetectorChoice`
-  construction branch, and (pending the decision above) the `--checkpoint-file`
-  flag and `detector.filename` config key.
+  whether to drop it or repurpose it for the OBB checkpoint.
+- `cli.py` — remove the `YoloV8VisDroneDetector` import and its `DetectorChoice`
+  construction branch.
 - `tests/` — remove or update any test referencing the YOLOv8 adapter or the
   `yolov8_visdrone` choice.
 - Docs — update `CLAUDE.md` (repository status, roadmap, dependency notes) and
@@ -275,40 +312,46 @@ set:
 
 ### Added
 
-- Aerial-robust detection from the architecturally-chosen detector.
-- Removal of the AGPL `ultralytics` runtime dependency.
+- Nadir-matched, aerial-robust detection.
+- Per-vehicle orientation from the detector itself, not an EMA heuristic.
 
-### Unchanged from MVP1.75
+### Unchanged
 
-- Tracking (still IoU-only BoT-SORT, no ReID — that is MVP5).
+- Tracking algorithm (still BoT-SORT, IoU-only appearance branch — ReID is MVP5).
 - Coordinate semantics and metric calibration (MVP1.75).
 - SSAM `.trj` structure and the export contract.
+- The AGPL `ultralytics` dependency stays (see "Why this replan happened" above).
 
 ### Still missing (later MVPs)
 
-- World-space coordinates / stabilisation (MVP2).
+- World-space coordinates / stabilisation (MVP2, partially shipped — see `application/WORLD_PROJECTION.md`).
 - Long-term identity persistence / ReID (MVP5).
 
 ## Acceptance criteria
 
 This MVP is done when:
 
-- A fine-tuned RT-DETR checkpoint detects aerial vehicles on representative
-  footage and **measurably outperforms** the YOLOv8-VisDrone baseline (via
-  `scripts/probe_detector.py` per-frame detections and `scripts/validate_trj.py`
-  end-to-end compliance).
-- RT-DETR is the default detector, and its adapter maps the fine-tuned model's
-  classes correctly to `VehicleClass`.
-- The YOLOv8 adapter, the `yolov8_visdrone` enum value, and the `ultralytics` /
-  `dill` dependencies are removed, with the full cleanup-site list above
-  addressed.
+- `scripts/probe_detector.py` exists again and confirms the fine-tuned
+  YOLO-OBB checkpoint **measurably outperforms** the YOLOv8-VisDrone axis-aligned
+  baseline, corroborated by `scripts/validate_trj.py` end-to-end compliance.
+- YOLO-OBB is the default detector, its adapter maps the fine-tuned model's
+  classes correctly to `VehicleClass`, and its orientation angle flows into
+  `VehicleState` instead of (or blended with) the EMA heading estimate.
+- The YOLOv8-VisDrone axis-aligned adapter, the `yolov8_visdrone` enum value,
+  and the `dill` dependency are removed, with the full cleanup-site list above
+  addressed. `ultralytics` itself stays.
 - `uv run ruff format .`, `uv run ruff check .`, `uv run mypy`, and
   `uv run pytest` all pass.
 - `CLAUDE.md` and this file reflect that the emergency override is gone.
 
 ## Open questions (resolve before starting)
 
-- **Is a GPU available now?** It gates Part A entirely.
-- **VisDrone, UAVDT, or both?** Affects class taxonomy and the Part B mapping.
+- **What happens to the unused `rt_detr.py` adapter?** It's not part of this
+  plan anymore. Keep it as a dormant alternative behind the `Detector` port, or
+  remove it as dead code — a call for whoever picks this up, not decided here.
+
+- **UAV-OBB alone, or layer in DroneVehicle too?** Affects class taxonomy (six
+  classes vs. five) and training time — start with UAV-OBB (small, fast, exact
+  altitude match) and only add DroneVehicle if it underperforms.
 - **What is the design of the fine-tuning + eval workflow?** No harness exists;
   this needs its own design pass.

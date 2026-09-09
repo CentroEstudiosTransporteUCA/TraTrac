@@ -144,7 +144,7 @@ Video
     ↓
 Stabilization
     ↓
-RT-DETR
+YOLO-OBB (MVP1.5)
     ↓
 BoT-SORT
     ↓
@@ -402,6 +402,22 @@ for a static camera):
     { "reference_frame": 0, "image": [1900, 642], "world": [12.0, 0.0] }
 ] }
 ```
+
+### Frontier upgrade: automatic calibration from road geometry
+
+The operator workflow above requires manually clicking image↔world correspondence points —
+`URBAn/docs/PRODUCTION_MVP.md` already flags this as a UX gap (hand-authored JSON). A May 2026
+pipeline demonstrates deriving the road-plane homography **automatically from visible road
+geometry** — lane markings, road borders, crosswalks — instead of manual correspondences. Its
+caveats match what this doc already documents independently, not new information: far-field
+vehicles are most sensitive to homography error, and manual validation currently outperforms
+fully-automatic calibration. So this is a real path to reducing operator burden (auto-propose
+correspondences, operator confirms/adjusts rather than authoring from scratch), not a
+replacement for operator validation — the single-homography math itself (confirmed against the
+literature as still the right approach for piecewise-planar road surfaces, no qualitatively
+better alternative exists) is unchanged. See `docs/TECH_STACK.md`'s Geometry section.
+
+**Source:** [Mobile Traffic Camera Calibration from Road Geometry for UAV-Based Traffic Surveillance (2026)](https://arxiv.org/abs/2605.11900)
 
 ### SSAM output frame (world-extent normalization)
 

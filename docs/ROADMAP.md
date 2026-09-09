@@ -61,14 +61,14 @@ per-MVP files carry a **Status** banner; this is the single reconciliation of pl
 
 | MVP | Capability | Status |
 | --- | --- | --- |
-| 1 | Detection + tracking + image-space SSAM `.trj` | ✅ **Shipped** — with the YOLOv8-VisDrone *emergency* detector, not the planned RT-DETR |
-| 1.5 | Fine-tune RT-DETR, remove YOLOv8 | ❌ **Skipped** (leapfrogged by 1.75 + 1.9) |
+| 1 | Detection + tracking + image-space SSAM `.trj` | ✅ **Shipped** — with the YOLOv8-VisDrone *emergency* detector, not the originally planned RT-DETR |
+| 1.5 | Fine-tune an aerial-robust detector, remove the YOLOv8 emergency adapter | ❌ **Skipped** (leapfrogged by 1.75 + 1.9) — **replanned**: target is now a YOLO-OBB fine-tune, not RT-DETR (see `src/tratrac/infrastructure/detection/DETECTOR_CHOICE.md`) |
 | 1.75 | Metric sizes/speeds from drone GSD | ✅ **Shipped** |
 | 1.9 | ORB ego-motion stabilization | ✅ **Shipped** (optional, off by default) |
 | 2 | Single-homography **world projection** | 🟡 **Partially shipped** — post-hoc single-homography projection (Approach A) lives in `tratrac-postprocess --calibration`; SSAM positions can now be metric world coords. Deferred: SuperPoint+LightGlue stabilization (ORB still does ego-motion) and the multi-anchor projector (C/D). See `src/tratrac/application/WORLD_PROJECTION.md`. |
 | 3 | Multi-homography + Link ID | ❌ Not started |
-| 4 | SAM2 segmentation; **dual export begins** | 🟡 **Partially pulled forward** — the dual-export "B-first" architecture is already core; SAM2 not started |
-| 5 | FastReID identity persistence | ❌ Not started |
+| 4 | Segmentation-derived occupancy geometry (target: SAM 3, not SAM2); **dual export begins** | 🟡 **Partially pulled forward** — the dual-export "B-first" architecture is already core; segmentation not started, and its scope narrowed now that MVP1.5's OBB detector already reports orientation (see `docs/roadmap/mvp4.md`) |
+| 5 | Long-term identity persistence (target: DINOv3 ReID + motion-plausibility gating, not FastReID) | ❌ Not started (see `docs/roadmap/mvp5.md`) |
 | 6 | Lane graph + Lane ID | ❌ Not started |
 | 7 | **Parquet storage** + FiftyOne + Docker | 🟡 **Partially pulled forward** — Parquet is the canonical record; FiftyOne/Docker not started |
 
