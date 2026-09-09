@@ -4,7 +4,7 @@ The pure side of MVP2 world projection (``src/tratrac/application/WORLD_PROJECTI
 fitted in infrastructure (cv2); here we only *apply* it — a 3x3 projective multiply plus
 the perspective divide — so this stays numpy-only and onion-clean.
 
-Three impls today:
+Four impls today:
 
 * ``IdentityWorldProjector`` — the Null Object: returns the point unchanged (image-space,
   the pre-MVP2 behavior; the projection step is simply not applied).
@@ -12,9 +12,14 @@ Three impls today:
   scene; ignores ``frame_index``.
 * ``PerAnchorWorldProjector`` (Group C3, ``docs/IMPLEMENTATION_PLAN.md``) — one homography per
   keyframe anchor, selected by ``frame_index``, for a wide-swept scene where no single
-  homography covers the whole clip. The fitter (grouping correspondences by anchor, one
-  ``cv2`` fit per group) lives in ``cli_postprocess.py``, alongside ``SingleHomographyProjector``'s
-  existing fitter — this module only applies an already-fitted matrix.
+  homography covers the whole clip.
+* ``MultiHomographyWorldProjector`` (Group C5 / MVP3, ``docs/roadmap/mvp3.md``) — one homography
+  per **elevation plane** (ground, bridge, overpass, ...), selected by classifying the point
+  itself against the plane zones — orthogonal to ``PerAnchorWorldProjector``'s selection by
+  *when* (``frame_index``): this one selects by *where* (spatial, independent of time).
+
+Every fitter (grouping correspondences by anchor or by plane, one ``cv2`` fit per group) lives
+in ``cli_postprocess.py`` — this module only applies an already-fitted matrix.
 """
 
 from __future__ import annotations
@@ -25,6 +30,7 @@ import math
 import numpy as np
 from numpy.typing import NDArray
 
+from tratrac.application.road_graph import GlobalLabeledPolygon, plane_id_for_point
 from tratrac.domain.geometry import Point2D
 from tratrac.domain.ports import WorldProjector
 
@@ -100,6 +106,47 @@ class PerAnchorWorldProjector:
 			return frames[-1]
 		before, after = frames[i - 1], frames[i]
 		return before if frame_index - before <= after - frame_index else after
+
+
+class MultiHomographyWorldProjector:
+	"""``WorldProjector`` picking a homography by classifying the point against plane zones.
+
+	``homographies_by_plane`` maps each plane id to the homography fitted from correspondences
+	classified into it; ``global_plane_polygons`` are the same plane zones (already mapped into
+	the global frame, see ``application/road_graph.to_global_plane_polygons``) used to fit them,
+	so a point and the correspondences that determined its plane's homography are classified by
+	the exact same rule. ``frame_index`` is ignored — plane membership is spatial, not temporal
+	(contrast ``PerAnchorWorldProjector``, which selects by *when*; this selects by *where*).
+
+	Raises ``ValueError`` from ``to_world`` if a point classifies into a plane with no fitted
+	homography — e.g. the plane zones don't fully cover the scene and a point falls into the
+	``0`` (unassigned) default with no ``plane_id: 0`` calibration group. Failing loudly here
+	is deliberate: silently guessing a "closest" plane would produce a plausible-looking but
+	physically wrong projection, and there's no principled way to decide "closest" for an
+	elevation surface which vehicles can't otherwise be evaluated against.
+	"""
+
+	def __init__(
+		self,
+		homographies_by_plane: dict[int, NDArray[np.float64]],
+		global_plane_polygons: tuple[GlobalLabeledPolygon, ...],
+	) -> None:
+		if not homographies_by_plane:
+			raise ValueError("MultiHomographyWorldProjector needs at least one plane homography.")
+		self._by_plane = dict(homographies_by_plane)
+		self._global_plane_polygons = global_plane_polygons
+
+	def to_world(self, point: Point2D, frame_index: int) -> Point2D:
+		del frame_index  # plane membership is spatial, not temporal
+		plane_id = plane_id_for_point(point, self._global_plane_polygons)
+		matrix = self._by_plane.get(plane_id)
+		if matrix is None:
+			raise ValueError(
+				f"point {point} classified into plane {plane_id}, which has no fitted "
+				"homography; check the plane zones cover the whole scene and the "
+				"calibration has correspondences for every plane."
+			)
+		return _apply_homography(matrix, point)
 
 
 def local_scale_at(projector: WorldProjector, point: Point2D, frame_index: int = 0) -> float:

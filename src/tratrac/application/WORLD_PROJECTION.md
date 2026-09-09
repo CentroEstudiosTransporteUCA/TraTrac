@@ -1,18 +1,24 @@
 # World Projection — MVP 2 (Coordinate Systems + Approach A)
 
-> **Status — 🟡 Partially shipped (world projection + multi-anchor landed; stabilization upgrade
-> deferred).** The MVP number is a capability ID, not execution order — see the roadmap
-> reconciliation in `docs/ROADMAP.md`. **World projection** is implemented as a **post-hoc
-> homography** in `tratrac-postprocess` — see "Implementation (Approach A — shipped)" below.
-> **Multi-anchor projection** (`docs/IMPLEMENTATION_PLAN.md` Group C3) has also landed:
-> `PerAnchorWorldProjector` (`application/world_projection.py`) fits one homography per anchor
-> and picks the nearest one by frame-index distance (not interpolated between neighbors — see
-> its docstring for why); `cli_postprocess.py`'s `_fit_projector` dispatches to it automatically
-> when a calibration's correspondences span more than one `reference_frame`, falling back to the
-> original single-homography path unchanged for one anchor. The one piece still **not** done: the
-> SuperPoint + LightGlue stabilization upgrade (MVP1.9's ORB still does ego-motion;
-> `docs/BACKLOG.md` item 1). With both landed, SSAM positions can be metric world coordinates for
-> wide-swept, many-anchor scenes, not just bounded ones.
+> **Status — 🟡 Partially shipped (world projection + multi-anchor + multi-homography/plane
+> landed; stabilization upgrade deferred).** The MVP number is a capability ID, not execution
+> order — see the roadmap reconciliation in `docs/ROADMAP.md`. **World projection** is
+> implemented as a **post-hoc homography** in `tratrac-postprocess` — see "Implementation
+> (Approach A — shipped)" below. **Multi-anchor projection** (`docs/IMPLEMENTATION_PLAN.md`
+> Group C3) has also landed: `PerAnchorWorldProjector` (`application/world_projection.py`) fits
+> one homography per anchor and picks the nearest one by frame-index distance (not interpolated
+> between neighbors — see its docstring for why); `cli_postprocess.py`'s `_fit_projector`
+> dispatches to it automatically when a calibration's correspondences span more than one
+> `reference_frame`, falling back to the original single-homography path unchanged for one
+> anchor. **Multi-homography plane projection** (MVP3, Group C5) has landed too:
+> `MultiHomographyWorldProjector` selects a homography by classifying the point itself against
+> elevation-plane zones (`--plane-zones`, `application/ROAD_GRAPH.md`) — spatial selection,
+> orthogonal to `PerAnchorWorldProjector`'s temporal (`frame_index`) selection; the two are not
+> composed (a calibration spanning both multiple anchors and multiple planes pools an anchor's
+> correspondences per plane regardless of anchor, a known, documented limitation). The one piece
+> still **not** done: the SuperPoint + LightGlue stabilization upgrade (MVP1.9's ORB still does
+> ego-motion; `docs/BACKLOG.md` item 1). With all landed, SSAM positions can be metric world
+> coordinates for wide-swept, many-anchor, grade-separated scenes, not just bounded flat ones.
 
 ---
 
@@ -79,7 +85,11 @@ Meaning:
 - SSAM may still parse the file
 - but the analytics become scientifically invalid
 
-### Multi-Homography Geometry (future — MVP3)
+### Multi-Homography Geometry — landed (Group C5, MVP3)
+
+> See "Multi-homography plane projection — landed (Group C5)" further below for the shipped
+> `MultiHomographyWorldProjector` design. The rationale below (why single-homography breaks for
+> grade separation, why not full 3D) is unchanged by that landing.
 
 #### Why
 
@@ -394,6 +404,37 @@ an anchor boundary mid-life gets a slightly-off noise model near the switch. Rev
 `scripts/validate_trj.py` shows this mattering in practice. Full pose-interpolated control
 regions (the "Approach D" end of the original comparison) remain unimplemented — the nearest-
 anchor hard switch was judged sufficient unless real footage shows a visible seam.
+
+### Multi-homography plane projection — landed (Group C5, MVP3)
+
+`MultiHomographyWorldProjector` (`application/world_projection.py`) selects a homography by
+**spatially classifying the point itself** against elevation-plane zones (ground, bridge,
+overpass, ...; `--plane-zones`, `application/ROAD_GRAPH.md`), rather than by `frame_index` —
+plane membership is *where* a point is, not *when* it was observed, which is why this is a
+genuinely different selection axis from `PerAnchorWorldProjector`, not a variant of it:
+
+- Fitting (`cli_postprocess._fit_multi_homography_projector`) classifies each calibration
+  correspondence's global-mapped image point against the same plane zones the projector will
+  later use, groups correspondences by the resulting plane id, and fits one `H` per group —
+  the same "classify with the exact rule the consumer will use" principle
+  `application/ROAD_GRAPH.md` uses for Link/Lane, just feeding a homography selector instead of
+  a `VehicleState` field.
+- `0` is **not** a reserved "unknown" sentinel for plane ids the way it is for Link/Lane — it's
+  a legitimate label (e.g. the ground plane), since plane assignment is purely internal
+  (never written into `VehicleState`) and a projector must resolve *some* homography for every
+  point, so there's no safe place to default to "unclassified." A point that falls outside
+  every explicit plane zone still needs a `plane_id: 0` calibration group to be projectable;
+  `MultiHomographyWorldProjector.to_world` raises clearly, naming the plane id, rather than
+  guessing a "closest" plane — there's no principled distance metric between elevation
+  surfaces the way there is between anchors in time.
+- `--plane-zones` requires `--calibration` and **supersedes** the anchor-based dispatch in
+  `_fit_projector` entirely when given — a calibration spanning both multiple anchors and
+  multiple planes at once is not composed; an anchor's correspondences are pooled per plane
+  regardless of which anchor they came from. This is a real, documented limitation, not a
+  silently-swept edge case: a moving-drone shoot over a grade-separated site needs one or the
+  other landing (Group C3/C5 combined) to be fully served, which is unstarted.
+- Same `pos_noise`/`jerk` averaging caveat as the per-anchor path (see above) — a track
+  crossing a plane boundary mid-life gets a slightly-off noise model near the switch.
 
 ### Operator workflow
 

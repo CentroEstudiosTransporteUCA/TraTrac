@@ -65,11 +65,11 @@ per-MVP files carry a **Status** banner; this is the single reconciliation of pl
 | 1.5 | Fine-tune an aerial-robust detector, remove the YOLOv8 emergency adapter | ❌ **Skipped** (leapfrogged by 1.75 + 1.9) — **replanned**: target is now a YOLO-OBB fine-tune, not RT-DETR (see `src/tratrac/infrastructure/detection/DETECTOR_CHOICE.md`) |
 | 1.75 | Metric sizes/speeds from drone GSD | ✅ **Shipped** |
 | 1.9 | ORB ego-motion stabilization | ✅ **Shipped** (optional, off by default) |
-| 2 | Single-homography **world projection** | 🟡 **Partially shipped** — post-hoc single-homography projection (Approach A) lives in `tratrac-postprocess --calibration`; SSAM positions can now be metric world coords. Deferred: SuperPoint+LightGlue stabilization (ORB still does ego-motion) and the multi-anchor projector (C/D). See `src/tratrac/application/WORLD_PROJECTION.md`. |
-| 3 | Multi-homography + Link ID | ❌ Not started |
+| 2 | Single-homography **world projection** | 🟡 **Partially shipped** — post-hoc single-homography projection (Approach A) *and* the multi-anchor projector (`PerAnchorWorldProjector`, Group C3) live in `tratrac-postprocess --calibration`; SSAM positions can now be metric world coords for wide-swept, many-anchor scenes too. Deferred: SuperPoint+LightGlue stabilization (ORB still does ego-motion). See `src/tratrac/application/WORLD_PROJECTION.md`. |
+| 3 | Multi-homography + Link ID | 🟡 **Partially shipped** — Link ID (Strategy A hand-drawn polygons, Group C1) and multi-homography plane-assignment projection (`MultiHomographyWorldProjector`, Group C5) have both landed in `tratrac-postprocess` (`--link-zones`/`--plane-zones`). Still depends on MVP1.5's OBB detector for the full pipeline diagram in `docs/roadmap/mvp3.md`; automatic/assisted plane-and-link authoring (Group C4) is unstarted and has an open repo-boundary question with URBAn. |
 | 4 | Segmentation-derived occupancy geometry (target: SAM 3, not SAM2); **dual export begins** | 🟡 **Partially pulled forward** — the dual-export "B-first" architecture is already core; segmentation not started, and its scope narrowed now that MVP1.5's OBB detector already reports orientation (see `docs/roadmap/mvp4.md`) |
 | 5 | Long-term identity persistence (target: DINOv3 ReID + motion-plausibility gating, not FastReID) | ❌ Not started (see `docs/roadmap/mvp5.md`) |
-| 6 | Lane graph + Lane ID | ❌ Not started |
+| 6 | Lane graph + Lane ID | 🟡 **Partially shipped** — Lane ID (Strategy A hand-drawn polygons, Group C2) landed in `tratrac-postprocess --lane-zones`, mirroring Link ID. Lane *graph* sourcing (Strategies B/C, `docs/roadmap/road_topology.md`) and lane-change conflict classification (a downstream SSAM-reader concern) are unstarted. |
 | 7 | **Parquet storage** + FiftyOne + Docker | 🟡 **Partially pulled forward** — Parquet is the canonical record; FiftyOne/Docker not started |
 
 **Pulled forward, out of ladder order:** Parquet storage (7) and the dual-export "B-first"

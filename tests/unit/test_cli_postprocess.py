@@ -32,10 +32,10 @@ _HALF_SCALE_CALIBRATION = {
 }
 
 
-def _tracked(x: float, y: float) -> TrackedDetection:
+def _tracked(x: float, y: float, *, track_id: int = 1) -> TrackedDetection:
 	# bbox top-left (x, y), size 4x2 -> centre (x + 2, y + 1).
 	return TrackedDetection(
-		track_id=1,
+		track_id=track_id,
 		detection=Detection(
 			bbox=BoundingBox(x=x, y=y, width=4.0, height=2.0),
 			score=0.9,
@@ -52,9 +52,17 @@ def _write_record(path: Path, *, scale: float) -> None:
 
 
 def _centroid_at(trj_path: Path, frame_index: int) -> tuple[float, float]:
-	"""The track's centroid at an interior frame, away from filter transients."""
+	"""The (sole) track's centroid at an interior frame, away from filter transients."""
 	state = read_trj(trj_path).frames[frame_index].states[0]
 	return state.centroid.x, state.centroid.y
+
+
+def _centroid_for(trj_path: Path, frame_index: int, vehicle_id: int) -> tuple[float, float]:
+	"""One of several tracks' centroid at an interior frame, by vehicle id."""
+	for state in read_trj(trj_path).frames[frame_index].states:
+		if state.vehicle_id == vehicle_id:
+			return state.centroid.x, state.centroid.y
+	raise AssertionError(f"vehicle {vehicle_id} not found at frame {frame_index}")
 
 
 class TestPostprocessCalibration:
@@ -169,6 +177,96 @@ class TestPostprocessCalibration:
 		# 10 px/frame at 0.5 m/px near anchor 0, at 0.25 m/px near anchor 9.
 		assert near_anchor_0 == pytest.approx(5.0, abs=0.5)
 		assert near_anchor_9 == pytest.approx(2.5, abs=0.5)
+
+	def test_plane_zones_fit_one_homography_per_plane(self, tmp_path: Path) -> None:
+		# Track 1 stays on the "ground" plane (x in [0,100]); track 2 stays on the "bridge"
+		# plane (x in [200,300]) — a stand-in for a grade-separated scene (MVP3). Each plane
+		# gets its own scale: ground half-scale, bridge quarter-scale.
+		record = tmp_path / "tracks.parquet"
+		out = tmp_path / "planes.trj"
+		calibration = tmp_path / "calibration.json"
+		planes = tmp_path / "planes.json"
+		with ParquetTrackSink(record, _META, scale=1.0) as sink:
+			for frame in range(6):
+				sink.record(
+					frame,
+					[
+						_tracked(x=10.0 * frame, y=50.0, track_id=1),
+						_tracked(x=210.0 + 10.0 * frame, y=250.0, track_id=2),
+					],
+				)
+		# Zones are padded a few pixels beyond the correspondence square so the corner
+		# correspondences (exactly on [0,100]/[200,300]) fall unambiguously inside, not on
+		# the boundary where point-in-polygon's ray casting is degenerate.
+		planes.write_text(
+			json.dumps(
+				{
+					"plane_zones": [
+						{
+							"plane_id": 0,
+							"vertices": [[-10, -10], [110, -10], [110, 110], [-10, 110]],
+						},
+						{
+							"plane_id": 1,
+							"vertices": [[190, 190], [310, 190], [310, 310], [190, 310]],
+						},
+					]
+				}
+			)
+		)
+		calibration.write_text(
+			json.dumps(
+				{
+					"correspondences": [
+						{"image": [0, 0], "world": [0.0, 0.0]},
+						{"image": [100, 0], "world": [50.0, 0.0]},
+						{"image": [100, 100], "world": [50.0, 50.0]},
+						{"image": [0, 100], "world": [0.0, 50.0]},
+						{"image": [200, 200], "world": [50.0, 50.0]},
+						{"image": [300, 200], "world": [75.0, 50.0]},
+						{"image": [300, 300], "world": [75.0, 75.0]},
+						{"image": [200, 300], "world": [50.0, 75.0]},
+					]
+				}
+			)
+		)
+
+		result = CliRunner().invoke(
+			app,
+			[
+				str(record),
+				"--out",
+				str(out),
+				"--calibration",
+				str(calibration),
+				"--plane-zones",
+				str(planes),
+			],
+		)
+		assert result.exit_code == 0, result.output
+
+		ground_dx = _centroid_for(out, 3, 1)[0] - _centroid_for(out, 2, 1)[0]
+		bridge_dx = _centroid_for(out, 3, 2)[0] - _centroid_for(out, 2, 2)[0]
+		# 10 px/frame at 0.5 m/px on the ground plane, at 0.25 m/px on the bridge plane.
+		assert ground_dx == pytest.approx(5.0, abs=0.5)
+		assert bridge_dx == pytest.approx(2.5, abs=0.5)
+
+	def test_plane_zones_without_calibration_is_an_error(self, tmp_path: Path) -> None:
+		record = tmp_path / "tracks.parquet"
+		out = tmp_path / "out.trj"
+		planes = tmp_path / "planes.json"
+		_write_record(record, scale=1.0)
+		planes.write_text(
+			json.dumps({"plane_zones": [{"plane_id": 0, "vertices": [[0, 0], [1, 0], [0, 1]]}]})
+		)
+
+		result = CliRunner().invoke(
+			app, [str(record), "--out", str(out), "--plane-zones", str(planes)]
+		)
+		assert result.exit_code != 0
+		# rich highlights each "--flag" with interleaved ANSI codes, splitting a plain
+		# "--calibration" substring, hence the dash-less match (mirrors the --force test above).
+		assert "calibration" in result.output
 
 	def test_calibration_scales_metric_dimensions(self, tmp_path: Path) -> None:
 		record = tmp_path / "tracks.parquet"

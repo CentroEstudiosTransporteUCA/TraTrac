@@ -38,11 +38,14 @@ from tratrac.application.exclusion import excluded_track_ids, to_global_polygons
 from tratrac.application.road_graph import (
 	lane_id_for_point,
 	link_id_for_point,
+	plane_id_for_point,
 	to_global_lane_polygons,
 	to_global_link_polygons,
+	to_global_plane_polygons,
 )
 from tratrac.application.track_smoothing import TrackSample, smooth_to_states
 from tratrac.application.world_projection import (
+	MultiHomographyWorldProjector,
 	PerAnchorWorldProjector,
 	SingleHomographyProjector,
 	local_scale_at,
@@ -57,7 +60,11 @@ from tratrac.infrastructure.anchors.manifest import ReferenceFrame, read_manifes
 from tratrac.infrastructure.exclusion.json import load_exclusion_zones
 from tratrac.infrastructure.export.decimating import DecimatingTrajectoryExporter
 from tratrac.infrastructure.export.ssam_trj import SsamTrjExporter
-from tratrac.infrastructure.road_graph.json import load_lane_zones, load_link_zones
+from tratrac.infrastructure.road_graph.json import (
+	load_lane_zones,
+	load_link_zones,
+	load_plane_zones,
+)
 from tratrac.infrastructure.tracks.parquet import TrackObservation, TrackRecording, read_tracks
 from tratrac.infrastructure.world.calibration import compute_homography, load_calibration
 
@@ -126,6 +133,18 @@ def postprocess(
 			"instead of pooling into a single one. See src/tratrac/application/WORLD_PROJECTION.md.",
 		),
 	] = None,
+	plane_zones: Annotated[
+		Path | None,
+		typer.Option(
+			"--plane-zones",
+			exists=True,
+			dir_okay=False,
+			help="Sidecar JSON of image-space elevation-plane polygons (MVP3, "
+			"src/tratrac/domain/road_graph.py). Requires --calibration; fits one homography per "
+			"plane (grouping correspondences by which plane zone they classify into) instead of "
+			"by anchor, for scenes with grade separation (bridges, overpasses, ramps).",
+		),
+	] = None,
 	exclusion_min_fraction: Annotated[
 		float,
 		typer.Option(
@@ -160,6 +179,8 @@ def postprocess(
 		raise typer.BadParameter("--timestep-precision must be >= 0 (0 = every frame).")
 	if not 0.0 < exclusion_min_fraction <= 1.0:
 		raise typer.BadParameter("--exclusion-min-fraction must be in (0, 1].")
+	if plane_zones is not None and calibration is None:
+		raise typer.BadParameter("--plane-zones requires --calibration.")
 	try:
 		recording = read_tracks(tracks)
 	except (ValueError, OSError) as exc:
@@ -195,7 +216,7 @@ def postprocess(
 
 	if calibration is not None:
 		recording, pos_noise, jerk = _project_to_world(
-			recording, calibration, anchors, pos_noise, jerk
+			recording, calibration, anchors, pos_noise, jerk, plane_zones=plane_zones
 		)
 
 	states_by_frame = _smooth_recording(recording, pos_noise=pos_noise, jerk=jerk)
@@ -334,6 +355,8 @@ def _project_to_world(
 	anchors_path: Path | None,
 	pos_noise: float,
 	jerk: float,
+	*,
+	plane_zones: Path | None = None,
 ) -> tuple[TrackRecording, float, float]:
 	"""Project the recording's image coordinates onto the metric world plane (MVP2).
 
@@ -360,7 +383,11 @@ def _project_to_world(
 		raise typer.BadParameter(str(exc)) from exc
 
 	pose_for = _pose_for(references)
-	projector, scale = _fit_projector(calibration, pose_for)
+	projector, scale = (
+		_fit_multi_homography_projector(calibration, pose_for, plane_zones)
+		if plane_zones is not None
+		else _fit_projector(calibration, pose_for)
+	)
 
 	projected = [_project_observation(o, projector) for o in recording.observations]
 	world_recording = _normalize_world_recording(recording.metadata, projected)
@@ -401,6 +428,41 @@ def _fit_projector(
 	# per-observation), so multiple anchors' local scales are averaged into one
 	# representative value rather than tracked per anchor.
 	return PerAnchorWorldProjector(homographies), sum(scales) / len(scales)
+
+
+def _fit_multi_homography_projector(
+	calibration: Calibration, pose_for: Callable[[int], Transform2D], plane_zones_path: Path
+) -> tuple[WorldProjector, float]:
+	"""Fit a ``MultiHomographyWorldProjector`` (Group C5, MVP3) instead of grouping by anchor.
+
+	Each correspondence's global-mapped image point is classified against the plane zones
+	(the same rule ``MultiHomographyWorldProjector.to_world`` uses at query time — see its
+	docstring for why that consistency matters), grouping correspondences by *plane* rather
+	than by *anchor*. Supersedes the anchor-based dispatch in ``_fit_projector`` entirely: a
+	calibration spanning both multiple anchors and multiple planes at once is not composed
+	here (an anchor's correspondences are pooled per plane, regardless of which anchor they
+	came from) — a real limitation, not silently swept under a default.
+	"""
+	try:
+		plane_zones = load_plane_zones(plane_zones_path)
+	except (ValueError, OSError) as exc:
+		raise typer.BadParameter(str(exc)) from exc
+	global_planes = to_global_plane_polygons(plane_zones, pose_for)
+
+	by_plane: dict[int, list[Correspondence]] = defaultdict(list)
+	for correspondence in calibration.correspondences:
+		point = pose_for(correspondence.reference_frame).apply(correspondence.image)
+		by_plane[plane_id_for_point(point, global_planes)].append(correspondence)
+
+	homographies: dict[int, NDArray[np.float64]] = {}
+	scales: list[float] = []
+	for plane_id, group in by_plane.items():
+		homographies[plane_id] = _fit_homography(group, pose_for)
+		per_plane = SingleHomographyProjector(homographies[plane_id])
+		scales.append(local_scale_at(per_plane, _centroid(group, pose_for)))
+	# Same averaging caveat as the per-anchor path: one global pos_noise/jerk pair, so a
+	# track crossing a plane boundary mid-life gets a slightly-off noise model near the switch.
+	return MultiHomographyWorldProjector(homographies, global_planes), sum(scales) / len(scales)
 
 
 def _fit_homography(

@@ -1,5 +1,6 @@
-"""Tests for road-link zones: the zone->global conversion, per-point classification, and the
-sidecar-JSON loader. Pure stdlib — no cv2/model downloads. See docs/IMPLEMENTATION_PLAN.md Group C1."""
+"""Tests for road-topology zones: the zone->global conversion, per-point classification, and
+the sidecar-JSON loaders. Pure stdlib — no cv2/model downloads. See docs/IMPLEMENTATION_PLAN.md
+Groups C1/C2/C5."""
 
 from __future__ import annotations
 
@@ -11,12 +12,25 @@ import pytest
 from tratrac.application.road_graph import (
 	lane_id_for_point,
 	link_id_for_point,
+	plane_id_for_point,
 	to_global_lane_polygons,
 	to_global_link_polygons,
+	to_global_plane_polygons,
 )
 from tratrac.domain.geometry import Point2D, Polygon, Transform2D
-from tratrac.domain.road_graph import LaneZone, LaneZones, LinkZone, LinkZones
-from tratrac.infrastructure.road_graph.json import load_lane_zones, load_link_zones
+from tratrac.domain.road_graph import (
+	LaneZone,
+	LaneZones,
+	LinkZone,
+	LinkZones,
+	PlaneZone,
+	PlaneZones,
+)
+from tratrac.infrastructure.road_graph.json import (
+	load_lane_zones,
+	load_link_zones,
+	load_plane_zones,
+)
 
 
 def _square(x0: float, y0: float, x1: float, y1: float) -> tuple[Point2D, ...]:
@@ -248,3 +262,88 @@ class TestLoadLaneZones:
 		path = tmp_path / "lanes.json"
 		path.write_text(json.dumps({"lane_zones": []}))
 		assert load_lane_zones(path).zones == ()
+
+
+class TestPlaneZone:
+	def test_zero_plane_id_is_legal(self) -> None:
+		# Unlike Link/Lane, 0 is not a reserved sentinel here (e.g. the ground plane).
+		zone = PlaneZone(plane_id=0, reference_frame=0, polygon=Polygon(_square(0, 0, 1, 1)))
+		assert zone.plane_id == 0
+
+	def test_rejects_negative_plane_id(self) -> None:
+		with pytest.raises(ValueError, match="plane_id"):
+			PlaneZone(plane_id=-1, reference_frame=0, polygon=Polygon(_square(0, 0, 1, 1)))
+
+
+class TestToGlobalPlanePolygons:
+	def test_identity_pose_keeps_raw_coordinates(self) -> None:
+		zones = PlaneZones(
+			zones=(PlaneZone(plane_id=1, reference_frame=0, polygon=Polygon(_square(1, 2, 3, 4))),)
+		)
+		out = to_global_plane_polygons(zones, lambda _f: Transform2D.identity())
+		assert out == ((1, _square(1, 2, 3, 4)),)
+
+
+class TestPlaneIdForPoint:
+	_ZONES = ((1, _square(0.0, 0.0, 100.0, 100.0)), (2, _square(200.0, 200.0, 300.0, 300.0)))
+
+	def test_point_inside_a_zone_gets_its_plane_id(self) -> None:
+		assert plane_id_for_point(Point2D(50.0, 50.0), self._ZONES) == 1
+		assert plane_id_for_point(Point2D(250.0, 250.0), self._ZONES) == 2
+
+	def test_point_outside_every_zone_defaults_to_zero(self) -> None:
+		assert plane_id_for_point(Point2D(500.0, 500.0), self._ZONES) == 0
+
+
+class TestLoadPlaneZones:
+	def test_reads_polygons_with_plane_id_and_reference_frame(self, tmp_path: Path) -> None:
+		path = tmp_path / "planes.json"
+		path.write_text(
+			json.dumps(
+				{
+					"plane_zones": [
+						{
+							"plane_id": 1,
+							"reference_frame": 12,
+							"vertices": [[0, 0], [10, 0], [10, 10], [0, 10]],
+						}
+					]
+				}
+			)
+		)
+		zones = load_plane_zones(path)
+		assert len(zones.zones) == 1
+		assert zones.zones[0].plane_id == 1
+		assert zones.zones[0].reference_frame == 12
+
+	def test_zero_plane_id_round_trips(self, tmp_path: Path) -> None:
+		path = tmp_path / "planes.json"
+		path.write_text(
+			json.dumps({"plane_zones": [{"plane_id": 0, "vertices": [[0, 0], [1, 0], [0, 1]]}]})
+		)
+		assert load_plane_zones(path).zones[0].plane_id == 0
+
+	def test_missing_plane_id_raises(self, tmp_path: Path) -> None:
+		path = tmp_path / "planes.json"
+		path.write_text(json.dumps({"plane_zones": [{"vertices": [[0, 0], [1, 0], [0, 1]]}]}))
+		with pytest.raises(ValueError, match="plane_id"):
+			load_plane_zones(path)
+
+	def test_negative_plane_id_raises(self, tmp_path: Path) -> None:
+		path = tmp_path / "planes.json"
+		path.write_text(
+			json.dumps({"plane_zones": [{"plane_id": -1, "vertices": [[0, 0], [1, 0], [0, 1]]}]})
+		)
+		with pytest.raises(ValueError, match="plane_id"):
+			load_plane_zones(path)
+
+	def test_missing_top_level_key_raises(self, tmp_path: Path) -> None:
+		path = tmp_path / "planes.json"
+		path.write_text(json.dumps({"polygons": []}))
+		with pytest.raises(ValueError, match="plane_zones"):
+			load_plane_zones(path)
+
+	def test_empty_list_is_legal(self, tmp_path: Path) -> None:
+		path = tmp_path / "planes.json"
+		path.write_text(json.dumps({"plane_zones": []}))
+		assert load_plane_zones(path).zones == ()

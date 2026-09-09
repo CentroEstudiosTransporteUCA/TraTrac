@@ -1,18 +1,25 @@
-# Road-topology zones: Link ID and Lane ID classification
+# Road-topology zones: Link ID, Lane ID, and Plane ID classification
 
 ## Status
 
-Shipped (`docs/IMPLEMENTATION_PLAN.md` Groups C1/C2), Strategy A (hand-drawn polygons) of
-`docs/roadmap/road_topology.md`. Optional and off by default, applied **post-hoc** by
-`tratrac-postprocess` via `--link-zones`/`--lane-zones`.
+Link ID and Lane ID shipped (`docs/IMPLEMENTATION_PLAN.md` Groups C1/C2), Strategy A
+(hand-drawn polygons) of `docs/roadmap/road_topology.md`. Optional and off by default, applied
+**post-hoc** by `tratrac-postprocess` via `--link-zones`/`--lane-zones`. Plane ID's *zones and
+classification helper* also live here (Group C5), but its *consumer* is
+`application/world_projection.py`'s `MultiHomographyWorldProjector` — see
+`src/tratrac/application/WORLD_PROJECTION.md` for that story; this doc covers the shared
+zone/classification infrastructure the three fields build on.
 
 ## What this adds
 
-A set of **labeled pixel polygons** — `LinkZone(link_id, reference_frame, polygon)` and
-`LaneZone(link_id, lane_id, reference_frame, polygon)` in `domain/road_graph.py` — that
-classify every surviving observation into a Link ID and/or Lane ID, stamped onto
-`VehicleState.link_id`/`lane_id` (the SSAM VEHICLE record fields; `docs/roadmap/road_topology.md`
-covers what Link/Lane mean conceptually and why they're orthogonal to plane assignment).
+A set of **labeled pixel polygons** in `domain/road_graph.py` — `LinkZone(link_id,
+reference_frame, polygon)`, `LaneZone(link_id, lane_id, reference_frame, polygon)`, and
+`PlaneZone(plane_id, reference_frame, polygon)` — that classify a point into a label. Link/Lane
+classify every surviving **observation**, stamped onto `VehicleState.link_id`/`lane_id` (the
+SSAM VEHICLE record fields); Plane classifies a **projector query point** at `to_world()` time
+instead — it's a purely internal homography-selection key, never written into `VehicleState`
+(`docs/roadmap/road_topology.md` covers what Link/Lane mean conceptually and why Plane is
+orthogonal to both: a bridge plane can carry many links, and a link can span multiple planes).
 
 ## Why per-observation, not per-track (unlike exclusion zones)
 
@@ -25,10 +32,14 @@ time; `cli_postprocess.py` builds a `{(track_id, frame_index): label}` map from 
 observation and stamps it onto the matching smoothed state after the Kalman/RTS pass.
 
 Classification is plain point-in-polygon (`domain/geometry.point_in_polygon`) over the zones
-mapped into the global frame — first zone in file order wins on overlap. `0` is the SSAM
-"unknown" sentinel: a point outside every zone gets `0`, and zone labels themselves must be
-positive (`LaneZone.lane_id` is additionally capped at 255 — it's a Byte field in the SSAM
-record, same constraint `VehicleState.lane_id.__post_init__` already enforces).
+mapped into the global frame — first zone in file order wins on overlap. For Link/Lane, `0` is
+the SSAM "unknown" sentinel: a point outside every zone gets `0`, and zone labels themselves
+must be positive (`LaneZone.lane_id` is additionally capped at 255 — it's a Byte field in the
+SSAM record, same constraint `VehicleState.lane_id.__post_init__` already enforces). Plane is
+the one exception: `PlaneZone.plane_id` allows `0` as a legitimate label (e.g. the ground
+plane) since it has no SSAM sentinel to reserve — only negative values are rejected. See
+`WORLD_PROJECTION.md` for why a projector can't treat "unclassified" as safely defaultable the
+way Link/Lane do.
 
 ## Where classification runs relative to the other post-hoc stages
 
@@ -55,10 +66,10 @@ frame by that anchor's pose).
 
 | Layer | File | Role |
 | --- | --- | --- |
-| Domain | `domain/road_graph.py` | `LinkZone`/`LinkZones`, `LaneZone`/`LaneZones` — pure value objects, validated label ranges |
-| Application | `application/road_graph.py` | `to_global_link_polygons`/`to_global_lane_polygons` (reference-frame → global, mirrors `application/exclusion.py`), `link_id_for_point`/`lane_id_for_point` (point-in-polygon classification) |
-| Infrastructure | `infrastructure/road_graph/json.py` | Sidecar JSON readers (`load_link_zones`/`load_lane_zones`), mirrors `infrastructure/exclusion/json.py` |
-| CLI | `cli_postprocess.py` | `--link-zones`/`--lane-zones` options; `_assign_labels` (shared fitter/classifier plumbing, generic over `LinkZones`/`LaneZones`), `_apply_link_ids`/`_apply_lane_ids` (stamp the smoothed states) |
+| Domain | `domain/road_graph.py` | `LinkZone`/`LinkZones`, `LaneZone`/`LaneZones`, `PlaneZone`/`PlaneZones` — pure value objects, validated label ranges |
+| Application | `application/road_graph.py` | `to_global_{link,lane,plane}_polygons` (reference-frame → global, mirrors `application/exclusion.py`), `{link,lane,plane}_id_for_point` (point-in-polygon classification) |
+| Infrastructure | `infrastructure/road_graph/json.py` | Sidecar JSON readers (`load_{link,lane,plane}_zones`), mirrors `infrastructure/exclusion/json.py` |
+| CLI | `cli_postprocess.py` | `--link-zones`/`--lane-zones` options + `_assign_labels` (shared fitter/classifier plumbing, generic over `LinkZones`/`LaneZones`) and `_apply_link_ids`/`_apply_lane_ids` (stamp the smoothed states); `--plane-zones` + `_fit_multi_homography_projector` (fits `MultiHomographyWorldProjector` instead of stamping a field — see `WORLD_PROJECTION.md`) |
 
 ## Sidecar schema
 
@@ -74,9 +85,16 @@ frame by that anchor's pose).
 ] }
 ```
 
+```jsonc
+{ "plane_zones": [
+    { "plane_id": 0, "reference_frame": 0, "vertices": [[x1, y1], [x2, y2], [x3, y3]] }
+] }
+```
+
 `LaneZone.link_id` is operator documentation / a future cross-checking hook today —
 classification itself is plain point-in-polygon over the lane zones, independent of any
-separately-computed Link ID for the same point.
+separately-computed Link ID for the same point. `plane_zones` has no `link_id`/`lane_id`
+fields — it's a standalone label with no cross-referencing metadata.
 
 ## Not done by this landing
 

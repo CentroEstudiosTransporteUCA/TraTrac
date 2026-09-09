@@ -23,7 +23,7 @@ checklist draws its "shipped" checkmarks from, and [`BACKLOG.md`](BACKLOG.md) fo
 
 **— 🏛️ realistic congress-day line — everything above is shipped or targeted for this window; everything below is real production-MVP work that stays open after —**
 
-- [ ] Multi-level road support — multi-homography + plane assignment for bridges, ramps, overpasses (MVP3); without it, any site with grade separation produces false conflicts
+- [x] Multi-level road support — multi-homography + plane assignment for bridges, ramps, overpasses (MVP3; `MultiHomographyWorldProjector` + `--plane-zones`, see `application/WORLD_PROJECTION.md`). Not composed with multi-anchor projection (a moving-drone shoot over a grade-separated site needs both landed together, which isn't done) and untested against real grade-separated footage.
 - [ ] Long-term identity persistence through occlusion — ReID (MVP5); occlusion is routine in dense urban traffic, and conflict metrics on fragmented tracks aren't trustworthy
 - [ ] Learned ego-motion stabilization — SuperPoint + LightGlue replacing ORB where the cheap estimator measurably struggles (Backlog #1)
 - [x] Multi-anchor world projection for moving, wide-swept drone footage (MVP2 remainder; `PerAnchorWorldProjector`, nearest-anchor by frame-index — see `application/WORLD_PROJECTION.md`). The remaining MVP2 gap is the SuperPoint+LightGlue stabilization upgrade (`docs/BACKLOG.md` #1), tracked separately below.

@@ -12,11 +12,16 @@ import pytest
 
 from tratrac.application.world_projection import (
 	IdentityWorldProjector,
+	MultiHomographyWorldProjector,
 	PerAnchorWorldProjector,
 	SingleHomographyProjector,
 	local_scale_at,
 )
 from tratrac.domain.geometry import Point2D
+
+
+def _square(x0: float, y0: float, x1: float, y1: float) -> tuple[Point2D, ...]:
+	return (Point2D(x0, y0), Point2D(x1, y0), Point2D(x1, y1), Point2D(x0, y1))
 
 
 def _scale_homography(s: float) -> np.ndarray:
@@ -92,6 +97,41 @@ class TestPerAnchorWorldProjector:
 		projector = PerAnchorWorldProjector({50: _scale_homography(2.0)})
 		assert projector.to_world(Point2D(1.0, 1.0), frame_index=-1000) == Point2D(2.0, 2.0)
 		assert projector.to_world(Point2D(1.0, 1.0), frame_index=1000) == Point2D(2.0, 2.0)
+
+
+class TestMultiHomographyWorldProjector:
+	_PLANES = (
+		(0, _square(0.0, 0.0, 100.0, 100.0)),  # ground
+		(1, _square(200.0, 200.0, 300.0, 300.0)),  # bridge
+	)
+
+	def test_rejects_empty_mapping(self) -> None:
+		with pytest.raises(ValueError, match="at least one plane"):
+			MultiHomographyWorldProjector({}, self._PLANES)
+
+	def test_uses_the_matching_planes_homography(self) -> None:
+		projector = MultiHomographyWorldProjector(
+			{0: _scale_homography(1.0), 1: _scale_homography(10.0)}, self._PLANES
+		)
+		assert projector.to_world(Point2D(50.0, 50.0), frame_index=0) == Point2D(50.0, 50.0)
+		assert projector.to_world(Point2D(250.0, 250.0), frame_index=0) == Point2D(2500.0, 2500.0)
+
+	def test_frame_index_is_ignored(self) -> None:
+		projector = MultiHomographyWorldProjector({0: _scale_homography(2.0)}, self._PLANES)
+		assert projector.to_world(Point2D(1.0, 1.0), 0) == projector.to_world(
+			Point2D(1.0, 1.0), 999
+		)
+
+	def test_unfitted_plane_raises_clearly(self) -> None:
+		# Plane 1 (the bridge) classifies fine but has no fitted homography.
+		projector = MultiHomographyWorldProjector({0: _scale_homography(1.0)}, self._PLANES)
+		with pytest.raises(ValueError, match="plane 1"):
+			projector.to_world(Point2D(250.0, 250.0), frame_index=0)
+
+	def test_unclassified_point_needs_a_plane_zero_homography(self) -> None:
+		projector = MultiHomographyWorldProjector({0: _scale_homography(1.0)}, self._PLANES)
+		# Outside every explicit zone -> plane_id_for_point defaults to 0.
+		assert projector.to_world(Point2D(-50.0, -50.0), frame_index=0) == Point2D(-50.0, -50.0)
 
 
 class TestLocalScaleAt:
