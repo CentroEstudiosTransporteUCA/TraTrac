@@ -51,6 +51,15 @@ class Heading:
 	def reversed(self) -> Heading:
 		return Heading(-self.dx, -self.dy)
 
+	def dot(self, other: Heading) -> float:
+		"""Cosine of the angle between two unit headings (both are unit length by construction).
+
+		Used to disambiguate a 0-360° OBB angle's front/back against the last known
+		heading (`docs/IMPLEMENTATION_PLAN.md` Group A7): negative means the candidate
+		points the wrong way and should be reversed.
+		"""
+		return self.dx * other.dx + self.dy * other.dy
+
 
 @dataclass(frozen=True, slots=True)
 class Point2D:

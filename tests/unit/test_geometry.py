@@ -80,6 +80,17 @@ class TestHeading:
 		h = Heading(1.0, 0.0)
 		assert h.as_vector_with_magnitude(7.5) == Vector2D(7.5, 0.0)
 
+	def test_dot_of_identical_headings_is_one(self) -> None:
+		h = Heading.from_angle(1.2)
+		assert math.isclose(h.dot(h), 1.0)
+
+	def test_dot_of_opposite_headings_is_negative_one(self) -> None:
+		h = Heading.from_angle(1.2)
+		assert math.isclose(h.dot(h.reversed()), -1.0)
+
+	def test_dot_of_perpendicular_headings_is_zero(self) -> None:
+		assert math.isclose(Heading(1.0, 0.0).dot(Heading(0.0, 1.0)), 0.0, abs_tol=1e-9)
+
 
 class TestPoint2D:
 	def test_translate_adds_displacement(self) -> None:

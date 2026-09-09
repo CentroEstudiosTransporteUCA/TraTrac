@@ -3,17 +3,19 @@
 from __future__ import annotations
 
 import json
+import math
 import struct
 from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
-from tratrac.application.track_smoothing import TrackSample, smooth_to_states
+from tratrac.application.kalman import SmoothedSample
+from tratrac.application.track_smoothing import TrackSample, build_state, smooth_to_states
 from tratrac.cli_postprocess import app
 from tratrac.domain.detection import Detection, TrackedDetection, VehicleClass
 from tratrac.domain.frame import VideoMetadata
-from tratrac.domain.geometry import BoundingBox, Point2D
+from tratrac.domain.geometry import BoundingBox, Heading, Point2D
 from tratrac.infrastructure.tracks.parquet import ParquetTrackSink
 
 
@@ -56,6 +58,60 @@ class TestSmoothToStates:
 		states = smooth_to_states(1, samples, 1.0, pos_noise=2.0, jerk=20.0)
 		# No motion -> heading falls back to bbox major axis (width >= height -> east).
 		assert states[-1].heading.dx == 1.0
+
+	def test_stationary_track_prefers_obb_angle_over_bbox_heading(self) -> None:
+		# OBB reports "facing north" (pi/2); bbox shape alone would say east.
+		samples = [
+			TrackSample(i, i / 10.0, Point2D(20.0, 20.0), width=4.0, height=2.0, angle=math.pi / 2)
+			for i in range(10)
+		]
+		states = smooth_to_states(1, samples, 1.0, pos_noise=2.0, jerk=20.0)
+		assert states[-1].heading.dy == pytest.approx(1.0, abs=1e-6)
+
+	def test_obb_angle_never_overrides_a_moving_headings_velocity(self) -> None:
+		# Moving east at speed, but the OBB angle claims north — velocity wins.
+		samples = [
+			TrackSample(
+				i,
+				i / 10.0,
+				Point2D(10.0 * (i / 10.0), 50.0),
+				width=4.0,
+				height=2.0,
+				angle=math.pi / 2,
+			)
+			for i in range(30)
+		]
+		states = smooth_to_states(1, samples, 1.0, pos_noise=1.0, jerk=10.0)
+		assert states[15].heading.dx > 0.9
+
+	def test_obb_angle_is_disambiguated_against_last_heading(self) -> None:
+		# Stationary (speed exactly 0): an OBB angle of pi (west) is the same axis as the
+		# last known heading (east) 180° flipped, and should be reversed back to east
+		# rather than taken as-is — OBB reports an axis, not a disambiguated direction.
+		state, remembered = build_state(
+			track_id=1,
+			timestamp_seconds=0.0,
+			kinematics=SmoothedSample(px=0.0, py=0.0, vx=0.0, vy=0.0, ax=0.0, ay=0.0),
+			width=4.0,
+			height=2.0,
+			scale=1.0,
+			last_heading=Heading(1.0, 0.0),
+			angle=math.pi,
+		)
+		assert state.heading.dx == pytest.approx(1.0)
+		assert remembered == Heading(1.0, 0.0)  # low-speed branch never updates "last good"
+
+	def test_oriented_size_replaces_bbox_for_dimensions(self) -> None:
+		samples = [
+			TrackSample(
+				i, i / 10.0, Point2D(20.0, 20.0), width=4.0, height=2.0, oriented_size=(9.0, 3.0)
+			)
+			for i in range(5)
+		]
+		states = smooth_to_states(1, samples, 2.0, pos_noise=2.0, jerk=20.0)
+		# Scaled by 2.0 m/px: length 9*2=18, width 3*2=6 — not the bbox's 4*2=8 / 2*2=4.
+		assert states[-1].dimensions.length == pytest.approx(18.0)
+		assert states[-1].dimensions.width == pytest.approx(6.0)
 
 
 def _write_tracks(path: Path, samples: list[TrackSample]) -> None:

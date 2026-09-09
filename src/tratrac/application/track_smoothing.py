@@ -30,6 +30,11 @@ class TrackSample:
 	center: Point2D
 	width: float
 	height: float
+	# OBB fields (Group A7, docs/IMPLEMENTATION_PLAN.md): the detector's own oriented-box
+	# angle (radians) and (length, width) in pixels, when available. ``None`` for an
+	# AABB-only run — ``width``/``height`` above (the bbox) are always populated regardless.
+	angle: float | None = None
+	oriented_size: tuple[float, float] | None = None
 
 
 def smooth_to_states(
@@ -65,6 +70,8 @@ def smooth_to_states(
 			height=sample.height,
 			scale=scale,
 			last_heading=last_heading,
+			angle=sample.angle,
+			oriented_size=sample.oriented_size,
 		)
 		states.append(state)
 	return states
@@ -79,18 +86,35 @@ def build_state(
 	height: float,
 	scale: float,
 	last_heading: Heading | None,
+	angle: float | None = None,
+	oriented_size: tuple[float, float] | None = None,
 ) -> tuple[VehicleState, Heading | None]:
 	"""Reconstruct a ``VehicleState`` from one smoothed sample + the source bbox size.
 
 	Shared by the offline post-pass and the inline forward filter. Returns the state and
 	the heading to remember for the next frame's low-speed fallback (only updated while
 	the vehicle is actually moving). Pixel kinematics are scaled to metric by ``scale``.
+
+	``angle``/``oriented_size`` are the detector's own OBB fields (Group A7), when
+	available. ``angle`` only ever replaces the **low-speed fallback** heading, never the
+	primary RTS-smoothed-velocity path: trusting a raw, per-frame, unsmoothed OBB angle
+	over the two-pass Kalman result while moving would reintroduce the jitter the smoother
+	exists to remove. ``oriented_size``, when present, replaces the bbox as the source of
+	``Dimensions`` — the real accuracy payoff OBB buys for vehicle sizing.
 	"""
 	velocity = Vector2D(kinematics.vx * scale, kinematics.vy * scale)
 	speed = velocity.magnitude
 	if speed >= _VELOCITY_EPSILON:
 		heading: Heading = velocity.normalized()
 		remembered: Heading | None = heading
+	elif angle is not None:
+		candidate = Heading.from_angle(angle)
+		heading = (
+			candidate
+			if last_heading is None or candidate.dot(last_heading) >= 0.0
+			else candidate.reversed()
+		)
+		remembered = last_heading
 	else:
 		heading = last_heading or _major_axis_heading(width, height)
 		remembered = last_heading
@@ -101,14 +125,15 @@ def build_state(
 		if speed >= _VELOCITY_EPSILON
 		else 0.0
 	)
+	size_length, size_width = oriented_size if oriented_size is not None else (width, height)
 	state = VehicleState(
 		vehicle_id=track_id,
 		timestamp_seconds=timestamp_seconds,
 		centroid=Point2D(kinematics.px * scale, kinematics.py * scale),
 		heading=heading,
 		dimensions=Dimensions(
-			length=max(width, height) * scale,
-			width=min(width, height) * scale,
+			length=max(size_length, size_width) * scale,
+			width=min(size_length, size_width) * scale,
 		),
 		velocity=velocity,
 		acceleration=acceleration,

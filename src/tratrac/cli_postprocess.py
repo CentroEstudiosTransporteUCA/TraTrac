@@ -334,7 +334,15 @@ def _normalize_world_recording(
 
 
 def _project_observation(o: TrackObservation, projector: WorldProjector) -> TrackObservation:
-	"""Map one observation's centroid + bbox extent into world metres."""
+	"""Map one observation's centroid + bbox extent into world metres.
+
+	Drops ``angle``/``obb_w``/``obb_h`` (Group A7/A8 OBB fields): they're image-space
+	quantities, and a general homography's rotation need not match the image axes, so
+	carrying a raw image-space angle into world-space heading selection would be wrong
+	rather than merely imprecise. Re-deriving a world-space OBB angle is out of scope
+	here (see `src/tratrac/application/WORLD_PROJECTION.md`); the smoother's low-speed
+	fallback drops back to the bbox-major-axis heuristic for a projected run instead.
+	"""
 	center = projector.to_world(Point2D(o.cx, o.cy), o.frame_index)
 	left = projector.to_world(Point2D(o.cx - o.width / 2.0, o.cy), o.frame_index)
 	right = projector.to_world(Point2D(o.cx + o.width / 2.0, o.cy), o.frame_index)
@@ -346,6 +354,9 @@ def _project_observation(o: TrackObservation, projector: WorldProjector) -> Trac
 		cy=center.y,
 		width=math.hypot(right.x - left.x, right.y - left.y),
 		height=math.hypot(bottom.x - top.x, bottom.y - top.y),
+		angle=None,
+		obb_w=None,
+		obb_h=None,
 	)
 
 
@@ -370,6 +381,10 @@ def _smooth_recording(
 				center=Point2D(o.cx, o.cy),
 				width=o.width,
 				height=o.height,
+				angle=o.angle,
+				oriented_size=(o.obb_w, o.obb_h)
+				if o.obb_w is not None and o.obb_h is not None
+				else None,
 			)
 			for o in observations
 		]
