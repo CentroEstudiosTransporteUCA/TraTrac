@@ -1,7 +1,7 @@
 """DecimationGrid: an anchored cadence grid for thinning a frame/timestamp stream.
 
 Shared, pure mechanism behind two decimation features (see
-vault/18_timestep_precision.md): the export-side `DecimatingTrajectoryExporter`
+src/tratrac/infrastructure/TIMESTEP_PRECISION.md): the export-side `DecimatingTrajectoryExporter`
 and the decode-side processing cap in `OpenCvVideoSource`. Both ask the same
 question — "given this frame's timestamp, is it on the grid?" — so the policy
 lives here once.

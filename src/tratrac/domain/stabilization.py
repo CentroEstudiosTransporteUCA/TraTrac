@@ -4,7 +4,7 @@ A ``FrameTransform`` pairs a processed frame's index with the ego-motion transfo
 estimated for it (current frame -> global stabilization frame). It is the record a
 ``TransformSink`` persists, so a downstream tool can invert each one to map
 stabilized coordinates back onto the raw frame they were derived from. Sibling of
-``domain/timing.py``'s ``StepTiming``. See vault/05_75_mvp1_9.md.
+``domain/timing.py``'s ``StepTiming``. See src/tratrac/infrastructure/video/EGO_MOTION.md.
 """
 
 from __future__ import annotations

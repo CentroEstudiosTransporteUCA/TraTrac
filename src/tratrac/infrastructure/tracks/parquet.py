@@ -2,7 +2,7 @@
 
 Pass 1 (the perception run) writes one row per tracked detection per frame — the raw
 centroid + bbox + class the offline ``tratrac-smooth`` pass needs to run the Kalman/RTS
-smoother (see vault/22_smoothing.md). The video metadata + metric scale live in the
+smoother (see src/tratrac/application/SMOOTHING.md). The video metadata + metric scale live in the
 Parquet **schema metadata** so the post-pass is self-contained (no video needed) and can
 reconstruct a metric ``.trj``. Centroids are in the tracker's coordinate frame —
 stabilized pixels when ego-motion is on.

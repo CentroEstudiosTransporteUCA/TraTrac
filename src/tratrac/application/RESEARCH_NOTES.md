@@ -7,7 +7,7 @@
 >
 > **Status:** external literature review, not an authoritative design doc. Compiled
 > 2026-06-13 via adversarially-verified web search (18 sources, 25 claims verified, 22
-> confirmed, 3 refuted). Read alongside the `accel-noise-root-cause` memory and `05_5_mvp1_75.md`.
+> confirmed, 3 refuted). Read alongside the `accel-noise-root-cause` memory and `src/tratrac/calibration/GSD_CALIBRATION.md`.
 
 ---
 

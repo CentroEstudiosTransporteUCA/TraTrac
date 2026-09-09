@@ -1,4 +1,4 @@
-# 22 — Trajectory smoothing: constant-acceleration Kalman + RTS (two-pass)
+# Trajectory smoothing: constant-acceleration Kalman + RTS (two-pass)
 
 ## What this adds
 
@@ -6,7 +6,7 @@ A **de-jittering** stage for vehicle trajectories — and, since the export inve
 **only** path that produces an SSAM `.trj`. Detector center jitter makes the raw
 bbox-centroid path noisy; finite-differencing that raw centroid for velocity/acceleration
 is a high-pass filter, so a sub-pixel wobble explodes into acceleration/jerk
-(`research_high_precision_tracking.md` §1, Punzo 2011; the `accel-noise-root-cause` memory).
+(`src/tratrac/application/RESEARCH_NOTES.md` §1, Punzo 2011; the `accel-noise-root-cause` memory).
 The fix the literature converges on (§2, highD): smooth **position** with a
 constant-acceleration motion model and read velocity/acceleration out of the **filter
 state**. This pass owns the kinematics (heading/speed/accel) that the perception run no
@@ -25,7 +25,7 @@ pass 2 (offline):            record → forward KF + RTS per track → smoothed 
 ```
 
 - **Pass 1** is the `tratrac` run. Its **only** output is the **track record** (`export.out`)
-  — the canonical dual-export **"B"** format (`01_architecture_principles.md`), now the
+  — the canonical dual-export **"B"** format (`src/tratrac/domain/ARCHITECTURE.md`), now the
   pipeline's primary product, not an opt-in sidecar. It is an **Apache Parquet** file: the
   **raw measurements** (centroid + bbox + class per track per frame) as columns, with the run
   metadata (`fps,width,height,total_frames,meters_per_pixel`) in the Parquet **schema metadata**
@@ -33,10 +33,10 @@ pass 2 (offline):            record → forward KF + RTS per track → smoothed 
   owns directly. (Parquet is the MVP7 storage choice, pulled forward for the canonical record.)
 - **Pass 2** is `tratrac-postprocess RECORD.parquet --out final.trj [--exclusion-zones … --anchors …]
   [--pos-noise PX] [--jerk Q] [--timestep-precision S]`: (optionally **filter** out tracks inside
-  exclusion zones, vault/21) → group by track → forward+RTS smooth → reconstruct `VehicleState`
+  exclusion zones, src/tratrac/application/EXCLUSION_ZONES.md) → group by track → forward+RTS smooth → reconstruct `VehicleState`
   (kinematics via `build_state`) → write via `SsamTrjExporter` (wrapped in
   `DecimatingTrajectoryExporter` when `--timestep-precision` thins the TIMESTEPs). It produces
-  only the smoothed `.trj`; to visualize it, render with `tratrac-render` (vault/20).
+  only the smoothed `.trj`; to visualize it, render with `tratrac-render` (src/tratrac/infrastructure/export/VIDEO_EXPORT.md).
 
 **Why raw measurements, not filter state:** pass 2 re-runs the forward pass (cheap) so the
 sidecar stays small and inspectable, and the smoother can be **re-tuned offline with no

@@ -1,6 +1,6 @@
 """``WorldProjector`` implementations: map image points onto the metric world plane.
 
-The pure side of MVP2 world projection (``vault/06_mvp2.md``). The homography *matrix* is
+The pure side of MVP2 world projection (``src/tratrac/application/WORLD_PROJECTION.md``). The homography *matrix* is
 fitted in infrastructure (cv2); here we only *apply* it — a 3x3 projective multiply plus
 the perspective divide — so this stays numpy-only and onion-clean.
 
@@ -11,7 +11,7 @@ Two impls today:
 * ``SingleHomographyProjector`` — one homography for the whole (single-anchor / bounded)
   scene; ignores ``frame_index``.
 
-A future ``PerAnchorWorldProjector`` (the moving-drone path, see ``vault/06_mvp2.md`` §
+A future ``PerAnchorWorldProjector`` (the moving-drone path, see ``src/tratrac/application/WORLD_PROJECTION.md`` §
 migration) would use ``frame_index`` to pick the anchor's homography — same port, so it
 drops in without touching callers.
 """

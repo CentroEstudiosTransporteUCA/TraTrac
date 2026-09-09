@@ -3,7 +3,7 @@
 A Null Object so ``TrajectoryPipeline`` always has an observer to message and
 never needs to guard against ``None``. The stabilizer supplies the real observer
 (the ORB ego-motion estimator) when vehicle-masked stabilization is active; every
-other run uses this silent default. See vault/05_75_mvp1_9.md.
+other run uses this silent default. See src/tratrac/infrastructure/video/EGO_MOTION.md.
 """
 
 from __future__ import annotations

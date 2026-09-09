@@ -13,9 +13,9 @@ Vehicle tracking and trajectory export for cenital / nadir aerial video. The pip
 
 ### A note on the detector
 
-The vault (`vault/03_tech_stack.md`) selects RT-DETR over YOLO for long-term aerial robustness. At MVP1 ship the COCO-pretrained RT-DETR was unable to detect aerial cars (it labelled them as `bird` and `traffic light` — verifiable with `scripts/probe_detector.py`), and there was no GPU available in the timebox to fine-tune. YOLOv8-VisDrone is wired in as a separate `Detector` adapter behind the same port; RT-DETR coexists unchanged. The YOLO override is a single file + one CLI enum value + two extra dependencies, scheduled for removal in MVP1.5 once a fine-tuned RT-DETR checkpoint exists.
+`docs/TECH_STACK.md` selects RT-DETR over YOLO for long-term aerial robustness. At MVP1 ship the COCO-pretrained RT-DETR was unable to detect aerial cars (it labelled them as `bird` and `traffic light` — verifiable with `scripts/probe_detector.py`), and there was no GPU available in the timebox to fine-tune. YOLOv8-VisDrone is wired in as a separate `Detector` adapter behind the same port; RT-DETR coexists unchanged. The YOLO override is a single file + one CLI enum value + two extra dependencies, scheduled for removal in MVP1.5 once a fine-tuned RT-DETR checkpoint exists.
 
-See `vault/05_mvp1.md` through `vault/11_mvp7.md` for the full staged roadmap.
+See `src/tratrac/infrastructure/detection/DETECTOR_CHOICE.md` through `docs/roadmap/mvp7.md` for the full staged roadmap.
 
 ## Install
 
@@ -60,7 +60,7 @@ uv run python scripts/dump_trj.py path/to/file.trj --max-frames 50  # first 50 t
 uv run python scripts/probe_detector.py path/to/video.mp4 --frame 1000
 
 # Render the overlay video (frame + trajectories) directly from a run by setting
-# export.video_out (or --video-out); see vault/20_video_export.md. Then mark
+# export.video_out (or --video-out); see src/tratrac/infrastructure/export/VIDEO_EXPORT.md. Then mark
 # validator violations on top of that overlay .mp4:
 uv run python scripts/render_violations.py path/to/overlay.mp4 \
     --violations-csv path/to/violations.csv --out path/to/marked.mp4 \
@@ -87,7 +87,7 @@ Onion layers under `src/tratrac/`:
 - **Dual export.** Two exporter ports — SSAM (`.trj`) plus a richer internal format that arrives with segmentation in MVP4.
 - **Every MVP emits valid SSAM from MVP1.** MVPs differ in trajectory *quality*, not whether trajectories exist.
 
-The full design rationale lives in `vault/00_system_overview.md` through `vault/13_road_topology.md`. The SSAM `.trj` byte-level spec is in `vault/04_ssam_format.md`, derived from the two PDFs alongside it. Where SSAM's `Link ID` and `Lane ID` come from at each MVP is in `vault/13_road_topology.md`.
+The full design rationale lives in `docs/ROADMAP.md` through `docs/roadmap/road_topology.md`. The SSAM `.trj` byte-level spec is in `src/tratrac/infrastructure/export/SSAM_FORMAT.md`, derived from the two PDFs alongside it. Where SSAM's `Link ID` and `Lane ID` come from at each MVP is in `docs/roadmap/road_topology.md`.
 
 ## Development
 
@@ -115,9 +115,9 @@ All checked-in code passes ruff + strict mypy. Indentation is tabs.
 | --- | --- |
 | 1 (this) | YOLOv8-VisDrone (emergency override) + BoT-SORT, EMA orientation, image-space SSAM `.trj` |
 | 1.5 | Fine-tune RT-DETR on VisDrone / UAVDT, restore RT-DETR as default, drop ultralytics |
-| **1.75** | **Metric sizes and speeds from drone metadata.** GSD calibration from sensor + focal + altitude; populates `DIMENSIONS.Scale` and writes `Length` / `Width` / `Speed` / `Acceleration` in real units. No homography needed for hovering, nadir drone footage. See `vault/05_5_mvp1_75.md`. |
+| **1.75** | **Metric sizes and speeds from drone metadata.** GSD calibration from sensor + focal + altitude; populates `DIMENSIONS.Scale` and writes `Length` / `Width` / `Speed` / `Acceleration` in real units. No homography needed for hovering, nadir drone footage. See `src/tratrac/calibration/GSD_CALIBRATION.md`. |
 | 2 | SuperPoint + LightGlue stabilization, single-homography world projection (handles moving drones, non-nadir gimbals, fixed cameras without telemetry) |
-| 3 | Multi-homography + polygon-based plane assignment (bridges / overpasses) + Link ID assignment from hand-drawn polygons (see `vault/13_road_topology.md`) |
+| 3 | Multi-homography + polygon-based plane assignment (bridges / overpasses) + Link ID assignment from hand-drawn polygons (see `docs/roadmap/road_topology.md`) |
 | 4 | SAM2 segmentation, mask-based orientation, dual export |
 | 5 | FastReID + embedding memory for long-term identity persistence |
 | 6 | Lane-graph topology constraints + Lane ID assignment from hand-drawn lane polygons |
@@ -129,5 +129,7 @@ GPL-3.0 (see `LICENSE`). Both `boxmot` (tracker) and `ultralytics` (YOLOv8 runti
 
 ## Further reading
 
-- `vault/` — full design knowledge, MVP roadmap, and the authoritative SSAM PDFs.
+- `docs/README.md` — documentation map. Design docs live next to the code they describe; this
+  is the index into all of them, plus the cross-cutting roadmap/architecture/tech-stack docs
+  that don't belong to one module.
 - `CLAUDE.md` — conventions for working in this repo with Claude Code.

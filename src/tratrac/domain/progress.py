@@ -7,7 +7,7 @@ messages; each reporter interprets the subset it cares about and ignores the
 rest. New event types can be added here without breaking reporters that only
 handle the older ones.
 
-See ``vault/14_progress_reporting.md``.
+See ``src/tratrac/application/PROGRESS_REPORTING.md``.
 """
 
 from __future__ import annotations

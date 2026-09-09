@@ -8,7 +8,7 @@ to stderr by default so it never pollutes stdout, where the CLI prints its final
 summary. tqdm throttles its own redraws, so no manual rate-limiting is needed.
 
 The tqdm bar is created through an injected ``bar_factory`` seam so the reporter is
-unit-testable without driving real terminal output. See vault/14_progress_reporting.md.
+unit-testable without driving real terminal output. See src/tratrac/application/PROGRESS_REPORTING.md.
 """
 
 from __future__ import annotations

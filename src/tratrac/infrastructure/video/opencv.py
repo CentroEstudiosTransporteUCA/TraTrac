@@ -20,14 +20,14 @@ class OpenCvVideoSource:
 	An optional ``[start_seconds, end_seconds]`` window trims the analyzed range:
 	the source seeks to the start frame and stops after the (inclusive) end frame.
 	Frame indices stay absolute, so exported TIMESTEPs remain on the source
-	video's clock. See vault/17_time_window.md.
+	video's clock. See src/tratrac/infrastructure/video/TIME_WINDOW.md.
 
 	An optional ``process_fps`` caps the processing cadence: frames off the target
 	grid are skipped with ``grab`` (no decode) so detection/tracking run on fewer
 	frames — a deliberate speed-for-quality trade (more BoT-SORT ID switches). It is
 	independent of, and stacks before, export-side timestep decimation. Skipped
 	frames keep absolute indices, so timestamps and any replay schedule still line
-	up. See vault/18_timestep_precision.md.
+	up. See src/tratrac/infrastructure/TIMESTEP_PRECISION.md.
 	"""
 
 	def __init__(

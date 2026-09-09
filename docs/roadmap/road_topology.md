@@ -1,6 +1,6 @@
 # Road Topology Sourcing
 
-SSAM's `Link ID` and `Lane ID` fields (see `04_ssam_format.md`, VEHICLE
+SSAM's `Link ID` and `Lane ID` fields (see `src/tratrac/infrastructure/export/SSAM_FORMAT.md`, VEHICLE
 record) require knowledge of the road network that does not fall out of
 detection or tracking alone. This document defines what those identifiers
 mean, where they come from at each MVP, and how the implementation
@@ -40,7 +40,7 @@ conflicts.
 
 ### Important: road_plane ≠ link_id
 
-`07_mvp3.md` introduces "Road Plane Assignment" via polygon mapping. A
+`docs/roadmap/mvp3.md` introduces "Road Plane Assignment" via polygon mapping. A
 *plane* is an elevation surface (ground, bridge, overpass). A *link* is
 a road-segment identity. They are orthogonal:
 

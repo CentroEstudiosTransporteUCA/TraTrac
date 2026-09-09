@@ -1,4 +1,4 @@
-# 21 — Exclusion zones: post-hoc, track-aware "do-not-analyze" regions
+# Exclusion zones: post-hoc, track-aware "do-not-analyze" regions
 
 ## What this adds
 

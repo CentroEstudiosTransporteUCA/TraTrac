@@ -1,11 +1,11 @@
-# MVP 2 — WORLD-SPACE STABILIZED TRAJECTORIES
+# World Projection — MVP 2 (Coordinate Systems + Approach A)
 
 > **Status — 🟡 Partially shipped (world projection landed; stabilization upgrade deferred).**
 > The MVP number is a capability ID, not execution order — see the roadmap reconciliation in
-> `00_system_overview.md`. **World projection** is now implemented as a **post-hoc, single-homography
+> `docs/ROADMAP.md`. **World projection** is now implemented as a **post-hoc, single-homography
 > shortcut (Approach A)** in `tratrac-postprocess` — see "Implementation (Approach A — shipped)"
 > below. The two pieces still **not** done: the SuperPoint + LightGlue stabilization upgrade
-> (MVP1.9's ORB still does ego-motion; `final_polish.md` item 1), and the multi-anchor projector
+> (MVP1.9's ORB still does ego-motion; `docs/BACKLOG.md` item 1), and the multi-anchor projector
 > (Approach C/D) — Approach A is a deliberate "ship cheaper now, upgrade behind the port later"
 > intermediate, exactly like MVP1.9 was for stabilization. With Approach A wired, SSAM positions
 > can now be metric world coordinates; the load-bearing gap is closed for single-/few-anchor
@@ -23,6 +23,102 @@ Generate:
 
 ---
 
+## Coordinate Systems Background
+
+### MVP1
+
+Produces:
+
+- syntactically valid SSAM `.trj`
+
+BUT:
+
+- coordinates are not yet physically meaningful
+
+This MVP validates:
+
+- pipeline correctness
+- serialization
+- tracking
+- exporter architecture
+
+### MVP2+
+
+All SSAM exports use:
+
+#### world-space metric coordinates
+
+This is mandatory because SSAM assumes:
+
+- metric geometry
+- real distances
+- real speeds
+- real accelerations
+
+NOT:
+
+- image pixels
+
+#### Why Image-Space Coordinates Break SSAM
+
+Passing image-space coordinates into SSAM causes:
+
+| Problem | Consequence |
+| --- | --- |
+| Pixel distance ≠ meters | Invalid TTC calculations |
+| Perspective distortion | Invalid vehicle sizes |
+| Camera motion | Fake accelerations |
+| Multi-level roads overlap visually | False conflicts |
+| Spatial scale varies | Invalid analytics |
+
+Meaning:
+
+- SSAM may still parse the file
+- but the analytics become scientifically invalid
+
+### Multi-Homography Geometry (future — MVP3)
+
+#### Why
+
+Single homography assumes:
+
+```text
+all roads exist on the same plane
+```
+
+This breaks for:
+
+- bridges
+- ramps
+- stacked highways
+- overpasses
+
+Multi-homography enables:
+
+- multi-level road support
+- physically correct trajectories
+
+#### Why NOT Full 3D Reconstruction
+
+Full 3D:
+
+- expensive
+- operationally difficult
+- unnecessary for road-relative analytics
+
+Roads are:
+
+- piecewise planar
+
+not arbitrary 3D scenes.
+
+#### Cost
+
+**Pros:** correct geometry for bridges/overpasses.
+**Cons:** requires calibration + road-plane annotations. See `docs/roadmap/mvp3.md`.
+
+---
+
 ## New Technologies
 
 | Component | Technology |
@@ -31,11 +127,11 @@ Generate:
 | Geometry | OpenCV |
 | Projection | Homography |
 
-> **Ego-motion compensation already exists as of MVP1.9** (`05_75_mvp1_9.md`): a
+> **Ego-motion compensation already exists as of MVP1.9** (`src/tratrac/infrastructure/video/EGO_MOTION.md`): a
 > keyframe-anchored ORB + RANSAC similarity adapter behind the `EgoMotionEstimator`
 > port, applied to *detection coordinates* (not pixels) before tracking. So MVP2's
 > stabilization line is an *upgrade* (ORB → SuperPoint + LightGlue, see
-> `final_polish.md` item 1) gated on measurement, **not** a from-scratch addition.
+> `docs/BACKLOG.md` item 1) gated on measurement, **not** a from-scratch addition.
 > MVP2's genuinely new capability is **world projection** (the homography below);
 > ego-motion compensation is inherited.
 
@@ -84,7 +180,7 @@ SSAM's file format already provides the bridge from abstract grid units
 to physical units via the `DIMENSIONS.Scale` field. MVP2 is the first
 MVP where it is filled in with a calibrated value instead of `1.0`.
 
-The relationship the format defines (see `04_ssam_format.md`):
+The relationship the format defines (see `src/tratrac/infrastructure/export/SSAM_FORMAT.md`):
 
 ```text
 real_measure = abstract_measure × Scale
@@ -150,7 +246,7 @@ for non-nadir perspective correction.
 For drone footage the `meters_per_pixel` factor is computable from
 metadata alone via the Ground Sample Distance formula — no vision
 algorithms required. That sub-deliverable is split into its own
-milestone in `05_5_mvp1_75.md` and ships **before** MVP2.
+milestone in `src/tratrac/calibration/GSD_CALIBRATION.md` and ships **before** MVP2.
 
 After MVP1.75 lands:
 
@@ -174,7 +270,7 @@ MVP2 then adds what the GSD shortcut **cannot** provide:
 
 ## Link / Lane IDs
 
-See `13_road_topology.md`.
+See `docs/roadmap/road_topology.md`.
 
 - **Link ID** — still hardcoded `0`. MVP2 introduces world-space coordinates
   but no road graph; segment identity arrives in MVP3.
@@ -198,7 +294,7 @@ Conflict TTC / PET become physically valid in this MVP; conflict
 
 World projection runs in `tratrac-postprocess` (pass 2), **not** in the perception
 run (pass 1). Rationale, consistent with the project's B-first / post-hoc bias
-(vault/20, vault/22, and the `post-hoc-rendering-principle` memory):
+(src/tratrac/infrastructure/export/VIDEO_EXPORT.md, src/tratrac/application/SMOOTHING.md, and the `post-hoc-rendering-principle` memory):
 
 - Projection is a pure coordinate map over already-recorded measurements — it needs
   no pixels, only the track record. Anything derivable from the record post-hoc
@@ -233,7 +329,7 @@ Because stabilization already reduces every frame to **one** global frame, only
 **one** world homography is needed: `world = H · global_point`. Correspondences
 authored on an anchor frame are first lifted into the global frame by that anchor's
 pose (`pose(reference_frame).apply(image_point)`) — the *same* anchor-manifest
-mechanism exclusion zones use (vault/21) — then the homography is fit in global
+mechanism exclusion zones use (src/tratrac/application/EXCLUSION_ZONES.md) — then the homography is fit in global
 coordinates.
 
 ### Components (where each piece lives — onion layers)
@@ -320,7 +416,7 @@ pixel-sized canvas. After projection the post-process step:
   in-bounds), not the pixel grid;
 - keeps `Scale = 1.0`.
 
-This matters because the SSAM exporter flips Y about `MaxY × Scale` (vault/04). With the
+This matters because the SSAM exporter flips Y about `MaxY × Scale` (src/tratrac/infrastructure/export/SSAM_FORMAT.md). With the
 pixel height left in place and `Scale = 1.0`, an external SSAM reader would see metric
 coordinates flipped about the pixel height and bounded by a pixel-sized box — internally
 self-consistent (our own `read_trj` round-trips) but wrong for any third-party consumer.
@@ -350,4 +446,4 @@ ground points.
   `compute_homography` docstring).
 - **Stabilization is still ORB** (MVP1.9), not SuperPoint + LightGlue — the projection
   inherits whatever drift the ego-motion fit carries. The SuperPoint upgrade is
-  `final_polish.md` item 1.
+  `docs/BACKLOG.md` item 1.

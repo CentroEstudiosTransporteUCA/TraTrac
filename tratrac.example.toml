@@ -7,17 +7,17 @@
 # source of truth. The only CLI flag is --force (overwrite policy; not a config key,
 # since it never affects the trajectories). A "disabled" feature is still an explicit
 # value, never a missing key: timing_csv = "" (off), start/end = "" (whole clip).
-# See vault/19_config_file.md.
+# See src/tratrac/application/CONFIG_DESIGN.md.
 #
 # The run is PERCEPTION ONLY: it writes the track record (export.out). It does not
-# produce a .trj — run `tratrac-postprocess RECORD --out run.trj` afterwards (vault/22).
+# produce a .trj — run `tratrac-postprocess RECORD --out run.trj` afterwards (src/tratrac/application/SMOOTHING.md).
 
 [input]
 # The processed video.
 video = "clips/highway_run3.mp4"
 process_fps = 0.0                 # cap processing to ~N frames/sec; 0.0 = every frame.
                                   # Decode-time decimation: faster on long clips, but fewer
-                                  # frames => more BoT-SORT ID switches. See vault/18.
+                                  # frames => more BoT-SORT ID switches. See src/tratrac/infrastructure/TIMESTEP_PRECISION.md.
                                   # (.trj TIMESTEP decimation is a tratrac-postprocess flag now.)
 
 [detector]
@@ -39,7 +39,7 @@ meters_per_pixel = 0.05
 # srt = "clips/highway_run3.SRT"  # DJI sidecar with per-frame altitude
 
 [ego_motion]
-# ORB ego-motion (MVP1.9, see vault/05_75_mvp1_9.md). When on, detection/tracking
+# ORB ego-motion (MVP1.9, see src/tratrac/infrastructure/video/EGO_MOTION.md). When on, detection/tracking
 # run on the raw full frame and the keyframe transform is applied to the DETECTIONS
 # (coordinates, not pixels) so trajectories are free of drone ego-motion and nothing
 # is ever cropped to black. The anchor re-sets when too little of it stays in view.
@@ -58,21 +58,21 @@ det_thresh = 0.1                  # BoT-SORT detection threshold (kept below det
 
 [export]
 out = "out/highway_run3.parquet"  # the track record (run's primary output, Parquet).
-                                  # Feed it to tratrac-postprocess to get a .trj (vault/22).
+                                  # Feed it to tratrac-postprocess to get a .trj (src/tratrac/application/SMOOTHING.md).
 transform_csv = ""                # "" = off; else a per-frame ego-motion transform CSV. Requires ego_motion.enabled
                                   # (feeds `tratrac-render --transforms` to map global-frame coords back onto the raw video)
 anchors_dir = ""                  # "" = off; else a directory for keyframe-anchor PNGs + manifest. Requires
                                   # ego_motion.enabled. Draw exclusion ROIs on these PNGs; pass the manifest to
-                                  # tratrac-postprocess --anchors to filter tracks in those zones. See vault/21.
+                                  # tratrac-postprocess --anchors to filter tracks in those zones. See src/tratrac/application/EXCLUSION_ZONES.md.
 
 [window]
 start = ""                        # "" = clip start; else HH:MM:SS(.ms) / MM:SS / SS
 end = ""                          # "" = clip end
 
 # Exclusion zones are NOT a run setting anymore — they are applied post-hoc and track-aware
-# by `tratrac-postprocess --exclusion-zones zones.json [--anchors manifest.json]` (vault/21).
+# by `tratrac-postprocess --exclusion-zones zones.json [--anchors manifest.json]` (src/tratrac/application/EXCLUSION_ZONES.md).
 
 # Overwrite policy is NOT a config key — it never affects the trajectories. Use the
-# `--force` CLI flag to overwrite existing outputs (default: off). See vault/19.
+# `--force` CLI flag to overwrite existing outputs (default: off). See src/tratrac/application/CONFIG_DESIGN.md.
 [run]
 timing_csv = ""                   # "" = profiling off; else a CSV path for per-frame timings

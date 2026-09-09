@@ -1,7 +1,7 @@
 # MVP 1.9 — ORB EGO-MOTION (COORDINATE STABILIZATION, INTERMEDIATE)
 
 > **Status — ✅ Shipped** (optional, off by default). The MVP number is a capability ID, not
-> execution order — see the roadmap reconciliation in `00_system_overview.md`. An intermediate
+> execution order — see the roadmap reconciliation in `docs/ROADMAP.md`. An intermediate
 > "keep if good enough" shortcut before MVP2's learned stabilizer + world projection.
 
 ---
@@ -15,10 +15,10 @@ sizes/speeds from GSD) and MVP2 (world projection), and is explicitly an
 estimator behind the `EgoMotionEstimator` port, quantify how much it improves
 trajectories on real footage, and keep it only if the gain justifies the cost. If
 not, the *port* survives as the seam MVP2 plugs the learned stabilizer into (see
-`final_polish.md` item 1).
+`docs/BACKLOG.md` item 1).
 
 It is **not** world projection. Coordinates remain image-space and therefore still
-non-physical per the coordinate-semantics invariant (`01_architecture_principles.md`).
+non-physical per the coordinate-semantics invariant (`src/tratrac/domain/ARCHITECTURE.md`).
 What changes is that they are image-space **in a single stabilized (keyframe-chained
 global) frame** instead of per-frame raw pixels, so frame-to-frame displacement —
 and therefore the Speed / Acceleration the orientation estimator derives — no
@@ -105,9 +105,9 @@ of the frame is the vehicles we track. A stabilizer must estimate background mot
 - **ECC (intensity-based)** optimizes over all pixels with no outlier rejection; it
   cannot be told to ignore the cars, and on bare asphalt it often locks onto them.
 
-Both are zero-new-dependency (`cv2` already present). `03_tech_stack.md` /
-`06_mvp2.md` name **SuperPoint + LightGlue** as the eventual target; ORB is the
-intermediate, recorded as `final_polish.md` item 1.
+Both are zero-new-dependency (`cv2` already present). `docs/TECH_STACK.md` /
+`src/tratrac/application/WORLD_PROJECTION.md` name **SuperPoint + LightGlue** as the eventual target; ORB is the
+intermediate, recorded as `docs/BACKLOG.md` item 1.
 
 ---
 
@@ -152,7 +152,7 @@ phantom motion into the *coordinates* of parked cars).
   the already-stabilized boxes.
 - `infrastructure/export/overlay_video.py` — maps stabilized coordinates back onto
   the raw frame for drawing via the inverse of `current_transform` (see
-  `20_video_export.md`).
+  `src/tratrac/infrastructure/export/VIDEO_EXPORT.md`).
 
 There is **no `StabilizedVideoSource`** — pixel warping was removed.
 
@@ -185,7 +185,7 @@ There is **no `StabilizedVideoSource`** — pixel warping was removed.
 
 ## Config Surface (Zero-Defaults Rule)
 
-Per `vault/19_config_file.md`, every key is mandatory and "off is explicit". The
+Per `src/tratrac/application/CONFIG_DESIGN.md`, every key is mandatory and "off is explicit". The
 `[ego_motion]` section has a **required** `enabled` boolean; when true the ORB
 parameters **and** `min_anchor_overlap` (the re-anchor threshold, in `(0, 1)`) are
 required, when false they may be absent — the same conditional pattern as
@@ -195,48 +195,9 @@ required, when false they may be absent — the same conditional pattern as
 
 ## Persisting the Per-Frame Transform (`TransformSink`)
 
-When stabilization is on, the `.trj` carries positions in the **global** frame, not
-raw pixels. The overlay video maps them back onto the raw frame live (via the
-inverse of `current_transform`), but any *offline* consumer — notably the post-hoc
-`tratrac-render`, which draws the `.trj`'s trajectories (and optional `validate_trj.py`
-violations) onto the video — has no access to that transform. The per-frame transforms
-exist only in memory inside `OrbEgoMotionEstimator` during a run.
-
-The fix persists them as a sidecar so the same global→raw inverse can be applied
-afterwards. There is **one consistent global space** (the keyframe chain is
-continuous, above), so the whole clip's coordinate↔pixel map is a *table*: one row
-per frame of the 6 similarity coefficients. It is **not** a single static transform
-— the camera pose changes every frame.
-
-Captured exactly like step timing (`15_step_timing.md`): an output port plus an
-opt-in **decorator around the port**, leaving the pipeline untouched.
-
-- `domain/stabilization.py` — `FrameTransform(frame_index, transform)`, the pure
-  per-frame record (sibling of `StepTiming`). `frame_index` is the absolute
-  `Frame.index` — it matches `round(timestamp_s * fps)`, the key `tratrac-render`
-  derives for each trajectory/violation row, so the two align on the same integer.
-- `domain/ports.py` — `TransformSink`: `record(FrameTransform)`. Streaming, no Null
-  sink (off = decorator not inserted, zero cost), exactly like `TimingSink`.
-- `infrastructure/transform/recording.py` — `RecordingEgoMotionEstimator`, the
-  `EgoMotionEstimator` analog of the `Timed*` decorators: forwards `estimate`,
-  records `(frame.index, result)`, returns it. The CLI keeps the *concrete*
-  estimator for the overlay's `transform_source` and the `DetectionObserver`, and
-  hands the decorator to the pipeline.
-- `infrastructure/transform/csv.py` — `CsvTransformSink`, header
-  `frame,a,b,c,d,tx,ty`, one row written immediately per frame (no buffering — each
-  record is self-contained, unlike the wide-row timing CSV).
-- `cli_render.py` (`tratrac-render`) — `--transforms` loads the table (`read_transforms`)
-  and maps each trajectory and violation position through `inverse(transform[frame])`
-  before drawing, using the domain `Transform2D.inverse().apply()` directly (it is a
-  package CLI, so it reuses the real geometry rather than re-deriving it).
-
-**Config (zero-defaults).** `export.transform_csv` is a required toggleable key
-(`""` = off), like `run.timing_csv`. Because it only makes
-sense alongside stabilization, `RunConfig.resolve` **fails** if it is set while
-`ego_motion.enabled` is false (with stabilization off every transform is the
-identity — there is nothing to record). The validator is deliberately *not* a
-consumer: it checks kinematics in the global frame, where the drone's motion has
-already been removed; mapping back to raw pixels would re-introduce it.
+Split into its own doc: `src/tratrac/infrastructure/transform/TRANSFORM_SINK.md` —
+how the per-frame global↔raw transform gets persisted as a sidecar so offline
+consumers (`tratrac-render`) can map stabilized coordinates back onto the raw video.
 
 ---
 
@@ -244,7 +205,7 @@ already been removed; mapping back to raw pixels would re-introduce it.
 
 MVP2 keeps the `EgoMotionEstimator` port and replaces the adapter:
 
-- **Stabilizer upgrade** — ORB → SuperPoint + LightGlue (`final_polish.md` item 1),
+- **Stabilizer upgrade** — ORB → SuperPoint + LightGlue (`docs/BACKLOG.md` item 1),
   if the ORB measurement shows it is needed.
 - **World projection** — a homography from the (now ego-motion-free) image plane to
   metric world coordinates, making SSAM positions physically meaningful and giving

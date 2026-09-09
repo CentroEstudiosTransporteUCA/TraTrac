@@ -5,7 +5,7 @@ interval has elapsed since the last forwarded timestep. Detection, tracking, and
 orientation still run on every frame upstream (the pipeline is untouched); only
 the *output* cadence is downsampled. This keeps BoT-SORT's per-frame association
 quality while letting the ``.trj`` carry coarser TIMESTEPs. See
-vault/18_timestep_precision.md.
+src/tratrac/infrastructure/TIMESTEP_PRECISION.md.
 
 A decorator (like ``TimedExporter``) so the policy stays out of the pipeline loop
 and the concrete writer stays dumb.
@@ -27,7 +27,7 @@ class DecimatingTrajectoryExporter:
 	frames are forwarded when their timestamp reaches the next grid point, within
 	half a frame so spacing snaps to the nearest available frame. An interval at or
 	below the frame duration degrades to forwarding every frame. The grid math is
-	the shared ``DecimationGrid`` (vault/18_timestep_precision.md).
+	the shared ``DecimationGrid`` (src/tratrac/infrastructure/TIMESTEP_PRECISION.md).
 	"""
 
 	def __init__(

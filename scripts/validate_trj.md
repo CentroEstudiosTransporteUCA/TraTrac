@@ -14,7 +14,7 @@ It belongs to no MVP — it is QA plumbing, a sibling of the other `scripts/`
 diagnostics. Standalone (stdlib only, like `dump_trj.py`): it re-implements the
 `.trj` reader rather than importing the package, so it still runs when the
 package is broken. The reader mirrors `dump_trj.py`; the format is
-`04_ssam_format.md`.
+`src/tratrac/infrastructure/export/SSAM_FORMAT.md`.
 
 ---
 
@@ -85,7 +85,7 @@ English ones, which keep the original "reject the impossible" limits (~70 m/s,
 
 **MVP1 caveat — failing is the intended signal.** MVP1 writes
 pixel-displacement into these fields while declaring metric units (see
-`05_mvp1.md` / `04_ssam_format.md`). So MVP1 output fails these bounds
+`src/tratrac/infrastructure/detection/DETECTOR_CHOICE.md` / `src/tratrac/infrastructure/export/SSAM_FORMAT.md`). So MVP1 output fails these bounds
 *wholesale* (speeds of hundreds "m/s", accelerations of thousands "m/s²"). That
 is the validator correctly reporting that the kinematics are not yet physical —
 the numbers only become meaningful once real metric calibration lands

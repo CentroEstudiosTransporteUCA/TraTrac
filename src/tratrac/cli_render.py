@@ -4,7 +4,7 @@ Post-hoc visualization: draws an SSAM ``.trj``'s bumpers/IDs/trails over its sou
 clip and writes an overlay video. This is the rendering that used to run *inside*
 the live pipeline (``export.video_out``) and in ``tratrac-smooth --video-out`` —
 pulled out into its own step so a run only detects/tracks/exports and never pays the
-per-frame video-encode cost (see vault/20_video_export.md).
+per-frame video-encode cost (see src/tratrac/infrastructure/export/VIDEO_EXPORT.md).
 
 It reuses the pipeline's ``OverlayVideoExporter`` drawing engine; the only thing
 that changes from the old in-pipeline path is the *source* of the vehicle states:
@@ -136,7 +136,7 @@ def render(
 	out.parent.mkdir(parents=True, exist_ok=True)
 	# Render only the clip span the .trj covers, not the whole source — otherwise a short
 	# analysis window on a long clip would re-encode the entire video. TIMESTEPs are
-	# absolute seconds (vault/17), so they bound the window directly; the tail buffer keeps
+	# absolute seconds (src/tratrac/infrastructure/video/TIME_WINDOW.md), so they bound the window directly; the tail buffer keeps
 	# the last covered frame. Windowed frames keep their absolute index, so the
 	# round(timestamp * fps) alignment below still holds.
 	start_seconds = min(f.timestamp_seconds for f in recording.frames)

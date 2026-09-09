@@ -1,5 +1,5 @@
 """Tests for exclusion zones: the zone->global conversion, the track-aware filter, and the
-sidecar-JSON loader. Pure stdlib — no cv2/model downloads. See vault/21_exclusion_zones.md."""
+sidecar-JSON loader. Pure stdlib — no cv2/model downloads. See src/tratrac/application/EXCLUSION_ZONES.md."""
 
 from __future__ import annotations
 

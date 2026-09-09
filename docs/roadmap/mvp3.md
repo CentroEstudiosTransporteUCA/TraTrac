@@ -1,7 +1,7 @@
 # MVP 3 — MULTI-PLANE WORLD TRAJECTORIES
 
 > **Status — ❌ Not started.** The MVP number is a capability ID, not execution order — see the
-> roadmap reconciliation in `00_system_overview.md`.
+> roadmap reconciliation in `docs/ROADMAP.md`.
 
 ---
 
@@ -53,7 +53,7 @@ SSAM .trj Export
 
 ## Link / Lane IDs
 
-See `13_road_topology.md`.
+See `docs/roadmap/road_topology.md`.
 
 - **Link ID** — populated via **Strategy A** (hand-drawn link polygons in a
   per-scene JSON next to the video). A new application-layer

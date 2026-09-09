@@ -39,7 +39,7 @@ class BoxmotBotSortTracker:
 		# gatekeeper. Aerial-domain detections often peak in the 0.25-0.4 range,
 		# and BotSort's stock 0.3 would suppress legitimate low-confidence cars.
 		#
-		# When coordinate stabilization is on (vault/05_75_mvp1_9.md), detections are
+		# When coordinate stabilization is on (src/tratrac/infrastructure/video/EGO_MOTION.md), detections are
 		# already mapped into the stabilized frame before they reach the tracker, so
 		# BoT-SORT must NOT also compensate camera motion — doing so would double-
 		# correct. cmc_method=None disables its internal CMC. Left on for raw

@@ -3,22 +3,22 @@
 Reads the perception run's track record (Parquet), optionally **filters** out whole tracks
 that fall inside exclusion zones, runs the forward+RTS constant-acceleration Kalman smoother
 per surviving track, and writes a de-jittered SSAM ``.trj``. Offline and zero-phase — the
-second pass of the two-pass design (vault/22). Re-running with different ``--pos-noise`` /
+second pass of the two-pass design (src/tratrac/application/SMOOTHING.md). Re-running with different ``--pos-noise`` /
 ``--jerk`` / ``--exclusion-*`` re-tunes with no re-detection.
 
-Exclusion is **track-aware** (vault/21): a track is dropped when the majority of its
+Exclusion is **track-aware** (src/tratrac/application/EXCLUSION_ZONES.md): a track is dropped when the majority of its
 observations fall inside a zone. Zones are authored on the anchor PNGs the run exported
 (``--anchors-dir``); pass the run's anchor ``manifest.json`` via ``--anchors`` so each zone's
 ``reference_frame`` is mapped into the global frame by that anchor's pose. Omit ``--anchors``
 for a static (non-ego-motion) run, where every pose is the identity.
 
-With ``--calibration`` (MVP2, vault/06_mvp2.md) the trajectories are projected onto the
+With ``--calibration`` (MVP2, src/tratrac/application/WORLD_PROJECTION.md) the trajectories are projected onto the
 metric **world** plane before smoothing: one homography is fitted from image↔world ground
 correspondences (mapped into the global frame via the same anchor poses), every observation
 is rewritten into world metres, and the ``.trj`` carries world coordinates with
 ``DIMENSIONS.Scale = 1.0``. Without it, coordinates stay image-space (the pre-MVP2 path).
 
-Rendering is a separate step: ``tratrac-render`` on the ``.trj`` (vault/20).
+Rendering is a separate step: ``tratrac-render`` on the ``.trj`` (src/tratrac/infrastructure/export/VIDEO_EXPORT.md).
 """
 
 from __future__ import annotations
@@ -86,7 +86,7 @@ def postprocess(
 			dir_okay=False,
 			help="World-projection calibration JSON (image<->world ground correspondences). When "
 			"given, trajectories are projected to metric world coordinates before smoothing "
-			"(MVP2); DIMENSIONS.Scale becomes 1.0. See vault/06_mvp2.md.",
+			"(MVP2); DIMENSIONS.Scale becomes 1.0. See src/tratrac/application/WORLD_PROJECTION.md.",
 		),
 	] = None,
 	exclusion_min_fraction: Annotated[
@@ -220,7 +220,7 @@ def _project_to_world(
 	grid. This matters because the SSAM exporter writes those as the DIMENSIONS bounds and
 	flips Y about ``height x scale``: leaving the pixel dimensions in place would make an
 	external reader see metric coordinates against a pixel-sized canvas, flipped about the
-	wrong axis (vault/04 + vault/06_mvp2.md). The translation discards the operator's
+	wrong axis (src/tratrac/infrastructure/export/SSAM_FORMAT.md + src/tratrac/application/WORLD_PROJECTION.md). The translation discards the operator's
 	absolute world origin, which is arbitrary in Approach A and irrelevant to the
 	translation-invariant conflict analytics. ``pos_noise``/``jerk`` are converted from
 	pixels into world units by the homography's local scale, preserving the smoother's

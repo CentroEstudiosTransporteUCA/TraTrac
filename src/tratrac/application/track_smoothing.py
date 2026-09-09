@@ -1,6 +1,6 @@
 """Turn a track's raw observations into smoothed VehicleStates (the post-pass core).
 
-Pure application logic for ``tratrac-smooth`` (vault/22_smoothing.md): runs the
+Pure application logic for ``tratrac-smooth`` (src/tratrac/application/SMOOTHING.md): runs the
 forward+RTS Kalman smoother (``application.kalman.smooth_track``) on a track's measured
 centroids, then reads position/velocity/acceleration out of the smoothed state — never
 finite-differencing noisy position. Measurements are in pixels; outputs are scaled to

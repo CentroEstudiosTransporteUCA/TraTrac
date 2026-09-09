@@ -5,7 +5,7 @@ ORB estimator notifies an ``anchor_observer`` synchronously during ``estimate(fr
 a frame becomes a new keyframe anchor; that observer appends the pose to a ``pending`` list
 this decorator owns. The decorator drains it right after the call — while ``frame`` is still
 the frame that became the anchor — and records ``(frame, pose)`` to the sink. The pipeline
-is untouched: it just drives the decorated estimator. See vault/21_exclusion_zones.md.
+is untouched: it just drives the decorated estimator. See src/tratrac/application/EXCLUSION_ZONES.md.
 """
 
 from __future__ import annotations

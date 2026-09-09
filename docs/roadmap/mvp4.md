@@ -1,9 +1,9 @@
 # MVP 4 — PRECISE OCCUPANCY-AWARE TRAJECTORIES
 
 > **Status — 🟡 Partially pulled forward.** The MVP number is a capability ID, not execution
-> order — see the roadmap reconciliation in `00_system_overview.md`. This MVP's **dual-export
+> order — see the roadmap reconciliation in `docs/ROADMAP.md`. This MVP's **dual-export
 > "B-first" architecture** ("dual export begins") was pulled forward and is already the core
-> design (perception run → Parquet record → post-hoc `.trj`, vault/22). The SAM2
+> design (perception run → Parquet record → post-hoc `.trj`, src/tratrac/application/SMOOTHING.md). The SAM2
 > segmentation + mask-based orientation in this milestone are **not started**.
 
 ---
@@ -55,7 +55,7 @@ SSAM + Internal Export
 
 ## Link / Lane IDs
 
-See `13_road_topology.md`.
+See `docs/roadmap/road_topology.md`.
 
 - **Link ID** — inherited from MVP3 (Strategy A polygons). Mask-based
   centroids feed the same point-in-polygon assigner.

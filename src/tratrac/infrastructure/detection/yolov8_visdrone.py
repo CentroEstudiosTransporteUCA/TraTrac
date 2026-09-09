@@ -1,7 +1,7 @@
 """YOLOv8-VisDrone detector adapter.
 
-**MVP1 emergency adapter.** The vault picks RT-DETR over YOLO for long-term
-aerial robustness (see `vault/03_tech_stack.md`), but the COCO-pretrained
+**MVP1 emergency adapter.** RT-DETR is picked over YOLO for long-term
+aerial robustness (see `docs/TECH_STACK.md`), but the COCO-pretrained
 RT-DETR-R18 is unusable on aerial inputs and we can't fine-tune in the MVP1
 timebox. This adapter wraps the community-trained `Mahadih534/YoloV8-VisDrone`
 checkpoint on HuggingFace (YOLOv8 fine-tuned on VisDrone: 10K aerial images,

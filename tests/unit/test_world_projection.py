@@ -1,4 +1,4 @@
-"""Tests for the pure ``WorldProjector`` impls + the local-scale helper (MVP2, vault/06).
+"""Tests for the pure ``WorldProjector`` impls + the local-scale helper (MVP2, src/tratrac/application/WORLD_PROJECTION.md).
 
 numpy-only — no cv2 / model downloads. The homography matrices are built directly here
 (the cv2 fit lives in ``test_world_calibration.py``)."""

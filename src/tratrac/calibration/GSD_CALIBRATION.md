@@ -1,7 +1,7 @@
 # MVP 1.75 — METRIC SIZES AND SPEEDS FROM DRONE METADATA
 
 > **Status — ✅ Shipped.** The MVP number is a capability ID, not execution order — see the
-> roadmap reconciliation in `00_system_overview.md`. Delivered before MVP1.5 as an independent
+> roadmap reconciliation in `docs/ROADMAP.md`. Delivered before MVP1.5 as an independent
 > shortcut.
 
 ---
@@ -111,7 +111,7 @@ front, and the orientation estimator + exporter become unit-aware.
 
 ### CLI surface
 
-Calibration is part of the persisted run config (`vault/19_config_file.md`):
+Calibration is part of the persisted run config (`src/tratrac/application/CONFIG_DESIGN.md`):
 specify `[calibration]` in the TOML or pass the matching flags. Exactly one
 method — `meters_per_pixel`, or `drone_model` + an altitude source
 (`altitude_m` or an `srt` path).
@@ -124,7 +124,7 @@ uv run tratrac VIDEO --out OUT --drone-model mavic_3 --srt VIDEO.SRT  # + other 
 uv run tratrac VIDEO --out OUT --meters-per-pixel 0.05  # + other required flags
 ```
 
-> Note: since the zero-defaults refactor (`vault/19_config_file.md`), all other
+> Note: since the zero-defaults refactor (`src/tratrac/application/CONFIG_DESIGN.md`), all other
 > run parameters are mandatory too — the practical invocation is
 > `uv run tratrac --config run.toml` with these as overrides.
 
@@ -142,7 +142,7 @@ uv run tratrac VIDEO --out OUT --meters-per-pixel 0.05  # + other required flags
 
 - Takes a required `scale` constructor argument; MVP1.75 supplies the
   computed `meters_per_pixel`. (The old `scale=1.0` default was removed by the
-  zero-defaults refactor — see `vault/19_config_file.md`.)
+  zero-defaults refactor — see `src/tratrac/application/CONFIG_DESIGN.md`.)
 - No struct changes; no on-disk format changes.
 
 ### Worked example

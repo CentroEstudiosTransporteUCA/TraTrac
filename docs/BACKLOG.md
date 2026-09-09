@@ -9,7 +9,7 @@ where we shipped a cheaper implementation behind a stable port and recorded the
 intended final-product replacement here. Each entry names the seam, the current
 adapter, the target adapter, and *why* the upgrade is worth it.
 
-This is not the MVP roadmap (`05_mvp1.md` … `11_mvp7.md`) — those add *new
+This is not the MVP roadmap (`src/tratrac/infrastructure/detection/DETECTOR_CHOICE.md` … `docs/roadmap/mvp7.md`) — those add *new
 capabilities*. This file tracks *quality upgrades to existing capabilities* that
 were intentionally deferred. An item leaves this file when it ships.
 
@@ -24,7 +24,7 @@ swap with no change to the domain, the pipeline, or the other adapters.
 
 | | |
 | --- | --- |
-| Port | `EgoMotionEstimator` (stabilization seam, **shipped in MVP1.9** — see `05_75_mvp1_9.md`) |
+| Port | `EgoMotionEstimator` (stabilization seam, **shipped in MVP1.9** — see `src/tratrac/infrastructure/video/EGO_MOTION.md`) |
 | Ships with | ORB + RANSAC similarity adapter (`OrbEgoMotionEstimator`) — no new dependency |
 | Target | SuperPoint + LightGlue adapter (`kornia` or the standalone `lightglue`) |
 | Trigger to upgrade | Measured stabilization error on real aerial footage exceeds tolerance |
@@ -50,7 +50,7 @@ estimator if the gap warrants it.
 thin out on the worst aerial footage — low-texture, repetitive (lane markings,
 asphalt), motion-blurred. SuperPoint + LightGlue match *learned* keypoints, far
 more robust there, and LightGlue's attention rejects ambiguous matches that ORB's
-local ratio test would accept. This is why `03_tech_stack.md` and `06_mvp2.md`
+local ratio test would accept. This is why `docs/TECH_STACK.md` and `src/tratrac/application/WORLD_PROJECTION.md`
 name SuperPoint + LightGlue as the target stabilizer.
 
 **Why it is a clean swap.** The `EgoMotionEstimator` port returns a `Transform2D`
@@ -58,7 +58,7 @@ per frame; nothing downstream knows or cares how it was estimated. Replacing ORB
 with SuperPoint + LightGlue is a single new adapter wired in the CLI — no domain,
 pipeline, exporter, or test changes outside the new adapter and its own tests.
 
-> The MVP1.9 ORB slice has landed; `06_mvp2.md` still specifies SuperPoint +
+> The MVP1.9 ORB slice has landed; `src/tratrac/application/WORLD_PROJECTION.md` still specifies SuperPoint +
 > LightGlue from the start — its stabilization box is now an *upgrade* of MVP1.9's
 > ORB adapter, not a from-scratch addition.
 
@@ -72,7 +72,7 @@ pipeline, exporter, or test changes outside the new adapter and its own tests.
 | **Target** | constant-acceleration **Kalman/RTS** smoother (`application/kalman.py`) |
 | **Trigger** | acceleration/jerk noise in the `.trj` (the standing accel-noise issue) |
 
-The offline two-pass has **shipped** (`22_smoothing.md`): the perception run writes the raw
+The offline two-pass has **shipped** (`src/tratrac/application/SMOOTHING.md`): the perception run writes the raw
 track record, and `tratrac-postprocess` runs a forward+RTS smoother to reconstruct kinematics and
 write the `.trj`. The **export inversion** removed the in-pipeline EMA/forward-Kalman
 orientation entirely — there is no longer a streaming/inline `.trj`, so kinematics is always

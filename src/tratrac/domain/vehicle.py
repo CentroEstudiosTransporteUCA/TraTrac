@@ -12,13 +12,13 @@ class VehicleState:
 	"""
 	A vehicle's state at a single timestep.
 
-	Per vault/01_architecture_principles.md this is the canonical internal type.
+	Per src/tratrac/domain/ARCHITECTURE.md this is the canonical internal type.
 	MVP1 carries only the fields required for SSAM v1.04 export; later MVPs add
 	segmentation polygons, ReID embeddings, plane metadata, and uncertainty.
 
 	``link_id`` and ``lane_id`` default to 0 (the SSAM "unknown" sentinel). The
 	application layer populates them when a road graph is available — see
-	``vault/13_road_topology.md`` for sourcing strategy per MVP. ``lane_id`` is
+	``docs/roadmap/road_topology.md`` for sourcing strategy per MVP. ``lane_id`` is
 	a Byte in the SSAM record, so its range is validated here.
 	"""
 

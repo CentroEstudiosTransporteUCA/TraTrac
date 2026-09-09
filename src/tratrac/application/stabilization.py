@@ -1,6 +1,6 @@
 """Coordinate stabilization: map a raw-frame detection into the stabilized frame.
 
-MVP1.9 stabilizes *coordinates*, not pixels (see vault/05_75_mvp1_9.md). The
+MVP1.9 stabilizes *coordinates*, not pixels (see src/tratrac/infrastructure/video/EGO_MOTION.md). The
 detector and tracker work on the raw, full-resolution frame — so no car is ever
 cropped into a black border — and each detection's box is then transformed into
 the keyframe-anchored global frame before tracking, so the exported trajectory is
@@ -48,7 +48,7 @@ class EgoMotionStabilizer:
 
 	The concrete stabilize step for a `--stabilize` run. A first-class collaborator (rather
 	than an inline loop) so it sits behind the ``DetectionStabilizer`` port and is timeable
-	like the other steps (vault/15_step_timing.md)."""
+	like the other steps (src/tratrac/infrastructure/timing/STEP_TIMING.md)."""
 
 	def stabilize(self, detections: list[Detection], transform: Transform2D) -> list[Detection]:
 		return [apply_transform(detection, transform) for detection in detections]

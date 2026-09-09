@@ -2,7 +2,7 @@
 
 Builds a small Parquet track record, runs the CLI, and reads the emitted ``.trj`` back to
 assert that with a calibration the coordinates are world metres + ``DIMENSIONS.Scale = 1.0``,
-and that without one the pre-MVP2 image-space path is unchanged. See vault/06_mvp2.md."""
+and that without one the pre-MVP2 image-space path is unchanged. See src/tratrac/application/WORLD_PROJECTION.md."""
 
 from __future__ import annotations
 

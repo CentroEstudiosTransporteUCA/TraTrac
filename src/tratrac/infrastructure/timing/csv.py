@@ -5,7 +5,7 @@ Buffers a frame's step timings and flushes the row when the frame ordinal
 advances — safe because every step runs once per frame, so a frame's records
 arrive consecutively. The stabilization-only steps (observe, ego_motion, stabilize)
 are blank on a non-stabilized run. The last frame (and any partial frame from a
-mid-step crash) flushes on close. See vault/15_step_timing.md.
+mid-step crash) flushes on close. See src/tratrac/infrastructure/timing/STEP_TIMING.md.
 """
 
 from __future__ import annotations

@@ -2,7 +2,7 @@
 
 Each describes how long one pipeline step took for one frame. They are the
 vocabulary the timing decorators speak and the timing sinks render. See
-vault/15_step_timing.md.
+src/tratrac/infrastructure/timing/STEP_TIMING.md.
 """
 
 from __future__ import annotations

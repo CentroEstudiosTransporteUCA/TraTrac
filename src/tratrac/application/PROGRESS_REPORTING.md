@@ -40,7 +40,7 @@ describes *what happened*, never *how to render it*:
 | `ProcessingFailed` | a frame raised (error re-raises after) | frame index, error message |
 
 `FrameProcessed.fraction` is `frames_done / total_frames` (not the absolute
-`frame_index`): with an analysis window (`vault/17_time_window.md`) the index is
+`frame_index`): with an analysis window (`src/tratrac/infrastructure/video/TIME_WINDOW.md`) the index is
 the real frame number, which would mismatch the windowed total. It returns
 `0.0` when the total is unknown (`total_frames <= 0`, which OpenCV can report)
 and clamps to `1.0` when the reported count under-counts. Rendering and

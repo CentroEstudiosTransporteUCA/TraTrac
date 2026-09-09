@@ -33,7 +33,7 @@ uv run tratrac --config run.toml --force    # same, overwriting existing outputs
 
 This extends the calibration philosophy already in MVP1.75 — the CLI refuses to
 run uncalibrated rather than emit physically meaningless metric values
-(`05_5_mvp1_75.md`) — to *every* parameter. The trade is **typing convenience for
+(`src/tratrac/calibration/GSD_CALIBRATION.md`) — to *every* parameter. The trade is **typing convenience for
 scientific reproducibility**: a `.trj` is reconstructable from the config that
 produced it. A silent default (e.g. an unstated `conf=0.25` or `device=cpu`) is
 exactly the kind of hidden variable that makes a result hard to reproduce or
@@ -75,7 +75,7 @@ Absence of a key is an error; an explicit "off" value is legal. The config is th
 a complete, self-documenting declaration of the run with zero silent behaviour.
 
 A toggleable key can still be **conditionally incoherent**: `export.transform_csv`
-(the per-frame ego-motion transform sidecar, `05_75_mvp1_9.md`) only makes sense
+(the per-frame ego-motion transform sidecar, `src/tratrac/infrastructure/video/EGO_MOTION.md`) only makes sense
 when `ego_motion.enabled` is true — with stabilization off every transform is the
 identity. Setting it while stabilization is off is therefore an aggregated
 `ConfigError`, mirroring the "specify exactly one calibration method" guard: a
@@ -153,7 +153,7 @@ run-time, not config-shape, concerns; a future `--check-deep` could add them.
 
 `static_run_problems` was extracted from `process`, which previously raised the path guards
 one-at-a-time; both paths now report them **aggregated**, matching how `resolve` already
-behaves. See `docs/check_command_scope.md`.
+behaves. See `src/tratrac/CHECK_COMMAND.md`.
 
 ---
 

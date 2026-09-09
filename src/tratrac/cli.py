@@ -1,7 +1,7 @@
 """Typer CLI entry point for TraTrac.
 
 A run is fully described by a persisted ``RunConfig`` (see
-``tratrac.application.config`` and ``vault/19_config_file.md``). There are no
+``tratrac.application.config`` and ``src/tratrac/application/CONFIG_DESIGN.md``). There are no
 built-in defaults and **no per-key override flags**: every value comes from the
 ``--config`` TOML, and a missing value fails the run listing exactly what is
 absent. The sole flag is ``--force`` (overwrite existing outputs) — overwrite
@@ -10,9 +10,9 @@ config replays with just ``--config``.
 
 The run is **perception only**: it writes the track record (the raw tracked
 measurements, the run's canonical output). It does not produce an SSAM ``.trj`` —
-run ``tratrac-postprocess`` on the record to filter/smooth it into a ``.trj`` (vault/22).
+run ``tratrac-postprocess`` on the record to filter/smooth it into a ``.trj`` (src/tratrac/application/SMOOTHING.md).
 With ``--anchors-dir`` it also exports the ORB keyframe anchors (PNGs + manifest) an
-operator draws exclusion zones on (vault/21).
+operator draws exclusion zones on (src/tratrac/application/EXCLUSION_ZONES.md).
 """
 
 from __future__ import annotations
@@ -111,7 +111,7 @@ def process(
 
 	The run is driven entirely by ``--config``; the only operational flag is
 	``--force`` (overwrite existing outputs without editing the config). Overwrite
-	policy is not part of the config — it never affects the trajectories (vault/19).
+	policy is not part of the config — it never affects the trajectories (src/tratrac/application/CONFIG_DESIGN.md).
 
 	``--check`` short-circuits to validation only: it parses the TOML, resolves the
 	``RunConfig``, and runs the static filesystem guards, then reports every problem
@@ -138,7 +138,7 @@ def process(
 
 	# --- Fail-fast checks that need the filesystem but not the (costly) video open. ---
 	# Aggregated (every problem at once), so a run surfaces all path issues in one go —
-	# the same shape ``--check`` reports and consistent with ConfigError. See vault/19.
+	# the same shape ``--check`` reports and consistent with ConfigError. See src/tratrac/application/CONFIG_DESIGN.md.
 	static_problems = static_run_problems(run)
 	if static_problems:
 		_emit_check_report(static_problems, as_json=False)
@@ -161,7 +161,7 @@ def process(
 			# A non-positive altitude (e.g. an SRT with no usable values) surfaces from
 			# the calibration chain; report it cleanly rather than as a traceback.
 			raise typer.BadParameter(str(exc)) from exc
-		# Coordinate stabilization (MVP1.9, vault/05_75_mvp1_9.md): the detector and
+		# Coordinate stabilization (MVP1.9, src/tratrac/infrastructure/video/EGO_MOTION.md): the detector and
 		# tracker run on the raw frame; the live ORB ego-motion transform is applied to
 		# the detections (not the pixels) inside the pipeline. None when stabilization
 		# is off. The ORB estimator is also the DetectionObserver (masking vehicles out
@@ -202,7 +202,7 @@ def process(
 			_transform_sink(run.export.transform_csv) as transform_sink,
 			_anchor_sink(run.export.anchors_dir, video_label=str(run.input.video)) as anchor_sink,
 		):
-			# Per-step timing wraps each port once per frame (vault/15). detect/track/record
+			# Per-step timing wraps each port once per frame (src/tratrac/infrastructure/timing/STEP_TIMING.md). detect/track/record
 			# always run; observe/ego-motion/stabilize only on a stabilized run.
 			if sink is not None:
 				det = TimedDetector(det, sink)
@@ -261,7 +261,7 @@ def static_run_problems(run: RunConfig) -> list[str]:
 	if not run.input.video.is_file():
 		problems.append(f"input.video {run.input.video} does not exist or is not a file.")
 	# Path-type guards the per-key flags used to enforce (dir_okay/file_okay) before they
-	# were removed (vault/19): file outputs must not be directories, the anchors dir not a
+	# were removed (src/tratrac/application/CONFIG_DESIGN.md): file outputs must not be directories, the anchors dir not a
 	# file — caught here cleanly rather than as an opaque writer error later.
 	for label, path in (
 		("export.out", run.export.out),

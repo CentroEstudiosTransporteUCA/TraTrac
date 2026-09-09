@@ -6,7 +6,7 @@ frame, so each decorator counts its own calls as the frame ordinal — they stay
 aligned without sharing state. The full per-frame chain is detect → observe →
 ego-motion → stabilize → track → record; the stabilization-only steps (observe,
 ego-motion, stabilize) are only wrapped on a `--stabilize` run. See
-vault/15_step_timing.md.
+src/tratrac/infrastructure/timing/STEP_TIMING.md.
 """
 
 from __future__ import annotations

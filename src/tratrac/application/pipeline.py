@@ -1,12 +1,12 @@
 """Pipeline orchestrator: wires VideoSource -> Detector -> Tracker -> TrackSink.
 
 Perception only. The per-frame steps are detect → observe → ego-motion → stabilize →
-track → record (each a port, so each is independently timeable — vault/15): it detects,
+track → record (each a port, so each is independently timeable — src/tratrac/infrastructure/timing/STEP_TIMING.md): it detects,
 hands the detections to any observer, (optionally) estimates ego-motion and stabilizes the
 detection coordinates, tracks, then records the raw tracked measurements to a ``TrackSink``
-— the canonical run output ("export B", vault/01). Kinematics (orientation/speed/accel) and
+— the canonical run output ("export B", src/tratrac/domain/ARCHITECTURE.md). Kinematics (orientation/speed/accel) and
 the SSAM ``.trj`` are **not** produced here; they are derived offline by
-``tratrac-postprocess`` from the record (vault/22). Keeping the pipeline to raw measurements
+``tratrac-postprocess`` from the record (src/tratrac/application/SMOOTHING.md). Keeping the pipeline to raw measurements
 is what lets the smoother de-jitter position instead of re-smoothing derived kinematics.
 """
 
@@ -55,7 +55,7 @@ class TrajectoryPipeline:
 		# The run's primary output: raw tracked measurements per frame. The pipeline
 		# owns its lifecycle (as it used to own the exporter's).
 		self._sink = sink
-		# Coordinate stabilization (MVP1.9, vault/05_75_mvp1_9.md): when present, each
+		# Coordinate stabilization (MVP1.9, src/tratrac/infrastructure/video/EGO_MOTION.md): when present, each
 		# frame's detections are mapped into the keyframe-anchored global frame BEFORE
 		# tracking, so detection/tracking run on the raw, full-resolution frame (no
 		# black-border cropping) while trajectories stay free of drone ego-motion.
@@ -68,7 +68,7 @@ class TrajectoryPipeline:
 		# reuse each frame's detections; every other run gets the silent default.
 		self._detection_observer: DetectionObserver = detection_observer or NullDetectionObserver()
 		# Maps detections into the global frame when ego-motion is on; Null Object
-		# (pass-through) otherwise. A port so the step is timeable (vault/15).
+		# (pass-through) otherwise. A port so the step is timeable (src/tratrac/infrastructure/timing/STEP_TIMING.md).
 		self._stabilizer: DetectionStabilizer = stabilizer or NullDetectionStabilizer()
 
 	def run(self) -> int:

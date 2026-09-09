@@ -2,7 +2,7 @@
 
 Uses cv2 only (no model downloads): a textured patch is shifted by a known
 translation and the estimator must recover the inverse mapping (current frame
-back into the reference frame). See vault/05_75_mvp1_9.md.
+back into the reference frame). See src/tratrac/infrastructure/video/EGO_MOTION.md.
 """
 
 from __future__ import annotations

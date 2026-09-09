@@ -3,7 +3,7 @@
 A validation-only mode so the Tauri client (and CI) can verify a config **without
 running** the pipeline. Goal: make `application/config.py` the single source of truth
 for validation, instead of the UI reimplementing range/coherence rules in JS/Rust
-(see `docs/tauri_ui_spec.md`, principio 2).
+(see the URBAn repo's `docs/config_editor_spec.md`, principio 2).
 
 ---
 
@@ -18,7 +18,7 @@ tratrac --config run.toml --check [--json]
 - `--json` — emit a machine-readable report to **stdout** (only meaningful with
   `--check`). Without it, problems print human-readable to stderr.
 - Lives as a **flag on the existing `process` command**, not a new subcommand — keeps
-  the single-command, config-only design intact (vault/19).
+  the single-command, config-only design intact (src/tratrac/application/CONFIG_DESIGN.md).
 
 ### Exit codes (contract for the UI)
 | Code | Meaning |

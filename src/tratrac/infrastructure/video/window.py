@@ -2,7 +2,7 @@
 
 Pure (no cv2) so the index math — seconds→frames, inclusive end, clamping to the
 clip length — is testable in isolation. ``OpenCvVideoSource`` uses it to seek to
-the start frame and to know when to stop. See vault/17_time_window.md.
+the start frame and to know when to stop. See src/tratrac/infrastructure/video/TIME_WINDOW.md.
 """
 
 from __future__ import annotations

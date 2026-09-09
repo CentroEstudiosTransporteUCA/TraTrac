@@ -41,7 +41,7 @@ class EgoMotionEstimator(Protocol):
 	frame (anchored to the first frame). The first call returns the identity.
 	Implementations may match against a keyframe anchor and compose anchor poses
 	internally. The pipeline applies the returned transform to detections (not
-	pixels). See vault/05_75_mvp1_9.md.
+	pixels). See src/tratrac/infrastructure/video/EGO_MOTION.md.
 	"""
 
 	def estimate(self, frame: Frame) -> Transform2D: ...
@@ -71,7 +71,7 @@ class DetectionObserver(Protocol):
 	reuse detections the pipeline already computed instead of detecting again. The
 	masked-ORB ego-motion path uses it: the stabilizer keeps the latest batch and,
 	on the next frame, masks those vehicles out of ORB feature extraction so the
-	moving foreground cannot bias the ego-motion fit. See vault/05_75_mvp1_9.md.
+	moving foreground cannot bias the ego-motion fit. See src/tratrac/infrastructure/video/EGO_MOTION.md.
 	"""
 
 	def observe(self, detections: list[Detection]) -> None: ...
@@ -82,7 +82,7 @@ class DetectionStabilizer(Protocol):
 
 	Applied after ego-motion estimation, before tracking, so the tracker associates
 	ego-motion-free boxes. The Null Object (no stabilization) returns the detections
-	unchanged. A port so the step is decoratable/timeable like the others (vault/15).
+	unchanged. A port so the step is decoratable/timeable like the others (src/tratrac/infrastructure/timing/STEP_TIMING.md).
 	"""
 
 	def stabilize(self, detections: list[Detection], transform: Transform2D) -> list[Detection]: ...
@@ -98,7 +98,7 @@ class WorldProjector(Protocol):
 	"""Maps a track observation's (stabilized) image point onto the metric world plane.
 
 	Applied post-hoc by ``tratrac-postprocess`` before smoothing, so trajectories are
-	smoothed and exported in world metres (MVP2, see ``vault/06_mvp2.md``). The method
+	smoothed and exported in world metres (MVP2, see ``src/tratrac/application/WORLD_PROJECTION.md``). The method
 	takes the observation's ``frame_index`` as well as the point so a future per-anchor
 	projector can pick the right homography; the single-homography impl ignores it. The
 	Null/identity impl returns the point unchanged (image-space, the pre-MVP2 behavior).
@@ -117,7 +117,7 @@ class TrajectoryExporter(Protocol):
 	This is a pure data port — it carries no pixels. Visualization (drawing
 	trajectories over the footage) is a post-hoc concern handled by the standalone
 	``OverlayVideoExporter`` / ``tratrac-render``, not a pipeline exporter (see
-	vault/20_video_export.md).
+	src/tratrac/infrastructure/export/VIDEO_EXPORT.md).
 	"""
 
 	def emit_frame(self, timestamp_seconds: float, states: list[VehicleState]) -> None: ...
@@ -148,7 +148,7 @@ class TimingSink(Protocol):
 	"""Receives per-step timing records while a video is processed.
 
 	One record per step per frame. Adapters render them (CSV now, a telemetry
-	POST later); see ``tratrac.domain.timing`` and vault/15_step_timing.md.
+	POST later); see ``tratrac.domain.timing`` and src/tratrac/infrastructure/timing/STEP_TIMING.md.
 	"""
 
 	def record(self, timing: StepTiming) -> None: ...
@@ -163,7 +163,7 @@ class TrackSink(Protocol):
 	canonical run output (the internal record of the dual-export architecture), which
 	the offline ``tratrac-smooth`` pass reads to run the Kalman/RTS smoother and produce
 	the SSAM ``.trj``. Used as a context manager (write a header on enter, flush/close on
-	exit), since it is the pipeline's primary output. See vault/22_smoothing.md.
+	exit), since it is the pipeline's primary output. See src/tratrac/application/SMOOTHING.md.
 	"""
 
 	def record(self, frame_index: int, tracked: list[TrackedDetection]) -> None: ...
@@ -184,7 +184,7 @@ class TransformSink(Protocol):
 	One record per processed frame (current frame -> global stabilization frame).
 	Adapters persist them (CSV now) so a downstream tool can invert each to map
 	stabilized coordinates back onto the raw frame. Streaming, like ``TimingSink``;
-	see ``tratrac.domain.stabilization`` and vault/05_75_mvp1_9.md.
+	see ``tratrac.domain.stabilization`` and src/tratrac/infrastructure/video/EGO_MOTION.md.
 	"""
 
 	def record(self, frame_transform: FrameTransform) -> None: ...
@@ -198,7 +198,7 @@ class AnchorSink(Protocol):
 	Adapters persist the images + a manifest of ``(frame_index, pose, image)``, which
 	the post-process pass reads to map zones authored on an anchor into the global
 	frame. Used as a context manager (the manifest is written on exit). See
-	vault/21_exclusion_zones.md.
+	src/tratrac/application/EXCLUSION_ZONES.md.
 	"""
 
 	def record(self, frame: Frame, pose: Transform2D) -> None: ...

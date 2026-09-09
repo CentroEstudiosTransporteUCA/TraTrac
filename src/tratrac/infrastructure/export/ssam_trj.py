@@ -1,6 +1,6 @@
 """SSAM .trj v1.04 binary exporter (and a viz-only reader).
 
-Spec lives in vault/04_ssam_format.md. MVP1 conventions are documented there:
+Spec lives in src/tratrac/infrastructure/export/SSAM_FORMAT.md. MVP1 conventions are documented there:
 little-endian, metric units, image-space Y flipped into SSAM Cartesian, Link
 ID = 0, Lane ID = 0. The ``scale`` (metres per pixel) is a required constructor
 argument — there is no default; the caller supplies the resolved GSD.
@@ -9,7 +9,7 @@ argument — there is no default; the caller supplies the resolved GSD.
 *solely* for rendering/diagnostics (e.g. ``tratrac-render`` drawing trajectories
 over a clip) and does **not** reopen the load-bearing invariant that the SSAM
 ``.trj`` is export-only, never re-ingested into the processing/analytics path
-(see vault/01 and vault/22): smoothing and analytics consume the raw track
+(see src/tratrac/domain/ARCHITECTURE.md and src/tratrac/application/SMOOTHING.md): smoothing and analytics consume the raw track
 sidecar, not the lossy ``.trj``. Reconstruction is float32-exact for the
 pixel-rounded drawing the renderer does.
 """

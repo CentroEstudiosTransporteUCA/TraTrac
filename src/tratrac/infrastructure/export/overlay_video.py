@@ -5,7 +5,7 @@ It is a **standalone** renderer, not a ``TrajectoryExporter`` — rendering is a
 post-hoc step, so this is driven directly by ``tratrac-render`` (which reads a
 ``.trj`` back into states via ``read_trj``), not composed into the pipeline. Its
 ``emit_frame`` therefore takes the ``Frame`` to draw on, unlike the frameless data
-port. It draws on the **raw** frame. See vault/20_video_export.md.
+port. It draws on the **raw** frame. See src/tratrac/infrastructure/export/VIDEO_EXPORT.md.
 
 Coordinates: ``VehicleState`` positions are in world units of the stabilized
 (global) frame (a uniform ``scale`` metres-per-pixel multiple of pixels — no
@@ -13,7 +13,7 @@ homography yet, MVP1.x). To draw on the raw frame we divide by ``scale`` (no SSA
 y-flip; the image is y-down) and then map back onto the raw frame via the
 ego-motion transform supplied by ``transform_source`` (identity when stabilization
 is off). This keeps the overlay on the full, uncropped frame even when the drone
-has drifted far from its first frame. See vault/05_75_mvp1_9.md.
+has drifted far from its first frame. See src/tratrac/infrastructure/video/EGO_MOTION.md.
 
 cv2 lives only behind injected seams (``open_writer``, ``draw``, and the
 ``transform_source`` that maps stabilized coordinates back to the raw frame), so

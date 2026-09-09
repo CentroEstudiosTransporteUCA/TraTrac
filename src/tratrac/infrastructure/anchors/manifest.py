@@ -1,6 +1,6 @@
 """Keyframe-anchor manifest: the operator-facing index of frames to draw zones on.
 
-The run emits each ORB keyframe **anchor** (see vault/21_exclusion_zones.md) as a PNG plus
+The run emits each ORB keyframe **anchor** (see src/tratrac/application/EXCLUSION_ZONES.md) as a PNG plus
 a manifest row carrying the frame index, the global ego-motion pose, and the image name.
 The manifest is self-sufficient for exclusion: the post-process pass reads each anchor's
 pose from here to map zones authored on that anchor into the global frame — no separate

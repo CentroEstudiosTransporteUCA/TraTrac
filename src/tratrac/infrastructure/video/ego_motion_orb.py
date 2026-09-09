@@ -1,4 +1,4 @@
-"""Keyframe-anchored ORB EgoMotionEstimator adapter (MVP1.9, see vault/05_75_mvp1_9.md).
+"""Keyframe-anchored ORB EgoMotionEstimator adapter (MVP1.9, see src/tratrac/infrastructure/video/EGO_MOTION.md).
 
 Estimates camera ego-motion with ORB features, a ratio-tested brute-force Hamming
 matcher, and a RANSAC 4-DOF similarity fit (``cv2.estimateAffinePartial2D``).
@@ -16,14 +16,14 @@ re-set whenever the current frame no longer shares enough area with it
 
 The returned transform maps the current frame's pixels into the global frame. The
 pipeline applies it to *detections* (not pixels), so detection/tracking run on the
-raw, full-resolution frame and nothing is cropped — see vault/05_75_mvp1_9.md.
+raw, full-resolution frame and nothing is cropped — see src/tratrac/infrastructure/video/EGO_MOTION.md.
 
 Feature-based (not intensity ECC) because aerial traffic is dominated by moving
 foreground: explicit correspondences let RANSAC reject moving-vehicle matches. The
 estimator also masks vehicles out of feature extraction — it subscribes to the
 pipeline's detections (``observe``), which are now in *raw* frame coordinates, so
 the boxes mask the current frame directly with no remapping. SuperPoint+LightGlue
-is the eventual upgrade (``final_polish.md`` item 1).
+is the eventual upgrade (``docs/BACKLOG.md`` item 1).
 """
 
 from __future__ import annotations

@@ -1,9 +1,9 @@
 # MVP 7 — PRODUCTION-GRADE ANALYTICS PLATFORM
 
 > **Status — 🟡 Partially pulled forward.** The MVP number is a capability ID, not execution
-> order — see the roadmap reconciliation in `00_system_overview.md`. This milestone's **Apache
+> order — see the roadmap reconciliation in `docs/ROADMAP.md`. This milestone's **Apache
 > Parquet storage** was pulled forward and is already the canonical track record
-> (`infrastructure/tracks/parquet.py`, vault/22). FiftyOne visualization + async/Docker
+> (`infrastructure/tracks/parquet.py`, src/tratrac/application/SMOOTHING.md). FiftyOne visualization + async/Docker
 > deployment are **not started**.
 
 ---
@@ -48,7 +48,7 @@ Visualization Platform
 
 ## Link / Lane IDs
 
-See `13_road_topology.md`.
+See `docs/roadmap/road_topology.md`.
 
 - **Link ID** and **Lane ID** — inherited from MVP6 (Strategy A,
   hand-drawn polygons per scene).

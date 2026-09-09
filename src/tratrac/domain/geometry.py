@@ -85,7 +85,7 @@ class Transform2D:
 	"""A 2D affine transform, stored as the six coefficients of a 2x3 matrix.
 
 	Maps a point ``(x, y)`` to ``(a·x + b·y + tx, c·x + d·y + ty)``. Coordinate-frame
-	agnostic like the other geometry types. Used (MVP1.9, see ``vault/05_75_mvp1_9.md``)
+	agnostic like the other geometry types. Used (MVP1.9, see ``src/tratrac/infrastructure/video/EGO_MOTION.md``)
 	to carry the camera ego-motion estimated per frame: the transform mapping a
 	frame's pixels into a fixed stabilization reference frame. The estimator fits a
 	4-DOF similarity (translation + rotation + uniform scale); the storage is the
@@ -193,7 +193,7 @@ class Polygon:
 
 	Vertices in order (winding either way). Backs image-space exclusion zones —
 	regions whose detections are dropped before tracking (see
-	``vault/21_exclusion_zones.md``). Pure vertex container: coverage of a bounding
+	``src/tratrac/application/EXCLUSION_ZONES.md``). Pure vertex container: coverage of a bounding
 	box is computed by an infrastructure ``DetectionMask`` that rasterizes the zones
 	per frame, so concave polygons and overlapping zones union correctly.
 	"""
@@ -285,7 +285,7 @@ def point_in_polygon(point: Point2D, polygon: Sequence[Point2D]) -> bool:
 
 	Frame-agnostic like the other helpers; works for concave polygons. Boundary cases
 	are not specially handled — sufficient for testing trajectory centroids against ROI
-	polygons (see vault/21_exclusion_zones.md). A polygon of fewer than 3 vertices
+	polygons (see src/tratrac/application/EXCLUSION_ZONES.md). A polygon of fewer than 3 vertices
 	contains nothing.
 	"""
 	n = len(polygon)

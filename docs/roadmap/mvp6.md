@@ -1,7 +1,7 @@
 # MVP 6 — TOPOLOGY-AWARE TRAJECTORIES
 
 > **Status — ❌ Not started.** The MVP number is a capability ID, not execution order — see the
-> roadmap reconciliation in `00_system_overview.md`.
+> roadmap reconciliation in `docs/ROADMAP.md`.
 
 ---
 
@@ -54,7 +54,7 @@ Dual Export
 
 ## Link / Lane IDs
 
-See `13_road_topology.md`.
+See `docs/roadmap/road_topology.md`.
 
 - **Link ID** — inherited from MVP3 (Strategy A polygons).
 - **Lane ID** — populated via **Strategy A extended**: the per-scene JSON

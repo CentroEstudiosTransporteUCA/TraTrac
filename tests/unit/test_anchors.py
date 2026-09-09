@@ -1,5 +1,5 @@
 """Tests for keyframe-anchor emission: manifest round-trip, the PNG sink, and the
-recording decorator. cv2 is replaced by an injected image writer. See vault/21."""
+recording decorator. cv2 is replaced by an injected image writer. See src/tratrac/application/EXCLUSION_ZONES.md."""
 
 from __future__ import annotations
 

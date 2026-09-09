@@ -4,7 +4,7 @@ Persists the per-frame ego-motion transform (current frame -> global) so a
 downstream tool can invert each row to map stabilized coordinates back onto the
 raw frame they were derived from. Unlike the wide-row timing CSV, each record is
 a single self-contained row, so it is written immediately with no buffering. See
-vault/05_75_mvp1_9.md.
+src/tratrac/infrastructure/video/EGO_MOTION.md.
 """
 
 from __future__ import annotations

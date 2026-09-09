@@ -2,7 +2,7 @@
 
 Detector center jitter makes the raw bbox-centroid trajectory noisy; differentiating
 it for velocity/acceleration amplifies that noise (the keystone of
-``vault/research_high_precision_tracking.md`` §1). The fix is to *smooth position* with
+``src/tratrac/application/RESEARCH_NOTES.md`` §1). The fix is to *smooth position* with
 a constant-acceleration motion model and read velocity/acceleration out of the filter
 state instead of finite-differencing.
 
@@ -13,7 +13,7 @@ decimation). Two consumers:
 
 * ``smooth_track`` — forward Kalman pass + Rauch-Tung-Striebel backward pass over a
   whole track. Offline, **zero-phase** (no lag). The ``tratrac-smooth`` post-pass uses
-  it (see vault/22_smoothing.md).
+  it (see src/tratrac/application/SMOOTHING.md).
 * ``KinematicKalmanFilter`` — the stateful forward-only filter for streaming use.
 
 x and y are filtered independently (a constant-acceleration model has no cross-axis

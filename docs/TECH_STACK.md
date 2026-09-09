@@ -46,7 +46,7 @@ RT-DETR prioritizes:
 
 #### MVP1 exception
 
-`05_mvp1.md` documents a temporary YOLOv8-VisDrone adapter wired in as the
+`src/tratrac/infrastructure/detection/DETECTOR_CHOICE.md` documents a temporary YOLOv8-VisDrone adapter wired in as the
 default detector at MVP1 ship. The reason is purely operational, not
 architectural: there was no GPU available in the MVP1 timebox to fine-tune
 RT-DETR on aerial data, and the COCO-pretrained RT-DETR weights are

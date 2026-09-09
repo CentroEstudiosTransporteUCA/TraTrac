@@ -4,7 +4,7 @@ The ``EgoMotionEstimator`` analog of the ``Timed*`` decorators (GoF Decorator): 
 implements the port, forwards ``estimate`` unchanged, and reports the returned
 transform to a ``TransformSink`` before handing it back. The pipeline is untouched
 — persisting transforms is opt-in instrumentation wrapped around the port, exactly
-as timing wraps the other ports (vault/15_step_timing.md). See vault/05_75_mvp1_9.md.
+as timing wraps the other ports (src/tratrac/infrastructure/timing/STEP_TIMING.md). See src/tratrac/infrastructure/video/EGO_MOTION.md.
 """
 
 from __future__ import annotations

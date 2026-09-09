@@ -1,4 +1,4 @@
-"""Sidecar JSON reader + homography fit for world projection (MVP2, vault/06_mvp2.md).
+"""Sidecar JSON reader + homography fit for world projection (MVP2, src/tratrac/application/WORLD_PROJECTION.md).
 
 ``load_calibration`` parses a per-scene ``calibration.json`` of image↔world ground
 correspondences into the pure ``Calibration`` value object (mirrors

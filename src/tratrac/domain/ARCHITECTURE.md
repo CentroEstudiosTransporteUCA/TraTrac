@@ -73,7 +73,7 @@ tracked measurements today; the richer fields above as later MVPs add them). **A
 trajectory smoother and reconstructs kinematics. The pipeline never computes
 kinematics inline and never re-ingests A. This keeps A a pure, lossy *export* and B
 the single source of truth, and lets the `.trj` be re-derived/re-tuned offline with
-no re-detection (see `22_smoothing.md`). Consequence: "valid SSAM at every MVP" is
+no re-detection (see `src/tratrac/application/SMOOTHING.md`). Consequence: "valid SSAM at every MVP" is
 satisfied in two steps (run → smooth), not one command.
 
 ---

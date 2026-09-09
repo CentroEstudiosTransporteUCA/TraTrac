@@ -2,7 +2,7 @@
 
 Thin I/O adapter (like ``infrastructure/config/toml.py``): reads a per-scene
 JSON file listing the polygons whose detections must not be analyzed into the
-pure ``ExclusionZones`` value object. See vault/21_exclusion_zones.md.
+pure ``ExclusionZones`` value object. See src/tratrac/application/EXCLUSION_ZONES.md.
 
 Schema::
 

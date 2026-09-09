@@ -1,7 +1,7 @@
 """AnchorManifestSink: writes each keyframe anchor as a PNG + a manifest on close.
 
 The ``AnchorSink`` adapter the run uses to export the frames an operator draws exclusion
-zones on (see vault/21_exclusion_zones.md). cv2 lives behind an injected ``image_writer``
+zones on (see src/tratrac/application/EXCLUSION_ZONES.md). cv2 lives behind an injected ``image_writer``
 seam so the orchestration (filenames, manifest accumulation, lifecycle) is testable without
 a codec.
 """

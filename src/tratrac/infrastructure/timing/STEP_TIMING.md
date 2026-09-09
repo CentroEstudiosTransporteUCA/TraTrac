@@ -7,9 +7,9 @@
 Opt-in **per-step latency profiling**: how long each per-frame pipeline step takes.
 The full chain is **detect → observe → ego_motion → stabilize → track → record** —
 every step a port, so every step is timeable. It belongs to no MVP — it is
-observability plumbing, a sibling of progress reporting (`14_progress_reporting.md`).
+observability plumbing, a sibling of progress reporting (`src/tratrac/application/PROGRESS_REPORTING.md`).
 (The set has churned with the architecture: `orient`/`export` left when kinematics and
-the `.trj` moved to the offline `tratrac-postprocess` — vault/22; `observe`, `ego_motion`,
+the `.trj` moved to the offline `tratrac-postprocess` — src/tratrac/application/SMOOTHING.md; `observe`, `ego_motion`,
 `stabilize`, `record` were added so the remaining loop is fully covered. The three
 stabilization-only steps — `observe`, `ego_motion`, `stabilize` — are blank on a
 non-stabilized run, where their collaborators are not wired.)

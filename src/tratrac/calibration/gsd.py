@@ -1,6 +1,6 @@
 """Ground Sample Distance computation for aerial photogrammetry.
 
-See vault/05_5_mvp1_75.md for the derivation and MVP context.
+See src/tratrac/calibration/GSD_CALIBRATION.md for the derivation and MVP context.
 """
 
 from __future__ import annotations

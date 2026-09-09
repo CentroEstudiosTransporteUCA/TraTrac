@@ -1,4 +1,4 @@
-# 20 — Overlay video: post-hoc trajectory rendering (`tratrac-render`)
+# Overlay video: post-hoc trajectory rendering (`tratrac-render`)
 
 ## What this adds
 
@@ -10,7 +10,7 @@ the source clip.
 
 This is a debug/visualization output, not a new analytics format. It is neither
 the SSAM export (A) nor the extended internal export (B) of the dual-export
-architecture (see `01_architecture_principles.md`); it is a rendering of the
+architecture (see `src/tratrac/domain/ARCHITECTURE.md`); it is a rendering of the
 trajectories. New analytics data still goes into (B), never here.
 
 ## Why it is post-hoc (it used to run inside the pipeline)

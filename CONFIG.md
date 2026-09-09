@@ -8,7 +8,7 @@ and lists *every* offending key at once.
 
 This is a deliberate trade of typing convenience for scientific
 reproducibility: a `.trj` is reconstructable from the config that produced it.
-For the design rationale see `vault/19_config_file.md`; for a copyable starting
+For the design rationale see `src/tratrac/application/CONFIG_DESIGN.md`; for a copyable starting
 point see `tratrac.example.toml`.
 
 ```bash
@@ -127,7 +127,7 @@ altitude_m  = 80.0
 
 ### `[ego_motion]` — ORB ego-motion (toggle + conditional params)
 
-ORB ego-motion (MVP1.9, see `vault/05_75_mvp1_9.md`). When on, detection and tracking
+ORB ego-motion (MVP1.9, see `src/tratrac/infrastructure/video/EGO_MOTION.md`). When on, detection and tracking
 run on the **raw, full-resolution frame** and the keyframe transform is applied to the
 **detections** (coordinates, not pixels), so trajectories are free of drone ego-motion
 and nothing is ever cropped to black. The keyframe anchor re-sets once too little of it

@@ -4,7 +4,7 @@ video -> trajectory pipeline.
 
 Standalone — only the standard library, so it works even when the tratrac
 package is broken (same constraint as scripts/dump_trj.py). The byte-level
-format is specified in vault/04_ssam_format.md.
+format is specified in src/tratrac/infrastructure/export/SSAM_FORMAT.md.
 
 Unlike dump_trj.py (which prints records) this script asks whether the
 trajectories make *physical sense* and reports a compliance table. Three
@@ -26,7 +26,7 @@ families of checks, each measured as "compliant instances / total instances":
      pixels and NOT scaled by Scale. Each is checked against a real-world
      physical ceiling (configurable; unit-aware defaults). Speed must also be
      finite and non-negative. Caveat: MVP1 writes pixel-displacement into these
-     fields while declaring metric units (vault/04_ssam_format.md), so MVP1
+     fields while declaring metric units (src/tratrac/infrastructure/export/SSAM_FORMAT.md), so MVP1
      output is expected to fail these bounds wholesale — that is the intended
      signal, not a bug in the validator.
 

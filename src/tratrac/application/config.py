@@ -7,7 +7,7 @@ package**. Each parameter must be supplied by a TOML config file or a CLI flag;
 if neither supplies it, ``RunConfig.resolve`` fails listing exactly what is
 missing. This trades typing convenience for scientific reproducibility — a
 ``.trj`` is reconstructable from the config that produced it, which names its
-own input and output. See ``vault/19_config_file.md``.
+own input and output. See ``src/tratrac/application/CONFIG_DESIGN.md``.
 
 Layering: this module is pure (no I/O, no CLI framework). The TOML file is read
 by ``infrastructure/config/toml.py``; the CLI assembles overrides, validates the
@@ -35,7 +35,7 @@ class DetectorChoice(StrEnum):
 	``yolov8_visdrone`` is the MVP1 emergency detector — community YOLOv8 fine-tuned
 	on VisDrone, picked because COCO-pretrained RT-DETR fails on aerial inputs.
 	``rt_detr`` stays available; once a fine-tuned aerial RT-DETR checkpoint exists,
-	we make it the default again and drop the YOLO option (see ``vault/05_mvp1.md``).
+	we make it the default again and drop the YOLO option (see ``src/tratrac/infrastructure/detection/DETECTOR_CHOICE.md``).
 	"""
 
 	YOLOV8_VISDRONE = "yolov8_visdrone"
@@ -65,7 +65,7 @@ class InputConfig:
 
 	video: Path
 	# Cap the processing cadence to this many frames per second (decode-time
-	# decimation, see vault/18_timestep_precision.md). ``0.0`` = process every frame.
+	# decimation, see src/tratrac/infrastructure/TIMESTEP_PRECISION.md). ``0.0`` = process every frame.
 	process_fps: float
 
 
@@ -118,7 +118,7 @@ class CalibrationConfig:
 
 @dataclass(frozen=True, slots=True)
 class EgoMotionConfig:
-	"""ORB video-stabilization settings (MVP1.9, see ``vault/05_75_mvp1_9.md``).
+	"""ORB video-stabilization settings (MVP1.9, see ``src/tratrac/infrastructure/video/EGO_MOTION.md``).
 
 	``enabled`` is the explicit on/off toggle (per the "off is explicit" rule). The
 	ORB parameters are only meaningful — and only required by ``resolve`` — when
@@ -130,7 +130,7 @@ class EgoMotionConfig:
 	min_matches: int
 	ransac_threshold: float
 	# Minimum fraction of the keyframe anchor still visible before re-anchoring
-	# (see vault/05_75_mvp1_9.md). Only meaningful when ``enabled``.
+	# (see src/tratrac/infrastructure/video/EGO_MOTION.md). Only meaningful when ``enabled``.
 	min_anchor_overlap: float
 
 
@@ -142,16 +142,16 @@ class TrackerConfig:
 @dataclass(frozen=True, slots=True)
 class ExportConfig:
 	# The run's primary output: the track record (raw tracked measurements). The
-	# offline ``tratrac-postprocess`` pass reads it to produce the SSAM ``.trj`` (vault/22).
+	# offline ``tratrac-postprocess`` pass reads it to produce the SSAM ``.trj`` (src/tratrac/application/SMOOTHING.md).
 	out: Path
 	# Optional per-frame ego-motion transform CSV (current frame -> global). ``None``
 	# = off. Only meaningful when ego-motion is enabled (``resolve`` enforces this):
 	# with stabilization off every transform is the identity, so there is nothing to
-	# record. See vault/05_75_mvp1_9.md.
+	# record. See src/tratrac/infrastructure/video/EGO_MOTION.md.
 	transform_csv: Path | None
 	# Optional directory for the run's keyframe-anchor PNGs + manifest (the frames an
 	# operator draws exclusion zones on). ``None`` = off. Only meaningful when ego-motion
-	# is enabled (no anchors without live ORB). See vault/21_exclusion_zones.md.
+	# is enabled (no anchors without live ORB). See src/tratrac/application/EXCLUSION_ZONES.md.
 	anchors_dir: Path | None
 
 
@@ -167,7 +167,7 @@ class WindowConfig:
 class RunOptionsConfig:
 	# ``force`` is intentionally absent: overwrite policy is pure I/O, never affects the
 	# trajectories, so it is not part of the reproducible run spec — it lives only on the
-	# ``--force`` CLI flag (vault/19), not in the config.
+	# ``--force`` CLI flag (src/tratrac/application/CONFIG_DESIGN.md), not in the config.
 	timing_csv: Path | None  # None = profiling off
 
 

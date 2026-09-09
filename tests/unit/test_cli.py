@@ -137,7 +137,7 @@ class TestProcessConfigGuard:
 		assert out.read_text() == "old"
 
 	def test_reports_every_missing_key_at_once(self, tmp_path: Path) -> None:
-		# An empty config surfaces every missing key at once (zero-defaults, vault/19).
+		# An empty config surfaces every missing key at once (zero-defaults, src/tratrac/application/CONFIG_DESIGN.md).
 		config = tmp_path / "empty.toml"
 		config.write_text("")
 		result = CliRunner().invoke(app, ["--config", str(config)], input="")
@@ -158,7 +158,7 @@ class TestProcessOutputPathSanitization:
 
 	def test_rejects_directory_as_output(self, tmp_path: Path) -> None:
 		# The --out flag's dir_okay=False is gone; a directory export.out is now caught by
-		# a runtime guard (vault/19) instead, with the output left untouched.
+		# a runtime guard (src/tratrac/application/CONFIG_DESIGN.md) instead, with the output left untouched.
 		video = _video(tmp_path)
 		a_dir = tmp_path / "outdir"
 		a_dir.mkdir()

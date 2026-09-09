@@ -3,7 +3,7 @@
 Each zone is authored on a reference frame; this pushes its vertices through that
 frame's ego-motion pose once, so the runtime ``DetectionMask`` only ever maps
 global -> current-raw. For a static run every pose is the identity and the global
-polygons equal the authored raw polygons. See vault/21_exclusion_zones.md.
+polygons equal the authored raw polygons. See src/tratrac/application/EXCLUSION_ZONES.md.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ def excluded_track_ids(
 ) -> set[int]:
 	"""Track ids to drop: those whose fraction of observations inside any zone ≥ ``min_fraction``.
 
-	Track-aware exclusion (vault/21_exclusion_zones.md): "objects passing here don't interest
+	Track-aware exclusion (src/tratrac/application/EXCLUSION_ZONES.md): "objects passing here don't interest
 	me" is about the object, so a whole track is dropped once enough of its life is spent in a
 	zone. ``centroids`` are ``(track_id, centroid)`` per observation, in the global frame (the
 	same frame ``global_polygons`` live in). With no polygons, nothing is excluded.

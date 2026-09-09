@@ -1,4 +1,4 @@
-"""Tests for the world-projection sidecar reader + cv2 homography fit (MVP2, vault/06).
+"""Tests for the world-projection sidecar reader + cv2 homography fit (MVP2, src/tratrac/application/WORLD_PROJECTION.md).
 
 Exercises ``load_calibration`` (JSON -> ``Calibration`` validation) and ``compute_homography``
 (cv2 fit). cv2 is imported, but no model download — this stays a fast unit test."""

@@ -1,6 +1,6 @@
 """Image-space exclusion zones: regions whose detections must not be analyzed.
 
-A set of pixel polygons (see ``vault/21_exclusion_zones.md``), each authored on a
+A set of pixel polygons (see ``src/tratrac/application/EXCLUSION_ZONES.md``), each authored on a
 *reference frame*. Pure data: the drop is computed by an infrastructure
 ``DetectionMask`` that rasterizes the zones' union into a per-frame mask and drops
 any detection mostly (>50% of its area) covered. Rasterizing handles concave

@@ -22,8 +22,8 @@ There were two readings of "seconds between each timestep":
 - **B — processing cadence (rejected):** skip frames before the detector.
 
 B was rejected because BoT-SORT's association (IoU + motion model) assumes small
-inter-frame motion; decimating its input causes ID switches. The vault chose
-BoT-SORT for robustness (`03_tech_stack.md`), and B trades exactly that away for
+inter-frame motion; decimating its input causes ID switches. BoT-SORT was chosen
+for robustness (`docs/TECH_STACK.md`), and B trades exactly that away for
 speed. A keeps tracking quality and only changes the output's temporal density.
 
 Consequence: A gives **no compute saving** — every frame is still detected and
@@ -69,14 +69,14 @@ In a **`TrajectoryExporter` decorator** — `DecimatingTrajectoryExporter`
 
 - The pipeline keeps calling `emit_frame` once per frame; the decorator decides
   whether to forward the call to the real `SsamTrjExporter`.
-- This mirrors the `Timed*` decorators (`vault/15_step_timing.md`): cadence
+- This mirrors the `Timed*` decorators (`src/tratrac/infrastructure/timing/STEP_TIMING.md`): cadence
   policy stays out of the orchestrator, and the concrete writer stays dumb.
 - It composes *inside* `TimedExporter` (`TimedExporter(Decimating(Ssam))`), so the
   EXPORT step still records once per processed frame and stays aligned with the
-  other steps' per-frame ordinals (vault/15). Skipped frames just record the
+  other steps' per-frame ordinals (src/tratrac/infrastructure/timing/STEP_TIMING.md). Skipped frames just record the
   cheap "did not write" path.
 
-Contrast with `--start`/`--end` (`vault/17_time_window.md`), which lives in the
+Contrast with `--start`/`--end` (`src/tratrac/infrastructure/video/TIME_WINDOW.md`), which lives in the
 video *adapter* because trimming needs a real seek. Decimation needs no seek and
 must not change what the tracker sees, so it belongs at the export seam instead.
 
@@ -100,7 +100,7 @@ Timestamps stay on the source video's absolute clock, so this composes with
 
 ## SSAM Coarseness Caveat
 
-`vault/04_ssam_format.md` notes sub-second precision (~1/10 s) is the practical
+`src/tratrac/infrastructure/export/SSAM_FORMAT.md` notes sub-second precision (~1/10 s) is the practical
 minimum; once-per-second is too coarse for conflict analysis. A coarse interval
 still produces a *syntactically valid* `.trj`, so the CLI **warns** (above 0.5 s)
 rather than erroring — the file parses, but its surrogate-safety metrics (TTC,
@@ -113,6 +113,6 @@ PET) degrade. Validity is structural; usefulness is the operator's call.
 - `infrastructure/export/decimating.py` — `DecimatingTrajectoryExporter` (the
   decorator + grid math).
 - `application/config.py` — validates `export.timestep_precision` (reject < 0;
-  `0` = every frame) as part of `RunConfig.resolve` (see `vault/19_config_file.md`).
+  `0` = every frame) as part of `RunConfig.resolve` (see `src/tratrac/application/CONFIG_DESIGN.md`).
 - `cli.py` — the `--timestep-precision` flag, the coarse-value warning (> 0.5 s),
   and the wrapping wired inside the timing decorator.

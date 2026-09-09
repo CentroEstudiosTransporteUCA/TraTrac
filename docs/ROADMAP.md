@@ -1,4 +1,4 @@
-# System Overview
+# Roadmap: System Overview & MVP Status
 
 ---
 
@@ -65,7 +65,7 @@ per-MVP files carry a **Status** banner; this is the single reconciliation of pl
 | 1.5 | Fine-tune RT-DETR, remove YOLOv8 | ❌ **Skipped** (leapfrogged by 1.75 + 1.9) |
 | 1.75 | Metric sizes/speeds from drone GSD | ✅ **Shipped** |
 | 1.9 | ORB ego-motion stabilization | ✅ **Shipped** (optional, off by default) |
-| 2 | Single-homography **world projection** | 🟡 **Partially shipped** — post-hoc single-homography projection (Approach A) lives in `tratrac-postprocess --calibration`; SSAM positions can now be metric world coords. Deferred: SuperPoint+LightGlue stabilization (ORB still does ego-motion) and the multi-anchor projector (C/D). See `06_mvp2.md`. |
+| 2 | Single-homography **world projection** | 🟡 **Partially shipped** — post-hoc single-homography projection (Approach A) lives in `tratrac-postprocess --calibration`; SSAM positions can now be metric world coords. Deferred: SuperPoint+LightGlue stabilization (ORB still does ego-motion) and the multi-anchor projector (C/D). See `src/tratrac/application/WORLD_PROJECTION.md`. |
 | 3 | Multi-homography + Link ID | ❌ Not started |
 | 4 | SAM2 segmentation; **dual export begins** | 🟡 **Partially pulled forward** — the dual-export "B-first" architecture is already core; SAM2 not started |
 | 5 | FastReID identity persistence | ❌ Not started |
@@ -78,7 +78,7 @@ inversion (4) — both landed early because the canonical *track record* needed 
 **The supporting layer (built outside the MVP numbering):** progress reporting (14), step
 timing (15), `.trj` validation (16), time window (17), timestep precision (18), config file
 (19), post-hoc render (20), exclusion zones (21), Kalman/RTS smoothing (22), plus the
-`final_polish.md` backlog. These are cross-cutting capabilities behind stable ports, not
+`docs/BACKLOG.md` backlog. These are cross-cutting capabilities behind stable ports, not
 rungs on the capability ladder.
 
 This section is a **historical reconciliation** — the forward order (2 → 7) is unchanged.
