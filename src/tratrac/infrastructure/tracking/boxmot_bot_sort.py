@@ -16,7 +16,6 @@ relying on that auto-detection.
 
 from __future__ import annotations
 
-import math
 from collections.abc import Sequence
 from typing import Any
 
@@ -25,7 +24,7 @@ from boxmot.trackers import BotSort
 
 from tratrac.domain.detection import Detection, TrackedDetection, VehicleClass
 from tratrac.domain.frame import Frame, VideoMetadata
-from tratrac.domain.geometry import BoundingBox
+from tratrac.domain.geometry import BoundingBox, oriented_box_to_aabb
 
 _VEHICLE_CLASS_TO_COCO_ID: dict[VehicleClass, int] = {
 	VehicleClass.CAR: 2,
@@ -92,7 +91,7 @@ class BoxmotBotSortTracker:
 			if self._is_obb:
 				cx, cy, w, h, angle = (float(v) for v in row[:5])
 				detection = Detection(
-					bbox=_obb_to_aabb(cx, cy, w, h, angle),
+					bbox=oriented_box_to_aabb(cx, cy, w, h, angle),
 					score=score,
 					vehicle_class=original.vehicle_class,
 					angle=angle,
@@ -144,15 +143,3 @@ class BoxmotBotSortTracker:
 			],
 			dtype=np.float32,
 		)
-
-
-def _obb_to_aabb(cx: float, cy: float, w: float, h: float, angle: float) -> BoundingBox:
-	"""The axis-aligned enclosing box of a rotated ``(cx, cy, w, h, angle)`` rectangle.
-
-	``Detection.bbox`` stays the AABB unconditionally (ORB masking, IoU association) even
-	for an OBB detection — see ``domain/detection.py``.
-	"""
-	cos_a, sin_a = abs(math.cos(angle)), abs(math.sin(angle))
-	half_w = (w * cos_a + h * sin_a) / 2.0
-	half_h = (w * sin_a + h * cos_a) / 2.0
-	return BoundingBox(x=cx - half_w, y=cy - half_h, width=2.0 * half_w, height=2.0 * half_h)

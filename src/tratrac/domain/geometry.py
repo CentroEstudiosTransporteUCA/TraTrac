@@ -289,6 +289,19 @@ def _intersect_y(a: Point2D, b: Point2D, y: float) -> Point2D:
 	return Point2D(a.x + t * (b.x - a.x), y)
 
 
+def oriented_box_to_aabb(cx: float, cy: float, w: float, h: float, angle: float) -> BoundingBox:
+	"""The axis-aligned enclosing box of a rotated ``(cx, cy, w, h, angle)`` rectangle.
+
+	Shared by every OBB-capable adapter (`docs/IMPLEMENTATION_PLAN.md` Group A4/A5) that needs
+	an unconditional ``Detection.bbox`` alongside the oriented box — ORB masking and IoU
+	association still work in AABB space even when the detector/tracker reports orientation.
+	"""
+	cos_a, sin_a = abs(math.cos(angle)), abs(math.sin(angle))
+	half_w = (w * cos_a + h * sin_a) / 2.0
+	half_h = (w * sin_a + h * cos_a) / 2.0
+	return BoundingBox(x=cx - half_w, y=cy - half_h, width=2.0 * half_w, height=2.0 * half_h)
+
+
 def point_in_polygon(point: Point2D, polygon: Sequence[Point2D]) -> bool:
 	"""Whether ``point`` lies inside ``polygon`` (even-odd ray casting).
 

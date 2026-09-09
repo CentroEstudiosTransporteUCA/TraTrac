@@ -14,6 +14,7 @@ from tratrac.domain.geometry import (
 	Transform2D,
 	Vector2D,
 	clipped_overlap_fraction,
+	oriented_box_to_aabb,
 	point_in_polygon,
 )
 
@@ -195,6 +196,23 @@ class TestTransform2D:
 			ty=0.0,
 		)
 		assert sim.scale == pytest.approx(2.0)
+
+
+class TestOrientedBoxToAabb:
+	def test_zero_angle_is_the_plain_box(self) -> None:
+		box = oriented_box_to_aabb(cx=10.0, cy=10.0, w=4.0, h=2.0, angle=0.0)
+		assert box == BoundingBox(x=8.0, y=9.0, width=4.0, height=2.0)
+
+	def test_quarter_turn_swaps_extents(self) -> None:
+		box = oriented_box_to_aabb(cx=10.0, cy=10.0, w=4.0, h=2.0, angle=math.pi / 2)
+		assert box.width == pytest.approx(2.0, abs=1e-6)
+		assert box.height == pytest.approx(4.0, abs=1e-6)
+
+	def test_forty_five_degrees_grows_the_enclosing_box(self) -> None:
+		box = oriented_box_to_aabb(cx=0.0, cy=0.0, w=2.0, h=2.0, angle=math.pi / 4)
+		diag = 2.0 * math.sqrt(2.0)
+		assert box.width == pytest.approx(diag, abs=1e-6)
+		assert box.height == pytest.approx(diag, abs=1e-6)
 
 
 class TestClippedOverlapFraction:
