@@ -197,3 +197,60 @@ class KinematicKalmanFilter:
 		assert self._x is not None
 		x, y = self._x
 		return SmoothedSample(x[0], y[0], x[1], y[1], x[2], y[2])
+
+	@classmethod
+	def from_state(
+		cls,
+		state: SmoothedSample,
+		*,
+		pos_noise: float,
+		jerk: float,
+		vel_std: float,
+		accel_std: float,
+	) -> KinematicKalmanFilter:
+		"""Seed a filter directly from an already-known state (e.g. the RTS-smoothed end of a
+		track fragment — ``application/SMOOTHING.md``) instead of building it up from raw
+		``observe()`` calls.
+
+		``pos_noise`` is the position uncertainty, matching ``observe()``'s own
+		measurement-noise convention; ``vel_std``/``accel_std`` set the seeded confidence in
+		the velocity/acceleration components directly, since a single ``observe()`` call would
+		instead start them at ``_INITIAL_RATE_VARIANCE`` (i.e. "unknown") — wrong here, where
+		the caller already has a trustworthy whole-track-smoothed estimate to seed from. Used
+		by ``application/reid_merge.py`` to extrapolate a fragment's motion forward via
+		``predict()`` without needing its raw observation history.
+		"""
+		filt = cls(pos_noise=pos_noise, jerk=jerk)
+		filt._x = [
+			np.array([state.px, state.vx, state.ax]),
+			np.array([state.py, state.vy, state.ay]),
+		]
+		filt._p = [
+			np.diag([filt._r, vel_std * vel_std, accel_std * accel_std]),
+			np.diag([filt._r, vel_std * vel_std, accel_std * accel_std]),
+		]
+		return filt
+
+	def predict(self, dt: float) -> tuple[SmoothedSample, float, float]:
+		"""Extrapolate ``dt`` seconds forward with **no** new measurement; a pure query that
+		does not mutate the filter's own state (unlike ``observe()``), so the same seeded
+		filter can be queried at several candidate ``dt``s.
+
+		Returns the predicted state plus its predicted position standard deviation on each
+		axis (the growing uncertainty a caller can gate a candidate reappearance against —
+		see ``application/reid_merge.py``'s motion-plausibility gate).
+		"""
+		if self._x is None or self._p is None:
+			raise RuntimeError("predict() requires observe() or from_state() first.")
+		if dt <= 0.0:
+			raise ValueError(f"dt must be positive, got {dt}.")
+		x_pred: list[_Array] = []
+		std: list[float] = []
+		for axis in range(2):
+			x, p = _predict(self._x[axis], self._p[axis], dt, self._jerk)
+			x_pred.append(x)
+			std.append(float(np.sqrt(p[0, 0])))
+		sample = SmoothedSample(
+			x_pred[0][0], x_pred[1][0], x_pred[0][1], x_pred[1][1], x_pred[0][2], x_pred[1][2]
+		)
+		return sample, std[0], std[1]

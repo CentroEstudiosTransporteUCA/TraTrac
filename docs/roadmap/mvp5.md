@@ -1,11 +1,17 @@
 # MVP 5 — LONG-TERM IDENTITY PERSISTENCE
 
-> **Status — ❌ Not started, replanned.** The MVP number is a capability ID, not execution order
-> — see the roadmap reconciliation in `docs/ROADMAP.md`. **The original ReID plan (FastReID) was
-> superseded** after research found nadir drone footage discards most of what vehicle-ReID
-> models are trained to discriminate on, and there's no nadir-matched dataset to fine-tune
-> FastReID against the way there is for detection. Full comparison and sources:
-> `src/tratrac/infrastructure/tracking/TRACKER_CHOICE.md`.
+> **Status — 🟡 Partially shipped, replanned.** The MVP number is a capability ID, not execution
+> order — see the roadmap reconciliation in `docs/ROADMAP.md`. **The original ReID plan
+> (FastReID) was superseded** after research found nadir drone footage discards most of what
+> vehicle-ReID models are trained to discriminate on, and there's no nadir-matched dataset to
+> fine-tune FastReID against the way there is for detection. Full comparison and sources:
+> `src/tratrac/infrastructure/tracking/TRACKER_CHOICE.md`. **Landed** (Group D2,
+> `docs/IMPLEMENTATION_PLAN.md`): the "merge decision" + "apply" stages —
+> `application/reid_merge.py`'s motion-plausibility gate + appearance scoring, and
+> `tratrac-postprocess --reid-merge`'s track_id remap. See `src/tratrac/application/REID_MERGE.md`.
+> **Not landed:** the "embed" stage (DINOv3 per-fragment embeddings) — needs a GPU and real
+> footage to validate, neither available where this landed; the merge decision is exercised
+> only against synthetic embedding vectors so far.
 
 ---
 

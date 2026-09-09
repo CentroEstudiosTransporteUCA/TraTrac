@@ -85,6 +85,14 @@ instead of a separate travel-time model. Cheap color/footprint-shape heuristics 
 legitimate fallback given how little nadir-view visual signal survives at all — see
 `docs/roadmap/mvp5.md` for the full MVP5 plan.
 
+**The motion-plausibility gate half of this is landed** (`application/reid_merge.py`,
+`src/tratrac/application/REID_MERGE.md`): `KinematicKalmanFilter.from_state`/`.predict`
+extrapolate a track fragment's end state forward and gate a candidate reappearance by
+standard deviations of the extrapolated position, exactly as described above. The DINOv3
+appearance-embedding half is not — the merge-decision logic takes an embedding as an opaque
+input and is exercised only against synthetic vectors so far, pending a GPU + real footage to
+build and validate the embed stage against.
+
 **Sources:**
 - [BoxMOT — tracker list, MOT17 rankings, AABB + OBB support](https://github.com/mikel-brostrom/boxmot)
 - [Tracker comparison — MOT benchmark results](https://trackers.roboflow.com/latest/trackers/comparison/)

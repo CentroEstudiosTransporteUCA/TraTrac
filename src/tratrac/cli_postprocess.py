@@ -18,6 +18,12 @@ correspondences (mapped into the global frame via the same anchor poses), every 
 is rewritten into world metres, and the ``.trj`` carries world coordinates with
 ``DIMENSIONS.Scale = 1.0``. Without it, coordinates stay image-space (the pre-MVP2 path).
 
+With ``--reid-merge`` (Group D2, ``docs/IMPLEMENTATION_PLAN.md``) a pre-computed ReID merge
+decision (``application/reid_merge.py``) remaps ``track_id`` on the record **first**, before
+anything else track-lifetime-aware runs — fragments the tracker split across an occlusion are
+stitched into one continuous track, which the existing per-track smoothing then handles with
+no new code (it already groups purely by ``track_id``).
+
 Rendering is a separate step: ``tratrac-render`` on the ``.trj`` (src/tratrac/infrastructure/export/VIDEO_EXPORT.md).
 """
 
@@ -60,6 +66,7 @@ from tratrac.infrastructure.anchors.manifest import ReferenceFrame, read_manifes
 from tratrac.infrastructure.exclusion.json import load_exclusion_zones
 from tratrac.infrastructure.export.decimating import DecimatingTrajectoryExporter
 from tratrac.infrastructure.export.ssam_trj import SsamTrjExporter
+from tratrac.infrastructure.reid.json import load_reid_merge
 from tratrac.infrastructure.road_graph.json import (
 	load_lane_zones,
 	load_link_zones,
@@ -81,6 +88,17 @@ def postprocess(
 		Path, typer.Argument(exists=True, dir_okay=False, help="Track record (export.out).")
 	],
 	out: Annotated[Path, typer.Option("--out", "-o", dir_okay=False, help="Output .trj path.")],
+	reid_merge: Annotated[
+		Path | None,
+		typer.Option(
+			"--reid-merge",
+			exists=True,
+			dir_okay=False,
+			help="A resolved ReID merge decision (application/reid_merge.py's resolve_merges, "
+			"see infrastructure/reid/json.py); remaps track_id on the record before anything "
+			"else track-lifetime-aware runs, stitching occlusion-split fragments into one track.",
+		),
+	] = None,
 	exclusion_zones: Annotated[
 		Path | None,
 		typer.Option(
@@ -186,6 +204,10 @@ def postprocess(
 	except (ValueError, OSError) as exc:
 		raise typer.BadParameter(str(exc)) from exc
 
+	merged_count = 0
+	if reid_merge is not None:
+		recording, merged_count = _apply_reid_merge(recording, reid_merge)
+
 	dropped = 0
 	if exclusion_zones is not None:
 		recording, dropped = _filter_excluded(
@@ -228,6 +250,8 @@ def postprocess(
 	_emit_trj(out, recording, states_by_frame, timestep_precision=timestep_precision)
 
 	notes = []
+	if reid_merge is not None:
+		notes.append(f"merged {merged_count} ReID track ids")
 	if exclusion_zones is not None:
 		notes.append(f"dropped {dropped} excluded tracks")
 	if link_zones is not None:
@@ -241,6 +265,32 @@ def postprocess(
 		f"Post-processed {tracks} -> {out} "
 		f"({len(states_by_frame)} frames, pos_noise={pos_noise:g}, jerk={jerk:g}{note})."
 	)
+
+
+def _apply_reid_merge(
+	recording: TrackRecording, reid_merge_path: Path
+) -> tuple[TrackRecording, int]:
+	"""Remap ``track_id`` on every observation through a resolved ReID merge decision.
+
+	Runs before exclusion filtering / Link-Lane-Plane assignment / world projection (Group D2's
+	composition-root position, ``docs/IMPLEMENTATION_PLAN.md``): those stages are all
+	track-lifetime-aware, so occlusion-split fragments must already be one track_id by the time
+	they run, or e.g. exclusion's majority vote would see two short, separately-judged tracks
+	instead of the vehicle's whole life. A track id absent from the mapping is left unchanged
+	(``load_reid_merge`` only returns entries for track ids that were actually merged).
+	"""
+	try:
+		merges = load_reid_merge(reid_merge_path)
+	except (ValueError, OSError) as exc:
+		raise typer.BadParameter(str(exc)) from exc
+	if not merges:
+		return recording, 0
+	remapped = [
+		replace(o, track_id=merges.get(o.track_id, o.track_id)) for o in recording.observations
+	]
+	return TrackRecording(
+		metadata=recording.metadata, scale=recording.scale, observations=remapped
+	), len(merges)
 
 
 def _filter_excluded(

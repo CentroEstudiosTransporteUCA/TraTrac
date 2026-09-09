@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from tratrac.application.kalman import KinematicKalmanFilter, smooth_track
+from tratrac.application.kalman import KinematicKalmanFilter, SmoothedSample, smooth_track
 
 
 def _times(n: int, fps: float = 10.0) -> list[float]:
@@ -102,3 +102,59 @@ class TestKinematicKalmanFilter:
 		kf.observe(0.0, 0.0, dt=0.0)
 		with pytest.raises(ValueError, match="dt must be positive"):
 			kf.observe(1.0, 0.0, dt=0.0)
+
+
+class TestFromStateAndPredict:
+	def test_predict_requires_a_seeded_filter(self) -> None:
+		kf = KinematicKalmanFilter(pos_noise=1.0, jerk=1e-2)
+		with pytest.raises(RuntimeError, match="from_state"):
+			kf.predict(1.0)
+
+	def test_predict_requires_positive_dt(self) -> None:
+		kf = KinematicKalmanFilter(pos_noise=1.0, jerk=1e-2)
+		kf.observe(0.0, 0.0, dt=0.0)
+		with pytest.raises(ValueError, match="dt must be positive"):
+			kf.predict(0.0)
+
+	def test_predict_extrapolates_constant_velocity(self) -> None:
+		state = SmoothedSample(px=10.0, py=20.0, vx=2.0, vy=-1.0, ax=0.0, ay=0.0)
+		kf = KinematicKalmanFilter.from_state(
+			state, pos_noise=1.0, jerk=1e-3, vel_std=0.1, accel_std=0.1
+		)
+		predicted, std_x, std_y = kf.predict(5.0)
+		assert predicted.px == pytest.approx(20.0)  # 10 + 2*5
+		assert predicted.py == pytest.approx(15.0)  # 20 + -1*5
+		assert std_x > 0.0
+		assert std_y > 0.0
+
+	def test_predict_does_not_mutate_the_filter(self) -> None:
+		state = SmoothedSample(px=0.0, py=0.0, vx=1.0, vy=0.0, ax=0.0, ay=0.0)
+		kf = KinematicKalmanFilter.from_state(
+			state, pos_noise=1.0, jerk=1e-3, vel_std=0.1, accel_std=0.1
+		)
+		first, _std_x1, _std_y1 = kf.predict(2.0)
+		second, _std_x2, _std_y2 = kf.predict(2.0)
+		assert first == second  # querying twice with the same dt gives the same answer
+
+	def test_uncertainty_grows_with_the_extrapolation_gap(self) -> None:
+		state = SmoothedSample(px=0.0, py=0.0, vx=0.0, vy=0.0, ax=0.0, ay=0.0)
+		kf = KinematicKalmanFilter.from_state(
+			state, pos_noise=1.0, jerk=1e-2, vel_std=0.5, accel_std=0.1
+		)
+		_, near_std_x, _ = kf.predict(1.0)
+		_, far_std_x, _ = kf.predict(10.0)
+		assert far_std_x > near_std_x
+
+	def test_seeded_velocity_confidence_is_not_the_unknown_prior(self) -> None:
+		# from_state's seeded vel_std must be respected, not _INITIAL_RATE_VARIANCE (a single
+		# observe() call would leave velocity essentially unconstrained instead).
+		state = SmoothedSample(px=0.0, py=0.0, vx=3.0, vy=0.0, ax=0.0, ay=0.0)
+		confident = KinematicKalmanFilter.from_state(
+			state, pos_noise=1.0, jerk=1e-3, vel_std=0.01, accel_std=0.01
+		)
+		unsure = KinematicKalmanFilter.from_state(
+			state, pos_noise=1.0, jerk=1e-3, vel_std=100.0, accel_std=100.0
+		)
+		_, confident_std, _ = confident.predict(5.0)
+		_, unsure_std, _ = unsure.predict(5.0)
+		assert confident_std < unsure_std

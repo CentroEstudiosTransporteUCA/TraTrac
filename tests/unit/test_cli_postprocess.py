@@ -284,3 +284,43 @@ class TestPostprocessCalibration:
 		state = read_trj(out).frames[3].states[0]
 		assert state.dimensions.length == pytest.approx(2.0, abs=0.05)
 		assert state.dimensions.width == pytest.approx(1.0, abs=0.05)
+
+
+class TestPostprocessReidMerge:
+	def test_reid_merge_stitches_two_fragments_into_one_track(self, tmp_path: Path) -> None:
+		# track 1 (frames 0-2) and track 2 (frames 5-7) are the same vehicle, split by an
+		# occlusion (frames 3-4 missing) -- a fragment pair a real ReID merge decision would
+		# resolve to {"2": 1}.
+		record = tmp_path / "tracks.parquet"
+		out = tmp_path / "merged.trj"
+		merge = tmp_path / "merge.json"
+		with ParquetTrackSink(record, _META, scale=1.0) as sink:
+			for frame in range(3):
+				sink.record(frame, [_tracked(x=10.0 * frame + 20.0, y=50.0, track_id=1)])
+			for frame in range(5, 8):
+				sink.record(frame, [_tracked(x=10.0 * frame + 20.0, y=50.0, track_id=2)])
+		merge.write_text(json.dumps({"merges": {"2": 1}}))
+
+		result = CliRunner().invoke(
+			app, [str(record), "--out", str(out), "--reid-merge", str(merge)]
+		)
+		assert result.exit_code == 0, result.output
+		assert "merged 1 ReID track ids" in result.output
+
+		vehicle_ids = {state.vehicle_id for frame in read_trj(out).frames for state in frame.states}
+		assert vehicle_ids == {1}
+
+	def test_without_reid_merge_fragments_stay_separate(self, tmp_path: Path) -> None:
+		record = tmp_path / "tracks.parquet"
+		out = tmp_path / "unmerged.trj"
+		with ParquetTrackSink(record, _META, scale=1.0) as sink:
+			for frame in range(3):
+				sink.record(frame, [_tracked(x=10.0 * frame + 20.0, y=50.0, track_id=1)])
+			for frame in range(5, 8):
+				sink.record(frame, [_tracked(x=10.0 * frame + 20.0, y=50.0, track_id=2)])
+
+		result = CliRunner().invoke(app, [str(record), "--out", str(out)])
+		assert result.exit_code == 0, result.output
+
+		vehicle_ids = {state.vehicle_id for frame in read_trj(out).frames for state in frame.states}
+		assert vehicle_ids == {1, 2}
