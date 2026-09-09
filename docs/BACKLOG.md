@@ -79,3 +79,44 @@ orientation entirely — there is no longer a streaming/inline `.trj`, so kinema
 the offline smoother. What remains deferred: **tuning** `pos_noise`/`jerk` against real
 footage using the `validate_trj.py` jerk metric; and, if a real-time `.trj` is ever needed,
 a streaming path built on the kept `KinematicKalmanFilter` (or a **fixed-lag** middle ground).
+
+---
+
+### 3. Video I/O: cv2 decode → PyAV (+ NVDEC)
+
+| | |
+| --- | --- |
+| Port | `VideoSource` (`infrastructure/video/opencv.py`, `OpenCvVideoSource`) |
+| Ships with | `cv2.VideoCapture` — decode, `--start`/`--end` seeking (`src/tratrac/infrastructure/video/TIME_WINDOW.md`), and the `cv2.grab()`-without-decode skip used by `--process-fps` (`src/tratrac/infrastructure/TIMESTEP_PRECISION.md`) |
+| Target | PyAV decode, with NVIDIA NVDEC hardware acceleration — `docs/TECH_STACK.md`'s "Video Decoding: NVIDIA NVDEC + PyAV" row |
+| Trigger to upgrade | decode throughput becomes the pipeline bottleneck, or the `mp4v`-style codec gaps below start affecting decode too |
+
+**How this gap was found.** `overlay_video.py`'s writer was found producing overlay
+videos 3-5x the size of their source (see `src/tratrac/infrastructure/export/VIDEO_EXPORT.md`) because this
+project's `opencv-python` build has no software H.264 encoder, so `cv2.VideoWriter`
+silently fell back to the far less efficient `mp4v` (MPEG-4 Part 2). Fixing it moved
+the **encode** side of `OverlayVideoExporter` to PyAV, which is what `docs/TECH_STACK.md`
+already named as the target for video I/O — but unlike the RT-DETR→YOLOv8 detector
+override (`src/tratrac/infrastructure/detection/DETECTOR_CHOICE.md`), nothing had recorded *that* PyAV was still unadopted, so the
+gap had sat untracked since MVP1. This entry closes that: the encode half shipped,
+decode is deferred, and it should stay tracked next time.
+
+**Why decode wasn't swapped in the same change.** `OpenCvVideoSource` backs the
+**live pipeline's** per-frame decode (every `tratrac` run), not a standalone
+post-hoc tool, so it carries real behavioral risk the writer didn't: `--start`/
+`--end` window seeking and, more importantly, `--process-fps` decimation depends on
+`cv2.grab()` to skip a frame's *full decode* cost, not just discard it after
+decoding. PyAV has no direct one-line equivalent — the same effect needs discarding
+undecoded packets before the decoder, which is a real reimplementation to verify
+against the existing `FrameWindow`/`DecimationGrid` tests, not a drop-in adapter
+swap like the writer was.
+
+**Why NVDEC is bundled into the same upgrade, not split further.** `docs/TECH_STACK.md`
+pairs PyAV with NVDEC specifically for the decode *performance* win; adopting PyAV
+for decode without NVDEC gets consistency with the target stack but not the payoff
+the stack entry is actually about, so there's no reason to make it a two-step migration.
+
+**Why it is a clean swap (once done).** `VideoSource` is a Protocol port; replacing
+`OpenCvVideoSource` with a PyAV(+NVDEC) adapter is a single new adapter behind the
+existing seam, same as the other entries in this file — no domain or pipeline change,
+only `FrameWindow`/`DecimationGrid`'s interaction with the new adapter needs re-verifying.

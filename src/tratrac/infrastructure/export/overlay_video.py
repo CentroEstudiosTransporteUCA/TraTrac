@@ -15,10 +15,17 @@ ego-motion transform supplied by ``transform_source`` (identity when stabilizati
 is off). This keeps the overlay on the full, uncropped frame even when the drone
 has drifted far from its first frame. See src/tratrac/infrastructure/video/EGO_MOTION.md.
 
-cv2 lives only behind injected seams (``open_writer``, ``draw``, and the
+cv2 and PyAV live only behind injected seams (``open_writer``, ``draw``, and the
 ``transform_source`` that maps stabilized coordinates back to the raw frame), so
 the adapter's orchestration — frame copy, trail accumulation, coordinate mapping,
-lifecycle — is unit-testable without cv2 or a codec.
+lifecycle — is unit-testable without either.
+
+The default writer encodes with PyAV (libx264) rather than cv2's ``VideoWriter``:
+this project's ``opencv-python`` build has no software H.264 encoder, so
+``cv2.VideoWriter`` falls back to MPEG-4 Part 2 ("mp4v") with no bitrate control,
+producing overlay videos several times the size of the source clip at the same
+resolution/fps. PyAV wraps FFmpeg's libraries directly (no subprocess/pipe) and
+its wheels bundle libx264. See src/tratrac/infrastructure/export/VIDEO_EXPORT.md.
 """
 
 from __future__ import annotations
@@ -26,9 +33,10 @@ from __future__ import annotations
 import colorsys
 from collections import defaultdict, deque
 from collections.abc import Callable, Mapping, Sequence
+from fractions import Fraction
 from pathlib import Path
 from types import TracebackType
-from typing import Protocol
+from typing import Any, Protocol
 
 import numpy as np
 from numpy.typing import NDArray
@@ -101,7 +109,7 @@ class OverlayVideoExporter:
 			transform_source if transform_source is not None else Transform2D.identity
 		)
 		self._open_writer: OpenWriterFn = (
-			open_writer if open_writer is not None else _cv2_open_writer
+			open_writer if open_writer is not None else _pyav_open_writer
 		)
 		self._draw: DrawFn = draw if draw is not None else _cv2_draw
 		self._annotate: AnnotateFn = annotate if annotate is not None else _no_annotate
@@ -216,12 +224,43 @@ def _cv2_draw(
 			cv2.line(canvas, pixels[i - 1], pixels[i], color, 3)
 
 
-def _cv2_open_writer(path: Path, metadata: VideoMetadata) -> FrameWriter:
-	"""Open an mp4v ``cv2.VideoWriter`` matching the source's size and fps."""
-	import cv2
+class _PyAvFrameWriter:
+	"""Adapts a PyAV output container + video stream to the ``FrameWriter`` protocol.
 
-	fourcc = cv2.VideoWriter.fourcc(*"mp4v")
-	writer = cv2.VideoWriter(str(path), fourcc, metadata.fps, (metadata.width, metadata.height))
-	if not writer.isOpened():
-		raise RuntimeError(f"Could not open a video writer for {path}.")
-	return writer
+	``container``/``stream`` are PyAV objects; PyAV ships no type stubs, so they're
+	held as ``Any`` (matching cv2's `follow_imports = "skip"` treatment elsewhere).
+	"""
+
+	def __init__(self, container: Any, stream: Any) -> None:
+		self._container = container
+		self._stream = stream
+
+	def write(self, pixels: NDArray[np.uint8]) -> None:
+		import av
+
+		frame = av.VideoFrame.from_ndarray(pixels, format="bgr24")
+		for packet in self._stream.encode(frame):
+			self._container.mux(packet)
+
+	def release(self) -> None:
+		for packet in self._stream.encode():  # flush buffered frames
+			self._container.mux(packet)
+		self._container.close()
+
+
+def _pyav_open_writer(path: Path, metadata: VideoMetadata) -> FrameWriter:
+	"""Open a libx264 writer matching the source's size and fps.
+
+	CRF 23 / preset "medium" is libx264's own quality-oriented default operating
+	point, empirically close to typical drone-footage delivery bitrates (see
+	src/tratrac/infrastructure/export/VIDEO_EXPORT.md) rather than a size or bitrate target of its own.
+	"""
+	import av
+
+	container = av.open(str(path), mode="w")
+	stream = container.add_stream("libx264", rate=Fraction(metadata.fps).limit_denominator(1000))
+	stream.width = metadata.width
+	stream.height = metadata.height
+	stream.pix_fmt = "yuv420p"
+	stream.options = {"crf": "23", "preset": "medium"}
+	return _PyAvFrameWriter(container, stream)

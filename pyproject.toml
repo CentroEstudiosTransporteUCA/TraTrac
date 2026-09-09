@@ -8,6 +8,7 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "av>=18.1.0",
     "boxmot>=19.0.0",
     "dill>=0.4.1",
     "numpy>=2.4.6",
@@ -101,6 +102,7 @@ files = ["src", "tests"]
 
 [[tool.mypy.overrides]]
 module = [
+	"av.*",
 	"boxmot.*",
 	"cv2.*",
 	"huggingface_hub.*",

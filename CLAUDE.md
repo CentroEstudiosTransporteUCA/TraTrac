@@ -52,7 +52,8 @@ All commands run from the repo root. `uv` manages the venv (`.venv/`) and resolv
 - `ultralytics` is the **YOLOv8-VisDrone** runtime — also **AGPL-3.0**, also distribution-relevant. The dep is scoped to MVP1's emergency detector adapter (see `src/tratrac/infrastructure/detection/DETECTOR_CHOICE.md`); when RT-DETR fine-tuning lands in MVP1.5, this dep + the `yolov8_visdrone.py` adapter file + the CLI enum value get removed in one cleanup.
 - `dill` is pulled in because the `Mahadih534/YoloV8-VisDrone` checkpoint was pickled with it. Pinned explicitly so the ultralytics auto-installer doesn't re-trigger on every run.
 - `pyarrow` is the Parquet engine for the track record (`infrastructure/tracks/parquet.py`). Pulled forward from the MVP7 storage plan.
-- `transformers`, `cv2`, `boxmot`, `ultralytics`, `huggingface_hub`, `pyarrow` are configured with `follow_imports = "skip"` in mypy, so they're treated as `Any` at the third-party seam. Everything else is fully typed under strict mypy.
+- `av` (PyAV) encodes the `tratrac-render` overlay video (`_pyav_open_writer` in `infrastructure/export/overlay_video.py`, libx264) — `cv2.VideoWriter`'s bundled FFmpeg has no software H.264 encoder here and was silently falling back to the much less efficient `mp4v`, producing 3-5x oversized overlays; see `src/tratrac/infrastructure/export/VIDEO_EXPORT.md`. This is also the first adoption of PyAV, named as the target video I/O library in `docs/TECH_STACK.md`; decode stays on `cv2` for now (see `docs/BACKLOG.md` item 3).
+- `transformers`, `cv2`, `boxmot`, `ultralytics`, `huggingface_hub`, `pyarrow`, `av` are configured with `follow_imports = "skip"` in mypy, so they're treated as `Any` at the third-party seam. Everything else is fully typed under strict mypy.
 
 ## Code Style
 

@@ -72,6 +72,29 @@ coordinates and mapped through the *current* inverse each frame, showing the wor
 path from the current camera pose. Validator violation marks (`--violations`) ride the
 same transform, so they land in the same raw-frame space as the trajectories.
 
+## Output codec: PyAV (libx264), not cv2's `mp4v` fallback
+
+`OverlayVideoExporter`'s writer originally opened a `cv2.VideoWriter` with the
+`mp4v` fourcc (MPEG-4 Part 2). On this project's `opencv-python` build, `cv2`'s
+bundled FFmpeg has no software H.264 encoder registered (`avc1`/`h264`/`X264`
+tags all fail to open), so `mp4v` wasn't a choice, it was the only thing that
+worked — and it has no bitrate/CRF control. The result: overlay videos were
+routinely 3-5x the size of their source clip at identical resolution/fps
+(measured: 864 MB source → 2.65 GB overlay, mpeg4 at 23 Mbps vs. the source's
+h264 at 7.6 Mbps).
+
+The default writer (`_pyav_open_writer` in `overlay_video.py`) now encodes with
+[PyAV](https://pyav.org) (`libx264`, CRF 23, preset `medium`) instead. PyAV
+binds FFmpeg's libraries directly (no subprocess/pipe to manage) and its wheels
+bundle `libx264`, so it isn't subject to the same gap. This also happens to be
+the first adoption of PyAV, which `docs/TECH_STACK.md` names as the target video
+I/O library ("NVIDIA NVDEC + PyAV") but which nothing had wired in yet — that
+gap had gone untracked, unlike the RT-DETR→YOLOv8 detector swap (`src/tratrac/infrastructure/detection/DETECTOR_CHOICE.md`),
+which documents its override explicitly. Only the **encode** side moved to
+PyAV; `OpenCvVideoSource` (decode, seeking, `--process-fps` frame-skipping) and
+the drawing primitives (`cv2.line`/`circle`/`putText`) stay on `cv2` — see
+`docs/BACKLOG.md` for the deferred full-decode PyAV+NVDEC migration.
+
 ## Violations in the same pass
 
 `tratrac-render --violations CSV` (a `validate_trj.py` violations CSV, optionally
@@ -88,9 +111,9 @@ trajectories, mapped to raw via the same `to_raw`. This replaced the old standal
 - `infrastructure/export/overlay_video.py` — `OverlayVideoExporter` (a standalone
   renderer). Owns per-track trail accumulation (`trail_length` 0 = whole path, N =
   rolling window of N frames); only currently-visible tracks are drawn so dead tracks
-  stop ghosting. cv2 lives behind injected seams (`open_writer`, `draw`, `annotate`)
-  plus the `transform_source` seam, so the orchestration (frame copy, trails, coordinate
-  mapping, lifecycle) is unit-testable without cv2 or a codec.
+  stop ghosting. cv2 and PyAV live behind injected seams (`open_writer`, `draw`,
+  `annotate`) plus the `transform_source` seam, so the orchestration (frame copy,
+  trails, coordinate mapping, lifecycle) is unit-testable without either.
 - `cli_render.py` — `tratrac-render`. Reads the `.trj` (`read_trj`), the optional
   transforms CSV, and the optional violations CSV, buckets states (and violation marks)
   onto absolute video frames by `round(timestamp * fps)` (fps from the **clip** — the
