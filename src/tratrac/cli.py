@@ -50,6 +50,7 @@ from tratrac.infrastructure.anchors.recording import AnchorRecordingEgoMotionEst
 from tratrac.infrastructure.anchors.sink import AnchorManifestSink
 from tratrac.infrastructure.config.toml import load_toml
 from tratrac.infrastructure.detection.rt_detr import RtDetrDetector
+from tratrac.infrastructure.detection.yolo_obb import YoloObbDetector
 from tratrac.infrastructure.detection.yolov8_visdrone import YoloV8VisDroneDetector
 from tratrac.infrastructure.progress.console import ConsoleProgressReporter
 from tratrac.infrastructure.timing.csv import CsvTimingSink
@@ -187,10 +188,14 @@ def process(
 		det: Detector = _build_detector(run.detector, device=run.runtime.device)
 		# When we stabilize coordinates ourselves, disable BoT-SORT's own camera-motion
 		# compensation so it does not double-correct the already-stabilized boxes.
+		# is_obb is decided from the run's detector choice up front (Group A5/A9): boxmot
+		# infers the det-array layout from only the first non-empty frame, which would
+		# silently lock in AABB mode if that frame happened to have no detections.
 		tracker: Tracker = BoxmotBotSortTracker(
 			source.metadata,
 			det_thresh=run.tracker.det_thresh,
 			compensate_camera_motion=not run.ego_motion.enabled,
+			is_obb=run.detector.name is DetectorChoice.YOLO_OBB,
 		)
 		# Map detections into the global frame when ego-motion is on; the pipeline's Null
 		# default (pass-through) handles a non-stabilized run.
@@ -365,6 +370,12 @@ def _build_detector(detector: DetectorConfig, *, device: str) -> Detector:
 		return YoloV8VisDroneDetector(
 			repo_id=detector.checkpoint,
 			filename=detector.filename,
+			device=device,
+			score_threshold=detector.conf,
+		)
+	if detector.name is DetectorChoice.YOLO_OBB:
+		return YoloObbDetector(
+			checkpoint=detector.checkpoint,
 			device=device,
 			score_threshold=detector.conf,
 		)

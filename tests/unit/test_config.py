@@ -103,6 +103,10 @@ class TestPrecedence:
 		assert run.detector.conf == 0.4
 		assert run.detector.name is DetectorChoice.RT_DETR
 
+	def test_resolves_yolo_obb_choice(self, tmp_path: Path) -> None:
+		run = RunConfig.resolve(_complete(tmp_path), {"detector.name": "yolo_obb"})
+		assert run.detector.name is DetectorChoice.YOLO_OBB
+
 	def test_positional_video_and_out_override_file(self, tmp_path: Path) -> None:
 		run = RunConfig.resolve(
 			_complete(tmp_path),

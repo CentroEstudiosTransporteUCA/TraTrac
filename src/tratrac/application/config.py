@@ -34,12 +34,18 @@ class DetectorChoice(StrEnum):
 
 	``yolov8_visdrone`` is the MVP1 emergency detector — community YOLOv8 fine-tuned
 	on VisDrone, picked because COCO-pretrained RT-DETR fails on aerial inputs.
-	``rt_detr`` stays available; once a fine-tuned aerial RT-DETR checkpoint exists,
-	we make it the default again and drop the YOLO option (see ``src/tratrac/infrastructure/detection/DETECTOR_CHOICE.md``).
+	``rt_detr`` stays available as a dormant alternative behind the ``Detector`` port.
+	``yolo_obb`` (Group A9, ``docs/IMPLEMENTATION_PLAN.md``) wraps ``ultralytics``'s OBB task
+	(see ``src/tratrac/infrastructure/detection/yolo_obb.py``) — **not yet the default**: MVP1.5's
+	acceptance criterion is that a fine-tuned checkpoint measurably beats the YOLOv8-VisDrone
+	baseline (``scripts/probe_detector.py`` + ``scripts/validate_trj.py``) before the default
+	changes, and no such checkpoint exists yet (needs a GPU + the UAV-OBB dataset — neither
+	available in this environment). See ``src/tratrac/infrastructure/detection/DETECTOR_CHOICE.md``.
 	"""
 
 	YOLOV8_VISDRONE = "yolov8_visdrone"
 	RT_DETR = "rt_detr"
+	YOLO_OBB = "yolo_obb"
 
 
 class ConfigError(Exception):
@@ -74,7 +80,10 @@ class DetectorConfig:
 	name: DetectorChoice
 	checkpoint: str
 	conf: float
-	filename: str  # consumed only by the yolov8_visdrone adapter
+	# Consumed only by the yolov8_visdrone adapter (its HuggingFace Hub filename); rt_detr and
+	# yolo_obb ignore it but must still supply a non-empty value (zero-defaults config: still an
+	# open question whether to drop or repurpose it, see DETECTOR_CHOICE.md "Open questions").
+	filename: str
 
 
 @dataclass(frozen=True, slots=True)

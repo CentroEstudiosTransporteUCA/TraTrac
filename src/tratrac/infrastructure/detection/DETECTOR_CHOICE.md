@@ -269,19 +269,22 @@ This is where MVP1.5 actually lives, and the repo provides no harness for it.
 > The fine-tuning + eval workflow is not yet designed. Treat its design as a
 > sub-task of this MVP; do not assume a training script exists.
 
-### Part B — Build the YOLO-OBB adapter and class mapping (required, not yet noted elsewhere)
+### Part B — Build the YOLO-OBB adapter and class mapping ✅ Done (code); checkpoint still pending
 
-No OBB adapter exists yet behind the `Detector` port — this is new code, not a
-modification of `rt_detr.py` (which stays as an unused axis-aligned option, see
-"Open questions"). It needs to:
+`infrastructure/detection/yolo_obb.py` wraps `ultralytics`'s OBB task
+(`result.obb`, distinct from `result.boxes`) behind the `Detector` port,
+surfacing `angle`/`oriented_size` on `Detection` (Group A3), and maps UAV-OBB's
+six classes (`bike`, `bus`, `car`, `other_vehicle`, `taxi`, `truck`) into
+`VehicleClass` **by label string**, not class index (a checkpoint's index
+order isn't guaranteed stable across training runs). Wired into
+`DetectorChoice.YOLO_OBB` (`application/config.py`) and `cli.py`'s
+`_build_detector` (Group A9); `BoxmotBotSortTracker` takes the matching
+`is_obb=True` when this detector is selected (Group A5).
 
-- Wrap `ultralytics`'s OBB task (distinct from its detection task) and surface
-  the per-detection orientation angle, not just a box.
-- Map UAV-OBB's six classes (`bike`, `bus`, `car`, `other_vehicle`, `taxi`,
-  `truck`) — or DroneVehicle's five (`car`, `truck`, `bus`, `van`,
-  `freight-car`) if that dataset is used — into TraTrac's `VehicleClass` enum,
-  the same *kind* of mapping work the original RT-DETR plan required, against a
-  better-matched taxonomy this time.
+**Still open:** no fine-tuned checkpoint exists (Part A below, blocked on a
+GPU + the UAV-OBB dataset), so `yolo_obb` is not the default detector and the
+adapter's class-mapping/angle-convention assumptions are unverified against
+real UAV-OBB-trained output — see "Open questions" below.
 
 ### Part C — Remove the YOLOv8 emergency scaffolding (mechanical; do last)
 
