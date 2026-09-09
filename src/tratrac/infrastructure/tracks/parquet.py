@@ -29,7 +29,19 @@ from tratrac.domain.frame import VideoMetadata
 # without emitting a tiny row group per frame.
 _ROW_GROUP_ROWS = 10_000
 
-_COLUMNS = ("frame", "track_id", "cx", "cy", "w", "h", "vehicle_class", "score")
+_COLUMNS = (
+	"frame",
+	"track_id",
+	"cx",
+	"cy",
+	"w",
+	"h",
+	"vehicle_class",
+	"score",
+	"angle",
+	"obb_w",
+	"obb_h",
+)
 _SCHEMA = pa.schema(
 	[
 		("frame", pa.int64()),
@@ -40,11 +52,19 @@ _SCHEMA = pa.schema(
 		("h", pa.float64()),
 		("vehicle_class", pa.string()),
 		("score", pa.float64()),
+		# OBB fields (Group A6, docs/IMPLEMENTATION_PLAN.md): nullable, populated only when the
+		# run's detector reports an oriented box. A record written before these columns existed
+		# is still readable — see ``_optional_float`` in ``read_tracks``.
+		("angle", pa.float64()),
+		("obb_w", pa.float64()),
+		("obb_h", pa.float64()),
 	]
 )
 
 # One buffered observation row, column order matching ``_SCHEMA``.
-_Row = tuple[int, int, float, float, float, float, str, float]
+_Row = tuple[
+	int, int, float, float, float, float, str, float, float | None, float | None, float | None
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,6 +79,12 @@ class TrackObservation:
 	height: float
 	vehicle_class: VehicleClass
 	score: float
+	# OBB fields (Group A6): the detector's oriented-box angle (radians) and its own
+	# (length, width) in pixels, when the run's detector reported one. ``None`` for
+	# an AABB-only run, or when reading a record written before these columns existed.
+	angle: float | None = None
+	obb_w: float | None = None
+	obb_h: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,6 +129,7 @@ class ParquetTrackSink:
 		for item in tracked:
 			box = item.detection.bbox
 			center = box.center
+			oriented = item.detection.oriented_size
 			self._buffer.append(
 				(
 					frame_index,
@@ -113,6 +140,9 @@ class ParquetTrackSink:
 					box.height,
 					item.detection.vehicle_class.value,
 					item.detection.score,
+					item.detection.angle,
+					oriented[0] if oriented is not None else None,
+					oriented[1] if oriented is not None else None,
 				)
 			)
 		if len(self._buffer) >= _ROW_GROUP_ROWS:
@@ -154,6 +184,11 @@ def read_tracks(path: Path) -> TrackRecording:
 		raise ValueError(f"{path} is not a readable Parquet track record: {exc}") from exc
 	metadata, scale = _parse_schema_metadata(table.schema.metadata, path)
 	columns = table.to_pydict()
+	# Tolerate a record written before the OBB columns existed (Group A6): missing entirely,
+	# rather than a hard schema-version bump, so old records stay readable.
+	angle_col = columns.get("angle")
+	obb_w_col = columns.get("obb_w")
+	obb_h_col = columns.get("obb_h")
 	observations = [
 		TrackObservation(
 			frame_index=int(columns["frame"][i]),
@@ -164,10 +199,22 @@ def read_tracks(path: Path) -> TrackRecording:
 			height=float(columns["h"][i]),
 			vehicle_class=VehicleClass(columns["vehicle_class"][i]),
 			score=float(columns["score"][i]),
+			angle=_optional_float(angle_col, i),
+			obb_w=_optional_float(obb_w_col, i),
+			obb_h=_optional_float(obb_h_col, i),
 		)
 		for i in range(table.num_rows)
 	]
 	return TrackRecording(metadata=metadata, scale=scale, observations=observations)
+
+
+def _optional_float(column: list[Any] | None, index: int) -> float | None:
+	"""Read one row of a nullable float column; ``None`` if the column doesn't exist at all
+	(a record written before it did) or the cell itself is null."""
+	if column is None:
+		return None
+	value = column[index]
+	return None if value is None else float(value)
 
 
 def _parse_schema_metadata(
