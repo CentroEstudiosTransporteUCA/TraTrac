@@ -15,9 +15,12 @@
 > elevation-plane zones (`--plane-zones`, `application/ROAD_GRAPH.md`) — spatial selection,
 > orthogonal to `PerAnchorWorldProjector`'s temporal (`frame_index`) selection; the two are not
 > composed (a calibration spanning both multiple anchors and multiple planes pools an anchor's
-> correspondences per plane regardless of anchor, a known, documented limitation). The one piece
-> still **not** done: the SuperPoint + LightGlue stabilization upgrade (MVP1.9's ORB still does
-> ego-motion; `docs/BACKLOG.md` item 1). With all landed, SSAM positions can be metric world
+> correspondences per plane regardless of anchor, a known, documented limitation).
+> **Automatic-calibration correspondence proposal** (Group C4) has landed too, scoped to
+> proposal-only per its resolved repo-boundary question — see "Automatic calibration from road
+> geometry" below and `src/tratrac/application/AUTO_CALIBRATION.md`. The one piece still **not**
+> done: the SuperPoint + LightGlue stabilization upgrade (MVP1.9's ORB still does ego-motion;
+> `docs/BACKLOG.md` item 1). With all landed, SSAM positions can be metric world
 > coordinates for wide-swept, many-anchor, grade-separated scenes, not just bounded flat ones.
 
 ---
@@ -455,19 +458,26 @@ for a static camera):
 ] }
 ```
 
-### Frontier upgrade: automatic calibration from road geometry
+### Automatic calibration from road geometry — landed, proposal-only (Group C4)
 
 The operator workflow above requires manually clicking image↔world correspondence points —
 `URBAn/docs/PRODUCTION_MVP.md` already flags this as a UX gap (hand-authored JSON). A May 2026
 pipeline demonstrates deriving the road-plane homography **automatically from visible road
 geometry** — lane markings, road borders, crosswalks — instead of manual correspondences. Its
-caveats match what this doc already documents independently, not new information: far-field
+caveats match what this doc already documented independently, not new information: far-field
 vehicles are most sensitive to homography error, and manual validation currently outperforms
-fully-automatic calibration. So this is a real path to reducing operator burden (auto-propose
-correspondences, operator confirms/adjusts rather than authoring from scratch), not a
-replacement for operator validation — the single-homography math itself (confirmed against the
-literature as still the right approach for piecewise-planar road surfaces, no qualitatively
-better alternative exists) is unchanged. See `docs/TECH_STACK.md`'s Geometry section.
+fully-automatic calibration.
+
+**Group C4's repo-boundary question — does TraTrac ship only correspondence-proposal, with
+interactive confirm/adjust living in URBAn — is resolved: yes.** `scripts/propose_calibration.py`
+auto-proposes candidate image-side points from road markings (Canny + Hough line detection,
+filtered by brightness *and* local contrast against the surrounding surface — see
+`src/tratrac/application/AUTO_CALIBRATION.md` for the full design, the real-footage validation
+run, and why brightness alone isn't enough); a human (via URBAn, or by hand) confirms/adjusts
+and supplies `world` coordinates before the result becomes a usable `calibration.json`. The
+single-homography math itself (confirmed against the literature as still the right approach for
+piecewise-planar road surfaces, no qualitatively better alternative exists) is unchanged. See
+`docs/TECH_STACK.md`'s Geometry section.
 
 **Source:** [Mobile Traffic Camera Calibration from Road Geometry for UAV-Based Traffic Surveillance (2026)](https://arxiv.org/abs/2605.11900)
 
