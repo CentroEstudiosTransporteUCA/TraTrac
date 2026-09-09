@@ -12,6 +12,7 @@ Read `docs/ROADMAP.md` first for the project's status; everything else is detail
 | Doc | What it covers |
 | --- | --- |
 | [`ROADMAP.md`](ROADMAP.md) | System objective, core philosophy, and the MVP capability-ladder-vs-execution-order reconciliation table. Start here. |
+| [`PRODUCTION_MVP.md`](PRODUCTION_MVP.md) | Full production-MVP checklist, ordered by value to civil engineers, with the realistic congress-presentation cutoff marked. |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | The end-state pipeline diagram (final architecture vision). |
 | [`TECH_STACK.md`](TECH_STACK.md) | Stack choices **not yet adopted** (SAM2, FastReID, Lane Graph, EKF, multi-homography, FiftyOne, CVAT, Docker/CUDA). Already-shipped choices (RT-DETR/YOLO, BoT-SORT) are documented next to their adapters instead — see `DETECTOR_CHOICE.md` and `TRACKER_CHOICE.md` in the table below. |
 | [`BACKLOG.md`](BACKLOG.md) | "Shipped cheaper now, upgrade later" tracker — deliberate quality upgrades deferred behind a stable port (ego-motion estimator, video I/O). |
