@@ -6,11 +6,13 @@ Partially shipped (`docs/IMPLEMENTATION_PLAN.md` Group D2, `docs/roadmap/mvp5.md
 the "merge decision" and "apply" stages — `application/reid_merge.py`, the
 `KinematicKalmanFilter.from_state`/`predict` extension it's built on
 (`application/kalman.py`), `infrastructure/reid/json.py`, and `tratrac-postprocess
---reid-merge`. **Not landed:** the "embed" stage (`cli_embed.py`/`tratrac-embed`, DINOv3
-per-fragment appearance vectors) — it needs a GPU and a real DINOv3 model, unavailable in this
-environment, so nothing here has been exercised against a real embedding, only synthetic
-vectors in tests. This module is deliberately indifferent to how the embedding was produced —
-see "Why merge decision doesn't need the embed stage to exist" below.
+--reid-merge`. The motion-gate half has also now been **run against real footage**
+(`scripts/probe_reid_merge.py` — see "Validated against real footage" below), though with a
+placeholder embedding, not DINOv3. **Not landed:** the "embed" stage
+(`cli_embed.py`/`tratrac-embed`, DINOv3 per-fragment appearance vectors) — it needs a GPU and a
+real DINOv3 model, unavailable in this environment. This module is deliberately indifferent to
+how the embedding was produced — see "Why merge decision doesn't need the embed stage to exist"
+below.
 
 ## What this adds
 
@@ -101,21 +103,52 @@ measurement at all. Both were added:
 ```
 
 `candidates` is written for operator audit (every motion-plausible pair, not just the
-resolved merges) but not consumed by `--reid-merge` — only `merges` is. There is no CLI
-command that *produces* this file yet (that's stage 1+2 wired together, i.e. `tratrac-embed`,
-unbuilt); today it's produced by calling `application/reid_merge.py` + `save_reid_merge`
-directly, or authored by hand for testing.
+resolved merges) but not consumed by `--reid-merge` — only `merges` is. There is no
+`tratrac-embed` yet (stage 1+2 wired together with a real embedding) — `scripts/probe_reid_merge.py`
+(below) is today's way to produce this file, motion-gate only; a hand-authored file works too
+for testing.
+
+## Validated against real footage (motion gate only, no DINOv3)
+
+`scripts/probe_reid_merge.py` runs `candidate_pairs`/`resolve_merges` against a real track
+record with every fragment given the **same placeholder embedding** — neutralizing the
+appearance-similarity term so only the Kalman motion gate decides merges — and writes the
+result for `tratrac-postprocess --reid-merge` to apply. Run against a real ~15-minute
+congress-site intersection clip (1920x1080, 30fps, YOLOv8-VisDrone baseline, `conf=0.25`,
+default gate parameters):
+
+- **1,545 track fragments → 52 motion-plausible candidate pairs → 43 accepted merges** (36
+  canonical tracks absorbed the 43).
+- `scripts/validate_trj.py` Continuity compliance **before**: 38.67% appearances / 40.10%
+  disappearances compliant (2,873 total continuity events). **After** the 43 merges: 38.74% /
+  39.99% — **no measurable improvement**.
+- **Why**: continuity events far outnumber tracks (2,873 events across 1,545 fragments before
+  merging — an average of ~1.9 per fragment), and separately, track-length distribution on this
+  clip shows 47.1% of all fragments last under 1 second (30 frames) and 18.5% under a third of a
+  second (10 frames). That's the signature of a low-confidence emergency detector
+  (`conf=0.25`) producing many short, flickering, likely-spurious detections — not vehicles
+  genuinely disappearing behind an occluder and plausibly reappearing later, which is the
+  specific failure mode ReID merging targets. **Conclusion**: on this footage, low continuity
+  compliance is dominantly a *detector quality* problem, not an occlusion/identity problem — this
+  is real evidence (not a guess) that MVP1.5's YOLO-OBB fine-tune (`docs/IMPLEMENTATION_PLAN.md`
+  Group A2, still GPU-blocked) is likely higher-leverage for this metric than finishing ReID's
+  embed stage would be, though both remain worth finishing.
+- This does **not** mean the motion gate or `resolve_merges` are broken — 52 candidates out of
+  ~1.2M possible pairs (1,545²) is exactly what a tight, working gate should produce when most
+  fragments genuinely aren't the same reappearing vehicle. It means this particular clip doesn't
+  have enough genuine occlusion-driven fragmentation for ReID merging to move the needle much,
+  which is itself useful information, not a null result.
 
 ## Not done by this landing
 
 - **The embed stage** (`cli_embed.py`, DINOv3) — needs a GPU + real footage; the whole
-  appearance-scoring half of this design is unvalidated until it exists.
+  appearance-scoring half of this design is unvalidated until it exists. The motion gate alone
+  found few candidates on real footage (above) — appearance scoring would only ever *narrow*
+  that set further, so this doesn't change the priority conclusion above.
 - **`resolve_merges`'s greedy 1:1 heuristic** is not a full assignment solver (Hungarian
-  etc.) — judged good enough since fragment merging is a comparatively rare event (an
-  occlusion), not a dense every-frame assignment problem; revisit if real footage shows
-  contested candidates common enough for greedy's suboptimality to matter.
-- **Gate parameter defaults** (`max_gap_seconds`, `seed_vel_std`, `seed_accel_std`,
-  `max_sigma`) are not chosen here — no real occlusion footage exists yet to tune them
-  against, so `tratrac-postprocess` does not (yet) expose `--reid-merge`'s upstream gate
-  parameters as flags; today they're arguments to `candidate_pairs` for a caller (a future
-  `tratrac-embed` or a script) to supply.
+  etc.) — on real footage only 52 candidates arose (no contested pairs observed to stress-test
+  greedy's suboptimality against); revisit if a future clip shows many contested candidates.
+- **Gate parameter defaults** (`max_gap_seconds=2.0`, `seed_vel_std=10.0`,
+  `seed_accel_std=5.0`, `max_sigma=3.0`) have now been run once against real footage (above) but
+  not swept/tuned — `tratrac-postprocess` still does not expose them as flags; today they're
+  `scripts/probe_reid_merge.py` CLI arguments.
