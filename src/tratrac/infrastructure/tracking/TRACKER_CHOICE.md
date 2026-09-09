@@ -36,11 +36,16 @@ When ego-motion coordinate stabilization is enabled (MVP1.9, see
 `src/tratrac/infrastructure/video/EGO_MOTION.md`), BoT-SORT's own camera-motion-compensation is
 disabled (`cmc_method=None`) so it doesn't double-correct already-stabilized detections.
 
-**OBB tracking is natively supported**, confirmed directly against the `boxmot` project, not
-assumed: it handles both axis-aligned and oriented-box detections from any model. This matters
-because MVP1.5's replanned detector (`DETECTOR_CHOICE.md`) outputs oriented boxes — the tracker
-doesn't need the orientation angle collapsed away before association, so it can survive into the
-track for the exporter to use.
+**OBB tracking is wired in** (Group A5, `docs/IMPLEMENTATION_PLAN.md`): `boxmot_bot_sort.py`
+takes an explicit `is_obb` constructor flag — not per-frame auto-detection, since `boxmot`
+infers the det-array layout from the *first* non-empty frame only and would lock in AABB mode
+if that frame happened to have no detections — and builds the 7-column
+`(cx, cy, w, h, angle, conf, cls)` det array boxmot's `BotSort` expects for OBB instead of the
+6-column AABB one, confirmed directly against `boxmot.trackers.detection_layout`. Output rows
+carry the angle back into `Detection.angle`/`oriented_size`; `Detection.bbox` is still populated
+as the rotated box's axis-aligned enclosing rectangle (`_obb_to_aabb`), since ORB masking and
+other AABB-only consumers still need it. `is_obb` is not yet threaded from `RunConfig`/`cli.py`
+(Group A9 — pending the actual YOLO-OBB detector adapter and a trained checkpoint).
 
 `boxmot` is **AGPL-3.0** — relevant if TraTrac is distributed (see `CLAUDE.md` Dependency Notes).
 
