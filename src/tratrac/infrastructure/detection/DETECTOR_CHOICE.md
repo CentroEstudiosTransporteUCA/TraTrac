@@ -198,7 +198,7 @@ a silent carry-over.
 | Detection | **YOLO-OBB** (`yolo11-obb` or `yolo26-obb`, fine-tuned), via `ultralytics` |
 | Training data | **UAV-OBB** (nadir, 75–108m altitude, already YOLO-OBB label format) — **DroneVehicle** (28K pairs, more robust) if UAV-OBB alone underperforms |
 | Training compute | **GPU required** (the project torch pin is CPU-only today) |
-| Eval | `scripts/probe_detector.py` (**currently missing from the repo — must be restored or replaced first**, see below), `scripts/validate_trj.py` |
+| Eval | `scripts/probe_detector.py` (restored, generalized to probe `rt_detr` or any `ultralytics` `yolo` checkpoint — detect or OBB task, auto-detected), `scripts/validate_trj.py` |
 
 The `ultralytics` package is already a TraTrac dependency (the MVP1 emergency
 adapter uses it) — this is a task/checkpoint swap within the same library, not
@@ -237,12 +237,14 @@ The milestone decomposes into parts of very different character. **They must
 land in this order** — the YOLOv8 scaffolding is the only working detector
 until the OBB adapter is proven, so removing it first would leave no detector.
 
-### Part 0 — Restore the eval tool (blocks everything else)
+### Part 0 — Restore the eval tool ✅ Done
 
-`scripts/probe_detector.py` is referenced throughout this doc and the original
-plan as the tool that validates detector quality before/after a swap, but it
-does not currently exist in the repo. Credible before/after comparison for this
-MVP depends on it (or an equivalent) existing first.
+`scripts/probe_detector.py` is restored and generalized beyond its original
+RT-DETR-only form: `--backend rt_detr` keeps the original HuggingFace RT-DETR
+path, `--backend yolo` probes any `ultralytics` checkpoint (a local `.pt`, an
+ultralytics-hub name, or a HuggingFace Hub file via `--repo-id`/`--filename`),
+auto-detecting an OBB result (`.obb`) vs. a plain AABB result (`.boxes`) so it
+will also be the eval tool for Part A's fine-tuned checkpoint once one exists.
 
 ### Part A — Train the model (the real deliverable; currently undocumented)
 

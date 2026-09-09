@@ -29,13 +29,15 @@ checklist draws its "shipped" checkmarks from, and [`BACKLOG.md`](BACKLOG.md) fo
 - [ ] Multi-anchor / full world projection for moving, wide-swept drone footage (MVP2 remainder)
 - [ ] Lane-level assignment + lane-change conflict classification (MVP6)
 - [ ] Segmentation-based precise occupancy footprint — SAM 3, not SAM2 (MVP4 remainder; orientation is no longer this item's job, MVP1.5's OBB detector already provides it)
-- [ ] Link-ID road-segment identity for multi-link scenes (rest of MVP3)
+- [x] Link-ID road-segment identity for multi-link scenes — single-plane classification (rest of MVP3; multi-homography/plane assignment for grade-separated sites is the item above, not this one)
 - [ ] Faster, hardware-accelerated video decode — TorchCodec + NVDEC, not PyAV (Backlog #3; PyAV stays for encode, which already shipped)
 - [ ] Production-scale platform: FiftyOne visualization, async pipelines, Docker/CUDA deployment (MVP7 remainder)
 
-## Known blocker
+## Resolved blocker
 
 `src/tratrac/infrastructure/detection/DETECTOR_CHOICE.md` references `scripts/probe_detector.py`
-for detector-quality validation, but that script does not exist in the repo. This blocks a
-credible before/after comparison for the MVP1.5 fine-tune attempt above until it's restored or
-replaced.
+for detector-quality validation; it was missing from the repo and has been restored (generalized
+to probe either the `rt_detr` or any `ultralytics` `yolo` checkpoint, detect or OBB task, not just
+the original RT-DETR-only version) — see `docs/IMPLEMENTATION_PLAN.md` Group A0. The MVP1.5
+fine-tune attempt above still needs a trained YOLO-OBB checkpoint and a GPU to produce one
+(neither exists yet) before a credible before/after comparison can actually be run.
