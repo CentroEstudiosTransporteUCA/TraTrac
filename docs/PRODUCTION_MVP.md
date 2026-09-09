@@ -30,7 +30,7 @@ checklist draws its "shipped" checkmarks from, and [`BACKLOG.md`](BACKLOG.md) fo
 - [ ] Lane-level assignment + lane-change conflict classification (MVP6)
 - [ ] Segmentation-based precise occupancy footprint — SAM 3, not SAM2 (MVP4 remainder; orientation is no longer this item's job, MVP1.5's OBB detector already provides it)
 - [ ] Link-ID road-segment identity for multi-link scenes (rest of MVP3)
-- [ ] Faster, hardware-accelerated video decode — PyAV + NVDEC (Backlog #3; encode side already shipped)
+- [ ] Faster, hardware-accelerated video decode — TorchCodec + NVDEC, not PyAV (Backlog #3; PyAV stays for encode, which already shipped)
 - [ ] Production-scale platform: FiftyOne visualization, async pipelines, Docker/CUDA deployment (MVP7 remainder)
 
 ## Known blocker
