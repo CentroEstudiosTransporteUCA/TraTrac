@@ -135,7 +135,7 @@ phantom motion into the *coordinates* of parked cars).
 ## Where It Lives
 
 - `domain/geometry.py` — `Transform2D` (+ `scale`), and `clipped_overlap_fraction`
-  (Sutherland–Hodgman clip + shoelace; pure overlap geometry for re-anchoring).
+  (shapely-backed polygon intersection/area; pure overlap geometry for re-anchoring).
 - `domain/ports.py` — `EgoMotionEstimator`: `estimate(frame) -> Transform2D`
   (stateful; returns the current frame → global transform) and `DetectionObserver`.
 - `infrastructure/video/ego_motion_orb.py` — `OrbEgoMotionEstimator` (ORB →

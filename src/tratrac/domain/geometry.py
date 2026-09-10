@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
+
+import shapely
 
 
 @dataclass(frozen=True, slots=True)
@@ -222,71 +224,33 @@ def clipped_overlap_fraction(transform: Transform2D, width: int, height: int) ->
 	measure how much of that mapped quad falls inside the reference rectangle
 	``[0, width] x [0, height]``, as a fraction of the reference area. Used by the
 	keyframe stabilizer to decide when the camera has drifted far enough from the
-	anchor that a new anchor is warranted. Pure geometry — no pixels, no cv2.
+	anchor that a new anchor is warranted. Pure geometry (via ``shapely``) — no
+	pixels, no cv2.
 	"""
 	if width <= 0 or height <= 0:
 		raise ValueError(f"Rectangle dimensions must be positive: {width}x{height}.")
 	w, h = float(width), float(height)
 	corners = [Point2D(0.0, 0.0), Point2D(w, 0.0), Point2D(w, h), Point2D(0.0, h)]
 	mapped = [transform.apply(c) for c in corners]
-	clipped = _clip_to_rectangle(mapped, w, h)
-	if len(clipped) < 3:
-		return 0.0
-	return min(1.0, _polygon_area(clipped) / (w * h))
+	raw_quad = shapely.Polygon([(p.x, p.y) for p in mapped])
+	quad: shapely.geometry.base.BaseGeometry = (
+		raw_quad if raw_quad.is_valid else shapely.make_valid(raw_quad)
+	)
+	reference = shapely.box(0.0, 0.0, w, h)
+	overlap_area: float = quad.intersection(reference).area
+	return min(1.0, overlap_area / (w * h))
 
 
-def _polygon_area(polygon: list[Point2D]) -> float:
-	"""Absolute area of a simple polygon via the shoelace formula."""
-	total = 0.0
-	for i in range(len(polygon)):
-		a = polygon[i]
-		b = polygon[(i + 1) % len(polygon)]
-		total += a.x * b.y - b.x * a.y
-	return abs(total) / 2.0
+def point_in_polygon(point: Point2D, polygon: Sequence[Point2D]) -> bool:
+	"""Whether ``point`` lies inside ``polygon`` (via ``shapely``'s prepared-geometry contains).
 
-
-def _clip_to_rectangle(subject: list[Point2D], width: float, height: float) -> list[Point2D]:
-	"""Sutherland-Hodgman clip of a convex polygon against ``[0,width]x[0,height]``.
-
-	Each rectangle edge is a half-plane; the polygon is clipped edge by edge. The
-	rectangle is convex, so the standard algorithm yields the exact intersection.
+	Frame-agnostic like the other helpers; works for concave polygons. A polygon of
+	fewer than 3 vertices contains nothing. See ``src/tratrac/application/EXCLUSION_ZONES.md``.
 	"""
-	# (keep-predicate, intersection-axis) per rectangle edge, walked CCW.
-	edges: list[tuple[Callable[[Point2D], bool], Callable[[Point2D, Point2D], Point2D]]] = [
-		(lambda p: p.x >= 0.0, lambda a, b: _intersect_x(a, b, 0.0)),
-		(lambda p: p.x <= width, lambda a, b: _intersect_x(a, b, width)),
-		(lambda p: p.y >= 0.0, lambda a, b: _intersect_y(a, b, 0.0)),
-		(lambda p: p.y <= height, lambda a, b: _intersect_y(a, b, height)),
-	]
-	polygon = subject
-	for inside, intersect in edges:
-		if not polygon:
-			return []
-		clipped: list[Point2D] = []
-		for i in range(len(polygon)):
-			current = polygon[i]
-			previous = polygon[i - 1]
-			cur_in, prev_in = inside(current), inside(previous)
-			if cur_in:
-				if not prev_in:
-					clipped.append(intersect(previous, current))
-				clipped.append(current)
-			elif prev_in:
-				clipped.append(intersect(previous, current))
-		polygon = clipped
-	return polygon
-
-
-def _intersect_x(a: Point2D, b: Point2D, x: float) -> Point2D:
-	"""Point where segment a→b crosses the vertical line X = ``x``."""
-	t = (x - a.x) / (b.x - a.x)
-	return Point2D(x, a.y + t * (b.y - a.y))
-
-
-def _intersect_y(a: Point2D, b: Point2D, y: float) -> Point2D:
-	"""Point where segment a→b crosses the horizontal line Y = ``y``."""
-	t = (y - a.y) / (b.y - a.y)
-	return Point2D(a.x + t * (b.x - a.x), y)
+	if len(polygon) < 3:
+		return False
+	shape = shapely.Polygon([(p.x, p.y) for p in polygon])
+	return bool(shape.contains(shapely.Point(point.x, point.y)))
 
 
 def oriented_extent(polygon: Polygon, angle: float | None) -> tuple[float, float]:
@@ -328,26 +292,3 @@ def oriented_box_to_aabb(cx: float, cy: float, w: float, h: float, angle: float)
 	half_w = (w * cos_a + h * sin_a) / 2.0
 	half_h = (w * sin_a + h * cos_a) / 2.0
 	return BoundingBox(x=cx - half_w, y=cy - half_h, width=2.0 * half_w, height=2.0 * half_h)
-
-
-def point_in_polygon(point: Point2D, polygon: Sequence[Point2D]) -> bool:
-	"""Whether ``point`` lies inside ``polygon`` (even-odd ray casting).
-
-	Frame-agnostic like the other helpers; works for concave polygons. Boundary cases
-	are not specially handled — sufficient for testing trajectory centroids against ROI
-	polygons (see src/tratrac/application/EXCLUSION_ZONES.md). A polygon of fewer than 3 vertices
-	contains nothing.
-	"""
-	n = len(polygon)
-	if n < 3:
-		return False
-	inside = False
-	j = n - 1
-	for i in range(n):
-		vi, vj = polygon[i], polygon[j]
-		if (vi.y > point.y) != (vj.y > point.y):
-			x_cross = (vj.x - vi.x) * (point.y - vi.y) / (vj.y - vi.y) + vi.x
-			if point.x < x_cross:
-				inside = not inside
-		j = i
-	return inside

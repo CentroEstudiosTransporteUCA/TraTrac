@@ -78,7 +78,7 @@ polygon. Loaded by `infrastructure/exclusion/json.py` into the pure `ExclusionZo
 
 ## Files
 
-- `domain/geometry.py` — `Polygon`; `point_in_polygon` (ray casting).
+- `domain/geometry.py` — `Polygon`; `point_in_polygon` (shapely-backed).
 - `domain/exclusion.py` — `ExclusionZone` (`reference_frame` + polygon), `ExclusionZones`.
 - `application/exclusion.py` — `to_global_polygons` (reference-frame → global) + `excluded_track_ids`
   (track-aware majority filter).

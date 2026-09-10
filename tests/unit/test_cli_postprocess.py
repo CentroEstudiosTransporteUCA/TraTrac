@@ -197,8 +197,8 @@ class TestPostprocessCalibration:
 					],
 				)
 		# Zones are padded a few pixels beyond the correspondence square so the corner
-		# correspondences (exactly on [0,100]/[200,300]) fall unambiguously inside, not on
-		# the boundary where point-in-polygon's ray casting is degenerate.
+		# correspondences (exactly on [0,100]/[200,300]) fall unambiguously inside, not
+		# exactly on the boundary (shapely's `contains` is boundary-exclusive by design).
 		planes.write_text(
 			json.dumps(
 				{
