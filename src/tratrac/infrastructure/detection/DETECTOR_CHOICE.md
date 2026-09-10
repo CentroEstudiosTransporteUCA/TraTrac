@@ -185,11 +185,13 @@ makes this a materially cheaper integration than the from-scratch HuggingFace
 RT-DETR harness the original plan required. Full comparison, alternatives
 considered, and sources: `docs/TECH_STACK.md`.
 
-**This reopens the licensing trade-off, it doesn't resolve it.** The original
-plan's other selling point was clearing the AGPL-3.0 `ultralytics` dependency
-(see `CLAUDE.md` Dependency Notes). Staying on `ultralytics` for OBB does not
-clear that — it deepens it. Needs an explicit decision before distribution, not
-a silent carry-over.
+**This reopens the licensing trade-off — since resolved, not a silent carry-over.**
+The original plan's other selling point was clearing the AGPL-3.0 `ultralytics`
+dependency (see `CLAUDE.md` Dependency Notes). Staying on `ultralytics` for OBB
+does not clear that — it deepens it, but that's fine: TraTrac is GPL-3.0, and
+GPLv3 §13 explicitly permits combining with AGPL-3.0 work into a single
+combined work conveyed under GPLv3, which is exactly this situation. See
+`CLAUDE.md` Dependency Notes for the full reasoning.
 
 ## Technologies
 

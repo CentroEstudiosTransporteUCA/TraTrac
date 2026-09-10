@@ -52,7 +52,7 @@ Everything else that wants a per-detection orientation angle depends on this lan
 | A9 | ✅ Done — `yolo_obb` wired, deliberately **not** made default (no proven checkpoint yet, see A2) | Wire `yolo_obb` into `DetectorChoice`; decide the new default; decide `DetectorConfig.filename`'s fate (already flagged open in `DETECTOR_CHOICE.md`). | `application/config.py`, `cli.py` |
 | A10 | ❌ Blocked — gated on A2 by design ("only once A2–A9 are proven") | Remove the YOLOv8 emergency adapter — mechanical, **last**, only once A2–A9 are proven: delete file, drop enum value + CLI branch, `uv remove dill`, update tests/`CLAUDE.md`/`tratrac.example.toml`. | `infrastructure/detection/yolov8_visdrone.py` (delete), `application/config.py`, `cli.py` |
 
-**Licensing checkpoint (not a code task):** staying on `ultralytics`/`boxmot` for OBB deepens the AGPL-3.0 exposure `CLAUDE.md` already flags — needs an explicit business decision before external distribution, not resolved by this plan.
+**Licensing checkpoint — resolved.** User confirmed TraTrac's intent is to be open source. TraTrac is GPL-3.0 (`LICENSE`); GPLv3 §13 explicitly permits combining with `ultralytics`'s/`boxmot`'s AGPL-3.0 into one combined work conveyed under GPLv3 — no swap needed. AGPL's own network-interaction clause (§13) applies to the combination only if TraTrac is ever offered as a hosted/network service, not for source/CLI distribution. See `CLAUDE.md` Dependency Notes and `README.md`'s License section.
 
 ### Orientation integration mechanism
 

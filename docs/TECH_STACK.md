@@ -65,10 +65,12 @@ lighting/weather, also oriented) is the larger, more robust option to layer in i
 underperforms. A public project has already fine-tuned YOLOv11-OBB on a comparable UAV vehicle
 dataset, so this combination isn't unprecedented.
 
-**Honest trade-off this reopens, not resolves: licensing.** The original RT-DETR pick was partly
-motivated by clearing the AGPL-3.0 `ultralytics` dependency (see `CLAUDE.md` Dependency Notes).
-Staying on `ultralytics` for OBB does **not** clear that — it doubles down on it. This needs an
-explicit decision, not a silent carry-over, if TraTrac is ever distributed.
+**Honest trade-off this reopens — since resolved, not a silent carry-over.** The original
+RT-DETR pick was partly motivated by clearing the AGPL-3.0 `ultralytics` dependency (see
+`CLAUDE.md` Dependency Notes). Staying on `ultralytics` for OBB does **not** clear that — it
+doubles down on it, but that's fine: TraTrac is GPL-3.0, and GPLv3 §13 explicitly permits
+combining with AGPL-3.0 work into one combined work conveyed under GPLv3. See `CLAUDE.md`
+Dependency Notes for the full reasoning.
 
 **Downstream integration this requires, not a drop-in swap:** `VehicleState`/the orientation
 pipeline needs to accept a detected angle (from the OBB) instead of, or blended with, the current

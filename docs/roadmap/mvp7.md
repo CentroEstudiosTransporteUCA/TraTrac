@@ -118,9 +118,10 @@ for the final stage, copying over only the built virtualenv/artifacts — cited 
 - Runtime stage: the matching `-runtime` base, `COPY --from=build` the built venv, no compiler
   toolchain shipped.
 - Not designed here: which CUDA/cuDNN version to pin (depends on the actual deployment GPU,
-  unknown), and whether `boxmot`/`ultralytics`'s AGPL-3.0 status (`CLAUDE.md` Dependency Notes)
-  affects how/whether a built image can be distributed — a licensing question, not a Docker one,
-  already flagged as unresolved everywhere it's relevant in this repo.
+  unknown). `boxmot`/`ultralytics`'s AGPL-3.0 status is resolved, not open — TraTrac is GPL-3.0
+  and GPLv3 §13 explicitly permits the combination (see `CLAUDE.md` Dependency Notes); a
+  deployed image does still carry AGPL's own network-interaction clause if the image is ever
+  offered as a hosted/network service, which a Docker build is a plausible step toward.
 
 ---
 

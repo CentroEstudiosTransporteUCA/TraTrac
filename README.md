@@ -119,7 +119,7 @@ elsewhere.
 
 ## License
 
-GPL-3.0 (see `LICENSE`). Both `boxmot` (tracker) and `ultralytics` (YOLOv8 runtime) are **AGPL-3.0**, which propagates to any distribution of the combined work. The `ultralytics` dependency is bounded to MVP1's emergency detector and is scheduled for removal in MVP1.5.
+GPL-3.0 (see `LICENSE`). Both `boxmot` (tracker) and `ultralytics` (YOLO runtime) are **AGPL-3.0**. **Resolved, not an open risk:** GPLv3 §13 explicitly permits combining a GPLv3 work with an AGPLv3 one into a single combined work conveyed under GPLv3 — TraTrac's license already grants this. The AGPL's own §13 network-interaction clause (source must be offered to users who interact with the software over a network) then applies to the combination as a whole; relevant only if TraTrac is ever offered as a hosted/network service, not for CLI/library distribution as-is. `ultralytics` is **not** scheduled for removal — MVP1.5 replans detection onto a YOLO-OBB fine-tune, which still needs it (see `src/tratrac/infrastructure/detection/DETECTOR_CHOICE.md`); only the MVP1 `yolov8_visdrone.py` emergency adapter and its `dill` pickle dependency go away.
 
 ## Further reading
 

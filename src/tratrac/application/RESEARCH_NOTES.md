@@ -109,8 +109,10 @@ imagery.* **Transportation Research Part C** 178:105205. (arXiv 2411.02136)
   georeferencing assumes survey/RTK inputs you may not have, and a black-box pipeline
   defeats the understanding you're trying to build. Borrowing its "Stabilo" library behind
   your `EgoMotionEstimator` port is a *separate, plausible* option for MVP2 — **gated on its
-  license** (this repo already carries AGPL distribution risk from `boxmot`/`ultralytics`;
-  don't compound it blind).
+  license** (a fresh check, not a rubber stamp: this repo already combines GPL-3.0 with
+  `boxmot`/`ultralytics`'s AGPL-3.0 under GPLv3 §13's explicit compatibility clause — see
+  `CLAUDE.md` Dependency Notes — but that permission doesn't extend automatically to whatever
+  license Geo-trax/"Stabilo" actually ships under).
 
 ### Zheng et al. (2022/2024) — "CitySim"
 *CitySim: A Drone-Based Vehicle Trajectory Dataset…* **Transportation Research Record.**
@@ -225,8 +227,10 @@ not acceleration, why you mask vehicles during stabilization, and what accuracy 
   `OrbEgoMotionEstimator` to fix `orb-stabilization-traffic-hijack` without disabling
   stabilization on static clips. (This is the Geo-trax *technique*, owned by you.)
 - **Geo-trax as a dependency:** only as the "Stabilo" library behind the `EgoMotionEstimator`
-  port, and only after a **license check** (AGPL/distribution risk). Not as a whole-system
-  replacement — it emits non-SSAM output and bypasses your architecture.
+  port, and only after a **license check** of Geo-trax/"Stabilo" itself (see the licensing note
+  above — this repo's own AGPL combination with `boxmot`/`ultralytics` is resolved, but a new
+  dependency needs its own check). Not as a whole-system replacement — it emits non-SSAM output
+  and bypasses your architecture.
 
 ---
 

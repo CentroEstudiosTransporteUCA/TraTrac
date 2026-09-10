@@ -47,7 +47,7 @@ as the rotated box's axis-aligned enclosing rectangle (`_obb_to_aabb`), since OR
 other AABB-only consumers still need it. `is_obb` is not yet threaded from `RunConfig`/`cli.py`
 (Group A9 — pending the actual YOLO-OBB detector adapter and a trained checkpoint).
 
-`boxmot` is **AGPL-3.0** — relevant if TraTrac is distributed (see `CLAUDE.md` Dependency Notes).
+`boxmot` is **AGPL-3.0** — resolved, not an open risk: TraTrac is GPL-3.0 and GPLv3 §13 explicitly permits the combination (see `CLAUDE.md` Dependency Notes).
 
 ## ReID for MVP5: DINOv3 embeddings + motion-plausibility gating, not FastReID
 
