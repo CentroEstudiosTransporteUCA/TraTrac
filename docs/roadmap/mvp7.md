@@ -1,15 +1,16 @@
 # MVP 7 — PRODUCTION-GRADE ANALYTICS PLATFORM
 
-> **Status — 🟡 Partially pulled forward; exploration pass done, one finding now measured
-> against real footage (Group F, no code).** The MVP number is a capability ID, not execution
-> order — see the roadmap reconciliation in `docs/ROADMAP.md`. This milestone's **Apache
-> Parquet storage** was pulled forward and is already the canonical track record
-> (`infrastructure/tracks/parquet.py` — see `src/tratrac/application/SMOOTHING.md`). FiftyOne
-> visualization, async pipelines, and Docker/CUDA deployment are **not implemented**, but
-> `docs/IMPLEMENTATION_PLAN.md` Group F's "needs its own exploration/design pass" has now had a
-> first pass — see "Exploration pass"
-> below for each of the three, including a concrete Docker build shape and a reasoned
-> recommendation to measure before building the async runtime.
+> **Status — 🟡 Partially pulled forward; FiftyOne export and a Docker build now landed, async
+> pipeline deliberately still held.** The MVP number is a capability ID, not execution order —
+> see the roadmap reconciliation in `docs/ROADMAP.md`. This milestone's **Apache Parquet
+> storage** was pulled forward and is already the canonical track record
+> (`infrastructure/tracks/parquet.py` — see `src/tratrac/application/SMOOTHING.md`). Of the
+> three items still open at the last pass: **FiftyOne visualization is now built**
+> (`cli_fiftyone.py`, `tratrac-fiftyone` — see "Exploration pass" below, now updated to
+> "Landed"), **Docker + CUDA has a written, tag-verified multi-stage `Dockerfile`** (not
+> build-tested — no `docker` available in the environment it was written in), and the **async
+> pipeline stays unbuilt by design** — the CPU timing profile below still stands as the reason
+> to measure again on a GPU before designing it, not yet done.
 
 ---
 
@@ -53,7 +54,7 @@ Visualization Platform
 
 ## Exploration pass (Group F, `docs/IMPLEMENTATION_PLAN.md`)
 
-### Visualization: FiftyOne — still the right call, no pivot needed
+### Visualization: FiftyOne — still the right call, landed
 
 Unlike the detector/ReID/segmentation picks (RT-DETR, FastReID, SAM2), which a research pass
 overturned, FiftyOne holds up on a 2026 check: it's still the actively maintained, widely
@@ -62,18 +63,35 @@ not independently verified) open-source tool for exactly this shape of work — 
 debugging CV datasets, visualizing video tracking annotations and predicted vs. ground-truth
 trajectories, computing/storing trajectory statistics. No better-fit alternative surfaced.
 
-**Integration shape** (not built): a FiftyOne dataset populated from TraTrac's existing
-outputs, not a new export format —
+**Landed** (`src/tratrac/cli_fiftyone.py`, `tratrac-fiftyone`): a FiftyOne dataset populated
+from TraTrac's existing outputs, not a new export format —
 - one FiftyOne video **sample** per source clip,
-- **frame-level detections** from the track record (`infrastructure/tracks/parquet.py`) or a
-  `.trj` (`infrastructure/export/ssam_trj.py`'s `read_trj`) — both already have everything
-  needed (bbox/OBB, track id, per-frame state),
-- track-level fields (link/lane id, ReID merge provenance once `--reid-merge` is used) attached
-  as FiftyOne label attributes rather than invented new fields.
+- **frame-level detections** from the track record (`infrastructure/tracks/parquet.py`,
+  `--record`) and/or a `.trj` (`infrastructure/export/ssam_trj.py`'s `read_trj`, `--trj`) —
+  passing both adds two label fields per frame (`record_detections`/`trj_detections`) so raw
+  and smoothed trajectories can be compared directly in the FiftyOne App,
+- each vehicle's FiftyOne `Detection.index` carries its track/vehicle id (FiftyOne's own field
+  for this, used by its video-tracking visualization).
 
-This is a straightforward *reader*, not a pipeline change — it would live as its own script or
-`cli_fiftyone.py`, reading already-produced artifacts, the same "post-hoc tool over existing
-outputs" shape as `scripts/plot_run.py` and `scripts/validate_trj.py`.
+A straightforward *reader*, not a pipeline change — the same "post-hoc tool over existing
+outputs" shape as `scripts/plot_run.py` and `scripts/validate_trj.py`. `fiftyone` is an
+**optional extra** (`uv sync --extra fiftyone`), not a core dependency — see `CLAUDE.md`
+Dependency Notes for why, including a real `opencv-python`/`opencv-python-headless` conflict
+this surfaced and how it's resolved.
+
+Track-level fields (link/lane id, ReID merge provenance) as FiftyOne label attributes, beyond
+the per-frame detections above, are **not yet added** — a natural next increment once this is
+in real use.
+
+**Not verified end-to-end in this environment**: the conversion logic
+(`record_frame_detections`, `trj_frame_detections` — pure, no `fiftyone` import) is unit-tested
+and was also run against this project's real `out/cruce.parquet`/`out/cruce.trj` outputs, all
+the way up to the first live-`fiftyone` call. `fiftyone`'s bundled MongoDB
+(`fiftyone-db`) fails to start on this NixOS sandbox (`ServiceExecutableNotFound: Could not
+find mongod`) — a system/environment gap, not a code issue (nixpkgs does carry `mongodb`, but
+it's SSPL-licensed/"unfree" and wasn't pulled in just to chase this). Confirm the actual
+`fo.Dataset`/`fo.Sample`/`fo.launch_app` calls in `_build_dataset` work once run somewhere with
+a working `mongod`.
 
 ### Runtime: measured — decode is not the bottleneck on this workload (CPU baseline)
 
@@ -104,22 +122,35 @@ recommendation stands: re-run this same `--timing-csv` profile once a GPU is ava
 A1) before designing an async runtime, now with a real CPU baseline to compare against instead
 of zero data.
 
-### Deployment: Docker + CUDA — a concrete multi-stage shape
+### Deployment: Docker + CUDA — a concrete multi-stage shape, landed but not build-tested
 
 2026 best practice for a PyTorch+CUDA image is a **multi-stage build**: a `-devel` base
 (compilers/headers) for the build stage, a matching `-runtime` base (no build tools, smaller)
 for the final stage, copying over only the built virtualenv/artifacts — cited reductions of
-~60% image size from this pattern alone. Concretely, mapping onto this repo:
+~60% image size from this pattern alone. **Landed** as the repo-root `Dockerfile`:
 
-- Build stage: `pytorch/pytorch:<version>-cuda<N>-cudnn<N>-devel`, `uv sync` with
-  `[tool.uv.sources]` pointed at the CUDA torch/torchvision index (the same swap
-  `docs/IMPLEMENTATION_PLAN.md` Group A1 already identifies as needed once a GPU exists — this
-  is that same decision point, reused for deployment rather than dev).
-- Runtime stage: the matching `-runtime` base, `COPY --from=build` the built venv, no compiler
-  toolchain shipped.
-- Not designed here: which CUDA/cuDNN version to pin (depends on the actual deployment GPU,
-  unknown). `boxmot`/`ultralytics`'s AGPL-3.0 status is resolved, not open — TraTrac is GPL-3.0
-  and GPLv3 §13 explicitly permits the combination (see `CLAUDE.md` Dependency Notes); a
+- Build stage: `pytorch/pytorch:2.12.0-cuda13.0-cudnn9-devel` (tag verified against Docker
+  Hub's registry as of 2026-09-10 — matches this project's `torch>=2.12.0` pin and the cu130
+  index Group A1 already verified resolves for it), `uv sync` with `[tool.uv.sources]`
+  rewritten at build time (via `sed`, visible in the `Dockerfile`, not baked into the checked-in
+  `pyproject.toml`) to point at the CUDA torch/torchvision index instead of the CPU one this
+  repo defaults to — the same manual-edit decision point Group A1 (`docs/IMPLEMENTATION_PLAN.md`)
+  already identifies, reused for deployment rather than dev, and deliberately *not* the
+  uv-extras approach A1 tried and rejected (bare `uv sync`/`uv run` silently resolving to CUDA
+  would be exactly as unsafe in a Dockerfile's own dev-facing commands as it was found to be
+  locally — the CUDA base image itself, not an extra flag, is what makes this build
+  unambiguously GPU-bound).
+- Runtime stage: the matching `-runtime` base (also tag-verified), `COPY --from=build` the
+  built `.venv` + `src/` (the venv's editable-install `.pth` needs the source tree present, not
+  just the venv), no compiler toolchain or `uv` binary shipped.
+- **Not build-tested**: no `docker` available in the environment this was written in. The
+  `pytorch/pytorch` devel/runtime tag pair and the `ghcr.io/astral-sh/uv` version pin were both
+  confirmed to exist via their registries' own APIs (not guessed), but an actual `docker build`
+  has not been run — do that before trusting this in a real deployment.
+- Not designed here: which CUDA/cuDNN version to pin for the *actual deployment GPU* (this
+  picks the version already validated for dev, not a specific deployment target — re-pin if
+  they differ). `boxmot`/`ultralytics`'s AGPL-3.0 status is resolved, not open — TraTrac is
+  GPL-3.0 and GPLv3 §13 explicitly permits the combination (see `CLAUDE.md` Dependency Notes); a
   deployed image does still carry AGPL's own network-interaction clause if the image is ever
   offered as a hosted/network service, which a Docker build is a plausible step toward.
 

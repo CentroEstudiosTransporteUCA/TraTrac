@@ -1,13 +1,16 @@
 # Implementation Plan: Full Feature List + Full Pipeline
 
 > **Execution status (added post-hoc, not part of the original plan):** everything not gated on
-> a GPU, additional footage, or a cross-repo decision has landed — Groups C (all five tasks) and
-> E/F (their own stated first deliverable, a design spike) are fully done; Group A is done except
-> the two GPU-bound tasks and the one gated on them; Group B's real-footage validation pass ran
-> against real footage (see below); Group D's shared infra, both D1/D2 storage formats +
-> `cli_postprocess` integrations, and D2's merge-decision stage are all done — only the two
-> stages that actually run a GPU-bound model (D1's segmentation, D2's embedding) remain blocked.
-> Per-task status is marked inline below (✅ done / 🟡 partial / ❌ blocked, with why). See
+> a GPU, additional footage, or a cross-repo decision has landed — Group C (all five tasks) is
+> fully done; Group E's stated first deliverable (a design spike) is done, no code expected
+> beyond it yet; Group F has gone beyond its own stated first deliverable — FiftyOne export and
+> a Docker build are implemented, not just designed, with only the deliberately-held async
+> pipeline still open; Group A is done except the two GPU-bound tasks and the one gated on them;
+> Group B's real-footage validation pass ran against real footage (see below); Group D's shared
+> infra, both D1/D2 storage formats + `cli_postprocess` integrations, and D2's merge-decision
+> stage are all done — only the two stages that actually run a GPU-bound model (D1's
+> segmentation, D2's embedding) remain blocked. Per-task status is marked inline below (✅ done
+> / 🟡 partial / ❌ blocked, with why). See
 > `docs/ROADMAP.md`'s capability-ladder table and each task's own design doc for the authoritative,
 > continuously-updated status — this file is a point-in-time plan, annotated rather than rewritten.
 
@@ -173,14 +176,26 @@ plan existed. No phase gate; doesn't block or get blocked by anything above.
 
 ## Group F — Platform (FiftyOne, async, Docker+CUDA)
 
-✅ **Stated deliverable done** (the exploration/design pass, not implementation). `docs/roadmap/mvp7.md`
-now covers all three: FiftyOne re-confirmed as still the right fit (no pivot needed, unlike the
-detector/ReID/segmentation picks a research pass overturned), a concrete Docker multi-stage
-`-devel`/`-runtime` build shape tied to the same CUDA-index swap Group A1 needs, and — going
-beyond a design pass into an actual measurement — a real `--timing-csv` profile against real
-footage (see B4's status above) replacing the "no evidence yet" framing with real numbers. None
-of FiftyOne/async/Docker are implemented; this group's own stated next step was the
-design/exploration pass, which is what landed.
+🟡 **Two of three implemented, one deliberately held.** `docs/roadmap/mvp7.md` covers all three
+in detail; summary:
+
+- ✅ **FiftyOne** — `src/tratrac/cli_fiftyone.py` (`tratrac-fiftyone`, optional `fiftyone` extra:
+  `uv sync --extra fiftyone`). Builds a FiftyOne video dataset from `--record`/`--trj`. The pure
+  conversion logic is unit-tested and was run against this project's real `out/cruce.*`
+  outputs; the live `fiftyone` dataset write (`_build_dataset`) is unverified in this
+  environment — its bundled MongoDB doesn't start here (see the module docstring and
+  `docs/roadmap/mvp7.md`). Adding `fiftyone` surfaced and fixed a real `opencv-python` vs.
+  `opencv-python-headless` conflict (see `CLAUDE.md` Dependency Notes).
+- ✅ **Docker + CUDA** — repo-root `Dockerfile` + `.dockerignore`, multi-stage `-devel`/
+  `-runtime` build using the same CUDA-index-swap decision point Group A1 identified (done as
+  an explicit `sed` inside the Dockerfile, not a silent default — consistent with A1's rejection
+  of a uv-extras approach for the same reason). Both `pytorch/pytorch` tags and the
+  `ghcr.io/astral-sh/uv` version were verified to exist via their registries' own APIs. Not
+  build-tested — no `docker` in the environment it was written in.
+- ❌ **Async pipeline** — still correctly held. The real `--timing-csv` CPU profile (see B4's
+  status above) found decode/loop overhead at only ~1.7% of wall time — no evidence yet that an
+  async runtime is worth building; re-profile once a GPU (Group A1) shifts detect's share of
+  the per-frame time before designing one.
 
 ---
 

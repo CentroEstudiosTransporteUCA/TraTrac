@@ -268,4 +268,7 @@ by this pick, not resolved by it).
 
 Plane assignment, topology/lane-graph, FiftyOne, CVAT, and Docker/CUDA deployment weren't
 audited in this investigation — the table above carries them forward unchanged from the
-original stack, not because they were confirmed, but because they weren't in scope.
+original stack, not because they were confirmed, but because they weren't in scope. FiftyOne
+and Docker/CUDA were separately checked (and landed) as part of Group F's own exploration pass
+— see `docs/roadmap/mvp7.md`, which re-confirmed FiftyOne still fits on a 2026 check. CVAT
+remains genuinely unexamined.
