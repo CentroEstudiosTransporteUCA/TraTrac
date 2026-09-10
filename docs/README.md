@@ -18,6 +18,7 @@ Read `docs/ROADMAP.md` first for the project's status; everything else is detail
 | [`PIPELINE_STAGES.md`](PIPELINE_STAGES.md) | Which stages always run vs. are optional, and for the optional ones, which must stay in the live `tratrac` pass vs. can be deferred to post-processing — the single source of truth for this, not duplicated elsewhere. |
 | [`TECH_STACK.md`](TECH_STACK.md) | Full stack, layer by layer, with research-backed comparisons and citations for each pick — what's confirmed (BoT-SORT, SuperPoint+LightGlue, multi-homography), what changed after review (detection: YOLO-OBB not RT-DETR; ReID: DINOv3 not FastReID; segmentation: SAM 3 not SAM2; decode: TorchCodec not PyAV), and what's not yet adopted (SAM 3, DINOv3 ReID, Lane Graph, KalmanNet, FiftyOne, CVAT, Docker/CUDA). Already-shipped choices are documented next to their adapters instead — see `DETECTOR_CHOICE.md` and `TRACKER_CHOICE.md` in the table below. |
 | [`BACKLOG.md`](BACKLOG.md) | "Shipped cheaper now, upgrade later" tracker — deliberate quality upgrades deferred behind a stable port (ego-motion estimator, video I/O). |
+| [`BUILD_VS_BUY.md`](BUILD_VS_BUY.md) | Audit of hand-rolled code with mature external-library alternatives (e.g. hand-rolled JSON validation vs. `pydantic`), ordered by priority for review — not a scheduled to-do list. |
 | [`roadmap/`](roadmap/) | Not-yet-started MVPs (3–7) and road-topology (Link/Lane ID) sourcing strategy — kept together because none of this has a code location yet. |
 
 ## Repo-root
