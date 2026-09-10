@@ -102,5 +102,6 @@ fields — it's a standalone label with no cross-referencing metadata.
   externally-sourced (OSM/`.pth`) road geometry — remain unexplored; Strategy A (hand-drawn) is
   what's shipped.
 - **Automatic/assisted authoring** (Group C4, `docs/IMPLEMENTATION_PLAN.md`) is a separate,
-  gated task with an open repo-boundary question (does TraTrac ship only a correspondence/zone
-  *proposal* capability, with interactive confirm/adjust living in URBAn?) — not resolved here.
+  already-shipped task, not this doc's concern — see `application/AUTO_CALIBRATION.md`. Its
+  repo-boundary question (does TraTrac ship only a correspondence/zone *proposal* capability,
+  with interactive confirm/adjust living in URBAn?) is resolved there: yes, proposal-only.
