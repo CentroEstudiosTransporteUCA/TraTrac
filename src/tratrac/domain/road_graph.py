@@ -6,7 +6,7 @@ vehicle/point inside a zone is classified into that zone's label rather than
 excluded. Link/Lane feed the SSAM ``VehicleState.link_id``/``lane_id`` fields
 (``domain/vehicle.py``); Plane (Group C5, ``docs/IMPLEMENTATION_PLAN.md``,
 ``docs/roadmap/mvp3.md``) is a purely internal grouping key — it selects which
-homography a `MultiHomographyWorldProjector` applies and is never written into
+homography a `MultiPlaneTransform` applies and is never written into
 `VehicleState` (elevation, not road-segment identity; a bridge plane can carry
 many links, and a single link can span multiple planes on a ramp). See
 ``docs/roadmap/road_topology.md`` for the Link/Lane sourcing strategy.

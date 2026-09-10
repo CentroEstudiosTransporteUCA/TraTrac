@@ -94,35 +94,38 @@ class Tracker(Protocol):
 	def update(self, frame: Frame, detections: list[Detection]) -> list[TrackedDetection]: ...
 
 
-class WorldProjector(Protocol):
-	"""Maps a track observation's (stabilized) image point onto the metric world plane.
+class CoordinateTransform(Protocol):
+	"""Maps a point in one coordinate space to another, at a given frame.
 
-	Applied post-hoc by ``tratrac-postprocess`` before smoothing, so trajectories are
-	smoothed and exported in world metres (MVP2, see ``src/tratrac/application/WORLD_PROJECTION.md``). The method
-	takes the observation's ``frame_index`` as well as the point so a future per-anchor
-	projector can pick the right homography; the single-homography impl ignores it. The
-	Null/identity impl returns the point unchanged (image-space, the pre-MVP2 behavior).
+	The single vocabulary for every "map applied to pixel coordinates, valid over
+	some frames" concern in the system — GSD metric scale, ego-motion (image ->
+	global), world projection (global -> metric), and multi-plane world projection
+	all implement this (``application/coordinate_transforms.py``). ``frame_index``
+	lets an implementation select among several instances (nearest anchor, exact
+	frame); one that has nothing to select from (a constant scale, the identity)
+	ignores it. Applied post-hoc in most cases — see
+	``src/tratrac/application/WORLD_PROJECTION.md`` and
+	``src/tratrac/infrastructure/video/EGO_MOTION.md``.
 	"""
 
-	def to_world(self, point: Point2D, frame_index: int) -> Point2D: ...
+	def apply(self, point: Point2D, frame_index: int) -> Point2D: ...
 
 
-class InvertibleWorldProjector(Protocol):
-	"""A ``WorldProjector`` that can also map a world point back to image space.
+class InvertibleCoordinateTransform(CoordinateTransform, Protocol):
+	"""A ``CoordinateTransform`` that can also map a point back the other way.
 
-	Satisfied by ``IdentityWorldProjector`` and ``PerAnchorWorldProjector``
-	(``application/world_projection.py``, whose single-anchor case covers what used to be a
-	separate single-homography class — see its docstring) — each selects its homography by
-	something available in both directions (nothing to select, or ``frame_index``, never the
-	point's own position). **Not** satisfied by ``MultiHomographyWorldProjector``: it selects
-	its homography by classifying the *input* point's position, which is exactly what's
-	unknown when starting from a world point — see its own docstring and
-	``application/SMOOTHING.md``'s "Dual-space export" section for why this is a real,
-	not-yet-closed gap rather than an oversight.
+	Satisfied by ``IdentityTransform``, ``ScaleTransform``, ``PerFrameTransform``, and
+	``PerAnchorTransform`` (``application/coordinate_transforms.py``) — each selects its
+	instance by something available in both directions (nothing to select, or
+	``frame_index``, never the point's own position). **Not** satisfied by
+	``MultiPlaneTransform``: it selects its homography by classifying the *input*
+	point's position, which is exactly what's unknown when starting from a world
+	point — see its own docstring and ``application/SMOOTHING.md``'s "Dual-space
+	export" section for why this is a real, not-yet-closed gap rather than an
+	oversight.
 	"""
 
-	def to_world(self, point: Point2D, frame_index: int) -> Point2D: ...
-	def inverse(self) -> WorldProjector: ...
+	def reverse(self, point: Point2D, frame_index: int) -> Point2D: ...
 
 
 class TrajectoryExporter(Protocol):
