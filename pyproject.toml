@@ -23,10 +23,20 @@ dependencies = [
     "ultralytics>=8.4.53",
 ]
 
+# fiftyone is an opt-in extra (`uv sync --extra fiftyone`), not a core dependency: it's a
+# post-hoc visualization tool over already-produced outputs (cli_fiftyone.py), never imported
+# by the perception/postprocess/render pipeline itself, and it's heavy (~80 transitive packages
+# incl. its own bundled MongoDB). Kept off the default `uv sync` so the core pipeline install
+# stays lean. See `tool.uv.override-dependencies` below for why opencv-python-headless (a
+# transitive fiftyone/voxel51-eta dependency) is excluded even when this extra is selected.
+[project.optional-dependencies]
+fiftyone = ["fiftyone>=1.21.0"]
+
 [project.scripts]
 tratrac = "tratrac.cli:app"
 tratrac-postprocess = "tratrac.cli_postprocess:app"
 tratrac-render = "tratrac.cli_render:app"
+tratrac-fiftyone = "tratrac.cli_fiftyone:app"
 
 [build-system]
 requires = ["uv_build>=0.11.13,<0.12.0"]
@@ -40,6 +50,18 @@ explicit = true
 [tool.uv.sources]
 torch = { index = "pytorch-cpu" }
 torchvision = { index = "pytorch-cpu" }
+
+# fiftyone (and its own dependency voxel51-eta) hard-require the "opencv-python-headless"
+# distribution by name. Both it and our own "opencv-python" install files under the same
+# site-packages/cv2/ path — installing both is a known, real conflict (confirmed here: with
+# both present, cv2.__version__ silently reported opencv-python-headless's version, not our
+# pinned one), and scripts/visualize_stabilization.py needs the GUI build (cv2.imshow) that
+# headless doesn't ship. This override marks the headless requirement as never-applicable
+# (an always-false marker), which excludes it from resolution/install entirely; fiftyone still
+# imports fine at runtime because Python's `import cv2` is satisfied by our own opencv-python
+# regardless of which distribution's metadata declared the requirement.
+[tool.uv]
+override-dependencies = ["opencv-python-headless; python_version < '0'"]
 
 [dependency-groups]
 dev = [
@@ -107,6 +129,7 @@ module = [
 	"av.*",
 	"boxmot.*",
 	"cv2.*",
+	"fiftyone.*",
 	"huggingface_hub.*",
 	"pyarrow.*",
 	"tqdm.*",
