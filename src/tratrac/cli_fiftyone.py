@@ -12,15 +12,21 @@ outputs" shape as ``scripts/plot_run.py`` and ``scripts/validate_trj.py``. See
 ``pyproject.toml``'s comment on ``[project.optional-dependencies]`` for why. This module is
 only importable when it's installed.
 
-**Not exercised end-to-end in this environment.** ``fiftyone``'s bundled MongoDB
-(``fiftyone-db``) fails to start here (``ServiceExecutableNotFound: Could not find mongod``) —
-likely the same dynamic-linking gap that affects other prebuilt binaries on this NixOS sandbox
-(see the ``$RUN`` ELF-loader wrapper this project's sessions have needed for ``ruff``), not a
-bug in this module. The conversion logic below (``record_frame_detections``,
-``trj_frame_detections``) is pure — no ``fiftyone`` import — and is unit-tested without a live
-FiftyOne/MongoDB instance. Only ``_build_dataset``, the thin function that actually calls the
-``fiftyone`` SDK, is unverified; re-check it the first time this runs somewhere with a working
-``mongod`` (or a configured external ``database_uri`` — see FiftyOne's config docs).
+**Verified end-to-end against real footage** (``cruce.mp4``/``out/cruce.parquet``/
+``out/cruce.trj`` — a real 27,319-frame dataset with both ``record_detections`` and
+``trj_detections`` populated correctly). The conversion logic below
+(``record_frame_detections``, ``trj_frame_detections``) is pure — no ``fiftyone`` import — and
+is separately unit-tested without a live FiftyOne/MongoDB instance.
+
+**On Linux, ``fiftyone``'s bundled MongoDB doesn't exist** — ``fiftyone-db`` stopped publishing
+Linux wheels after version 0.4.5; every version since (including whatever this resolves to)
+ships macOS/Windows binaries only, and
+``fiftyone.core.service.DatabaseService.find_mongod()`` never falls back to a system ``mongod``
+on ``PATH``. Set ``FIFTYONE_DATABASE_URI`` to point at a ``mongod`` you run yourself (any
+Linux-native install, or MongoDB's official static binary run through the same raw-ELF-loader
+trick this project's NixOS sessions use for other generic-glibc binaries, e.g. ``ruff`` —
+``curl``/``openssl``'s shared libs from ``nixpkgs`` cover its only two missing deps). See
+``CLAUDE.md`` Dependency Notes.
 """
 
 from __future__ import annotations

@@ -180,12 +180,14 @@ plan existed. No phase gate; doesn't block or get blocked by anything above.
 in detail; summary:
 
 - ✅ **FiftyOne** — `src/tratrac/cli_fiftyone.py` (`tratrac-fiftyone`, optional `fiftyone` extra:
-  `uv sync --extra fiftyone`). Builds a FiftyOne video dataset from `--record`/`--trj`. The pure
-  conversion logic is unit-tested and was run against this project's real `out/cruce.*`
-  outputs; the live `fiftyone` dataset write (`_build_dataset`) is unverified in this
-  environment — its bundled MongoDB doesn't start here (see the module docstring and
-  `docs/roadmap/mvp7.md`). Adding `fiftyone` surfaced and fixed a real `opencv-python` vs.
-  `opencv-python-headless` conflict (see `CLAUDE.md` Dependency Notes).
+  `uv sync --extra fiftyone`). Builds a FiftyOne video dataset from `--record`/`--trj`. **Fully
+  verified end-to-end**: the pure conversion logic is unit-tested, and `_build_dataset` (the
+  live `fiftyone` SDK call) was run for real against `cruce.mp4`/`out/cruce.parquet`/
+  `out/cruce.trj`, producing a persisted 27,319-frame dataset with both raw and smoothed
+  detection layers populated correctly (see `docs/roadmap/mvp7.md` for the spot-check and the
+  real `fiftyone-db`-has-no-Linux-wheel finding this took to work around). Adding `fiftyone`
+  also surfaced and fixed a real `opencv-python` vs. `opencv-python-headless` conflict (see
+  `CLAUDE.md` Dependency Notes).
 - ✅ **Docker + CUDA** — repo-root `Dockerfile` + `.dockerignore`, multi-stage `-devel`/
   `-runtime` build using the same CUDA-index-swap decision point Group A1 identified (done as
   an explicit `sed` inside the Dockerfile, not a silent default — consistent with A1's rejection

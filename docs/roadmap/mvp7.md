@@ -1,16 +1,18 @@
 # MVP 7 — PRODUCTION-GRADE ANALYTICS PLATFORM
 
-> **Status — 🟡 Partially pulled forward; FiftyOne export and a Docker build now landed, async
-> pipeline deliberately still held.** The MVP number is a capability ID, not execution order —
-> see the roadmap reconciliation in `docs/ROADMAP.md`. This milestone's **Apache Parquet
-> storage** was pulled forward and is already the canonical track record
-> (`infrastructure/tracks/parquet.py` — see `src/tratrac/application/SMOOTHING.md`). Of the
-> three items still open at the last pass: **FiftyOne visualization is now built**
-> (`cli_fiftyone.py`, `tratrac-fiftyone` — see "Exploration pass" below, now updated to
-> "Landed"), **Docker + CUDA has a written, tag-verified multi-stage `Dockerfile`** (not
-> build-tested — no `docker` available in the environment it was written in), and the **async
-> pipeline stays unbuilt by design** — the CPU timing profile below still stands as the reason
-> to measure again on a GPU before designing it, not yet done.
+> **Status — 🟡 Partially pulled forward; FiftyOne export landed and verified end-to-end
+> against real footage, Docker build landed (not build-tested), async pipeline deliberately
+> still held.** The MVP number is a capability ID, not execution order — see the roadmap
+> reconciliation in `docs/ROADMAP.md`. This milestone's **Apache Parquet storage** was pulled
+> forward and is already the canonical track record (`infrastructure/tracks/parquet.py` — see
+> `src/tratrac/application/SMOOTHING.md`). Of the three items still open at the last pass:
+> **FiftyOne visualization is built and fully verified** (`cli_fiftyone.py`, `tratrac-fiftyone` —
+> ran against the real `cruce.mp4`/`out/cruce.parquet`/`out/cruce.trj` outputs, producing a
+> real 27,319-frame FiftyOne dataset with both raw and smoothed detection layers; see
+> "Exploration pass" below), **Docker + CUDA has a written, tag-verified multi-stage
+> `Dockerfile`** (still not build-tested — no `docker` available in the environment it was
+> written in), and the **async pipeline stays unbuilt by design** — the CPU timing profile below
+> still stands as the reason to measure again on a GPU before designing it, not yet done.
 
 ---
 
@@ -83,15 +85,30 @@ Track-level fields (link/lane id, ReID merge provenance) as FiftyOne label attri
 the per-frame detections above, are **not yet added** — a natural next increment once this is
 in real use.
 
-**Not verified end-to-end in this environment**: the conversion logic
-(`record_frame_detections`, `trj_frame_detections` — pure, no `fiftyone` import) is unit-tested
-and was also run against this project's real `out/cruce.parquet`/`out/cruce.trj` outputs, all
-the way up to the first live-`fiftyone` call. `fiftyone`'s bundled MongoDB
-(`fiftyone-db`) fails to start on this NixOS sandbox (`ServiceExecutableNotFound: Could not
-find mongod`) — a system/environment gap, not a code issue (nixpkgs does carry `mongodb`, but
-it's SSPL-licensed/"unfree" and wasn't pulled in just to chase this). Confirm the actual
-`fo.Dataset`/`fo.Sample`/`fo.launch_app` calls in `_build_dataset` work once run somewhere with
-a working `mongod`.
+**Verified end-to-end against real footage.** The conversion logic
+(`record_frame_detections`, `trj_frame_detections` — pure, no `fiftyone` import) is unit-tested;
+`_build_dataset` (the part that actually calls the `fiftyone` SDK) was run for real against this
+project's `cruce.mp4`/`out/cruce.parquet`/`out/cruce.trj`, producing a persisted FiftyOne
+dataset with 27,319 frames and both `record_detections`/`trj_detections` label layers populated
+(spot-checked mid-clip: 16 vehicles in each layer at a representative frame, correct normalized
+boxes, track ids landing in `Detection.index` as designed).
+
+Getting there required working around one real environment gap, worth recording: `fiftyone-db`
+(the package `fiftyone` uses for its bundled MongoDB) **stopped publishing Linux wheels after
+version 0.4.5** — every version since, including the one this project resolves to, ships
+binaries for macOS and Windows only (confirmed via PyPI's own file listing). This isn't a NixOS
+quirk, it's true for any Linux installation of this dependency, and
+`fiftyone.core.service.DatabaseService.find_mongod()` never falls back to a system `mongod` on
+`PATH` — only `FIFTYONE_DATABASE_URI` (pointing `fiftyone` at a self-managed instance) works
+around it. The instance used here: MongoDB's official static Linux binary
+(`mongodb-linux-x86_64-ubuntu2204-7.0.14.tgz` from `fastdl.mongodb.org`), run through the same
+raw-ELF-loader workaround this project's NixOS sessions already use for other generic-glibc
+binaries (see `ruff`'s handling in this repo's session notes), with `curl`/`openssl` pulled in
+from `nixpkgs` (cached, fast) to satisfy its two missing shared libs. A `pkgs.mongodb` addition
+to `flake.nix` was tried first and reverted — nixpkgs builds that derivation from source with no
+cache hit, which blocks every `nix develop` invocation on a slow compile, not just the first;
+not worth it for an optional, occasional-use extra. See `CLAUDE.md` Dependency Notes for the
+env var this needs on Linux.
 
 ### Runtime: measured — decode is not the bottleneck on this workload (CPU baseline)
 
