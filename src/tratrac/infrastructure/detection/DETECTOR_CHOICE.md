@@ -248,9 +248,12 @@ ultralytics-hub name, or a HuggingFace Hub file via `--repo-id`/`--filename`),
 auto-detecting an OBB result (`.obb`) vs. a plain AABB result (`.boxes`) so it
 will also be the eval tool for Part A's fine-tuned checkpoint once one exists.
 
-### Part A — Train the model (the real deliverable; currently undocumented)
+### Part A — Train the model (the real deliverable)
 
-This is where MVP1.5 actually lives, and the repo provides no harness for it.
+This is where MVP1.5 actually lives. **No custom harness needed** — `ultralytics` already ships
+a complete OBB training CLI/API (`yolo obb train ...` / `YOLO(...).train(...)`); a bespoke
+`scripts/train_yolo_obb.py` wrapping `model.train()` would just reinvent that CLI for no benefit
+(an earlier revision of this doc suggested such a script — dropped once this was noticed).
 
 1. **Secure a GPU.** `pyproject.toml` `[tool.uv.sources]` pins `torch` /
    `torchvision` to the CPU wheel index; fine-tuning on CPU is impractical.
@@ -267,11 +270,19 @@ This is where MVP1.5 actually lives, and the repo provides no harness for it.
    current.
 2. **Acquire the UAV-OBB dataset** (Mendeley Data) — already in YOLO-OBB label
    format, so no conversion step is needed, unlike the original VisDrone-for-RT-DETR
-   plan. Layer in DroneVehicle if more data/robustness is needed.
+   plan. Layer in DroneVehicle if more data/robustness is needed. Point a standard
+   ultralytics OBB `data.yaml` (`train`/`val` image dirs + `names:` matching
+   `yolo_obb.py`'s six-class mapping) at the downloaded set — check the actual folder
+   layout against ultralytics' expected `images/`+`labels/` split first; not verified
+   from this environment (no dataset download attempted here).
 3. **Fine-tune** `yolo11-obb`/`yolo26-obb` (Ultralytics-pretrained on DOTA as a
    starting point — note DOTA is satellite/very-high-altitude imagery, a real
    domain gap from drone altitude, so treat it as initialization, not a
    substitute for fine-tuning on UAV-OBB/DroneVehicle) on the vehicle classes.
+   Concretely: `yolo obb train model=yolo11n-obb.pt data=uav_obb.yaml epochs=100
+   imgsz=640 device=0` (or `YOLO("yolo11n-obb.pt").train(data="uav_obb.yaml",
+   epochs=100, imgsz=640, device=0)`) — tune `epochs`/`imgsz`/model size against
+   actual validation results, these are starting points, not tuned values.
 4. **Validate it beats the YOLOv8-VisDrone axis-aligned baseline** on
    representative real footage, using `scripts/probe_detector.py` (Part 0) and
    end-to-end `.trj` quality via `scripts/validate_trj.py`.
