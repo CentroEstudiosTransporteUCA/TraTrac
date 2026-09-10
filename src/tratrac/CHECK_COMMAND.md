@@ -50,11 +50,11 @@ Layered, cheapest first; each layer runs only if the previous parsed:
 - **L1 — TOML parse** (`load_toml`). A syntax error is a single fatal problem
   (`"config: <msg>"`); resolution can't proceed.
 - **L2 — `RunConfig.resolve`** (the bulk; already aggregated). Missing keys, type
-  errors, ranges, the calibration one-of, the `transform_csv`/`anchors_dir` ⇒
+  errors, ranges, the calibration one-of, the `transform_file`/`anchors_dir` ⇒
   `ego_motion.enabled` coherence guard. **This is exactly what a UI form needs.**
 - **L3 — static run guards** (only if L1+L2 yield a `run`). The post-resolve checks
   already in `process`: video file exists, output path-types (file vs dir),
-  path collisions (`out` ≠ `timing_csv` ≠ `transform_csv`). Cheap, no video decode.
+  path collisions (`out` ≠ `timing_csv` ≠ `transform_file`). Cheap, no video decode.
 
 **Out of scope (documented, not silently skipped):**
 

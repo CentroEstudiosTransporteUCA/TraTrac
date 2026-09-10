@@ -34,7 +34,7 @@ Read `docs/ROADMAP.md` first for the project's status; everything else is detail
 | Doc | Covers | Code it sits beside |
 | --- | --- | --- |
 | [`domain/ARCHITECTURE.md`](../src/tratrac/domain/ARCHITECTURE.md) | Why SSAM is never the internal representation; the canonical `VehicleState`; dual-export strategy | `domain/vehicle.py`, `domain/ports.py` |
-| [`application/WORLD_PROJECTION.md`](../src/tratrac/application/WORLD_PROJECTION.md) | Coordinate systems, multi-homography rationale, and the shipped MVP2 Approach A post-hoc single-homography projector | `application/world_projection.py`, `domain/world.py`, `infrastructure/world/calibration.py` |
+| [`application/WORLD_PROJECTION.md`](../src/tratrac/application/WORLD_PROJECTION.md) | Coordinate systems, multi-homography rationale, and the shipped MVP2 Approach A post-hoc single-homography projector | `application/coordinate_transforms.py`, `domain/world.py`, `infrastructure/world/calibration.py` |
 | [`application/PROGRESS_REPORTING.md`](../src/tratrac/application/PROGRESS_REPORTING.md) | The `ProgressReporter` output port and `ProgressEvent` family | `application/progress.py`, `domain/progress.py`, `infrastructure/progress/` |
 | [`application/CONFIG_DESIGN.md`](../src/tratrac/application/CONFIG_DESIGN.md) | Why the run config has zero hardcoded defaults; resolution model; `--check` | `application/config.py` |
 | [`application/EXCLUSION_ZONES.md`](../src/tratrac/application/EXCLUSION_ZONES.md) | Post-hoc, track-aware "do-not-analyze" polygons | `application/exclusion.py`, `domain/exclusion.py`, `infrastructure/exclusion/` |
@@ -49,12 +49,12 @@ Read `docs/ROADMAP.md` first for the project's status; everything else is detail
 | [`infrastructure/tracking/TRACKER_CHOICE.md`](../src/tratrac/infrastructure/tracking/TRACKER_CHOICE.md) | Why BoT-SORT over plain SORT; current IoU-only state pending MVP5 ReID | `infrastructure/tracking/boxmot_bot_sort.py` |
 | [`infrastructure/video/EGO_MOTION.md`](../src/tratrac/infrastructure/video/EGO_MOTION.md) | MVP1.9 keyframe-anchored ORB ego-motion estimator design | `infrastructure/video/ego_motion_orb.py` |
 | [`infrastructure/video/TIME_WINDOW.md`](../src/tratrac/infrastructure/video/TIME_WINDOW.md) | `--start`/`--end` analysis-window trimming | `infrastructure/video/window.py`, `opencv.py` |
-| [`infrastructure/transform/TRANSFORM_SINK.md`](../src/tratrac/infrastructure/transform/TRANSFORM_SINK.md) | Persisting the per-frame global↔raw transform sidecar | `infrastructure/transform/recording.py`, `csv.py` |
+| [`infrastructure/transform/TRANSFORM_SINK.md`](../src/tratrac/infrastructure/transform/TRANSFORM_SINK.md) | Persisting the per-frame global↔raw transform sidecar, and the shared JSON-Lines transform-record schema every `CoordinateTransform` sidecar (ego-motion, anchor pose, GSD scale) is built on | `infrastructure/transform/recording.py`, `sink.py`, `records.py` |
 | [`infrastructure/timing/STEP_TIMING.md`](../src/tratrac/infrastructure/timing/STEP_TIMING.md) | Per-step latency profiling decorators | `infrastructure/timing/decorators.py`, `csv.py` |
 | [`infrastructure/TIMESTEP_PRECISION.md`](../src/tratrac/infrastructure/TIMESTEP_PRECISION.md) | Export-cadence vs processing-cadence decimation | `infrastructure/cadence.py`, `export/decimating.py` |
 | [`infrastructure/export/SSAM_FORMAT.md`](../src/tratrac/infrastructure/export/SSAM_FORMAT.md) | SSAM `.trj` byte-level spec (+ the two authoritative PDFs alongside it) | `infrastructure/export/ssam_trj.py` |
 | [`infrastructure/export/VIDEO_EXPORT.md`](../src/tratrac/infrastructure/export/VIDEO_EXPORT.md) | Post-hoc trajectory overlay rendering (`tratrac-render`) | `infrastructure/export/overlay_video.py` |
-| [`calibration/GSD_CALIBRATION.md`](../src/tratrac/calibration/GSD_CALIBRATION.md) | MVP1.75 ground-sample-distance metric calibration from drone metadata | `calibration/gsd.py`, `drone_specs.py`, `srt_parser.py` |
+| [`calibration/GSD_CALIBRATION.md`](../src/tratrac/calibration/GSD_CALIBRATION.md) | MVP1.75 ground-sample-distance metric calibration from drone metadata | `calibration/gsd.py`, `drone_specs.py`, `srt_parser.py`, `infrastructure/calibration/scale_sidecar.py` |
 | [`CHECK_COMMAND.md`](../src/tratrac/CHECK_COMMAND.md) | Scope of `tratrac --check` (validate a config without running) | `cli.py` |
 
 ## Design docs next to code (outside `src/`)

@@ -49,7 +49,7 @@ after. Two different reasons force this, worth telling apart:
 | Stage | Config | Why it's forced live | Detail |
 | --- | --- | --- | --- |
 | Step timing profiling | `run.timing_csv` | Per-frame wall-clock latency can't be retroactively known — it's observability, not correctness, but still only capturable live | `src/tratrac/infrastructure/timing/STEP_TIMING.md` |
-| Transform sidecar recording | `export.transform_csv` | Captures the ego-motion transform at the instant it's computed; reconstructing it after the fact means re-running the estimator, not post-processing a record | `src/tratrac/infrastructure/transform/TRANSFORM_SINK.md` |
+| Transform sidecar recording | `export.transform_file` | Captures the ego-motion transform at the instant it's computed; reconstructing it after the fact means re-running the estimator, not post-processing a record | `src/tratrac/infrastructure/transform/TRANSFORM_SINK.md` |
 | Anchor export | `export.anchors_dir` | The ORB keyframe anchors are chosen live during stabilization | `src/tratrac/application/EXCLUSION_ZONES.md` (consumes the anchors this produces) |
 
 ---

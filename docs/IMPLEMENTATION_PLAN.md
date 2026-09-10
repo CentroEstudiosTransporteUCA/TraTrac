@@ -116,9 +116,9 @@ real-footage validation.
 **C2 — Lane ID assignment (MVP6).** ✅ Done. Hard-depends on C1 only. Same module, lane-strip polygons `{link_id, lane_id, polygon}`, populates `VehicleState.lane_id`.
 
 **C3 — Multi-anchor world projection (MVP2 remainder).** ✅ Done. Independent of C1/C2/C4/C5.
-- `application/world_projection.py`: new `PerAnchorWorldProjector` implementing `WorldProjector.to_world`, using `frame_index` (already threaded through the port for exactly this) to pick the right anchor's homography.
+- `application/coordinate_transforms.py`: new `PerAnchorTransform` implementing `CoordinateTransform.to_world`, using `frame_index` (already threaded through the port for exactly this) to pick the right anchor's homography.
 - Fitter groups correspondences by anchor, fits one `H` per anchor. `Correspondence` already carries `reference_frame` — no domain change needed.
-- Open question — **resolved: nearest-anchor switch (not interpolation)**, a deliberate simplicity choice; see `PerAnchorWorldProjector`'s docstring in `WORLD_PROJECTION.md` for why interpolating projective transforms isn't the simple choice it sounds like.
+- Open question — **resolved: nearest-anchor switch (not interpolation)**, a deliberate simplicity choice; see `PerAnchorTransform`'s docstring in `WORLD_PROJECTION.md` for why interpolating projective transforms isn't the simple choice it sounds like.
 
 **C4 — Automatic road-geometry calibration.** ✅ Done, scoped to proposal-only. Independent of everything else in this group; a workflow upgrade to Approach A's fitting, not a prerequisite for C3/C5.
 - New module producing **proposed** correspondences from visible lane markings/road borders into the existing `calibration.json` schema — not a fully automatic replacement (manual validation still outperforms automatic, per the cited source). Shipped as `scripts/propose_calibration.py` (Canny + Hough + brightness/local-contrast filtering), validated against a real intersection frame.
@@ -126,7 +126,7 @@ real-footage validation.
 
 **C5 — Multi-homography + plane assignment (MVP3).** ✅ Done. The largest item in this group.
 - Plane polygons live in the **same** `application/road_graph.py` module as Link/Lane (`mvp3.md`: they share infrastructure but read different polygon sets).
-- New `MultiHomographyWorldProjector` (one `H` per plane, selected by per-observation plane assignment, not by `frame_index`).
+- New `MultiPlaneTransform` (one `H` per plane, selected by per-observation plane assignment, not by `frame_index`).
 - Plane assignment must run before projection in `cli_postprocess.py` — see the integration-order note below. Implemented as classification *inside* the projector at `to_world()` time (spatial, keyed off the query point) rather than a separate pre-computed dict, since plane membership is never written into `VehicleState` the way Link/Lane are — see `application/WORLD_PROJECTION.md`.
 
 ---
@@ -234,7 +234,7 @@ read record
 4. **Open, but not blocking anything** — `DetectorConfig.filename`: drop or repurpose for the OBB checkpoint path (A9). The status quo (leave it as-is, still yolov8-only) is itself the correct choice until A10 (gated on A2) actually removes the yolov8 adapter — there's no pending action this question is holding up.
 5. **Open, but not blocking anything** — `rt_detr.py`: keep dormant behind `Detector`, or delete as dead code (A10/A11). Dormant costs nothing functionally; deleting it is a one-way call better made once A2/A10 are actually in motion, not preemptively. The status quo (kept) is the safe default, not an unresolved gap holding anything up.
 6. **Resolved, followed as recommended** — B3/B4: hold for their measured triggers, not build opportunistically. Held; B1's real-footage pass measured both trigger conditions (no camera motion to test B3 against; decode measured cheap on CPU, not supporting B4) without firing either.
-7. **Resolved** — C3: nearest-anchor switch (not interpolation) — see `PerAnchorWorldProjector`'s docstring in `WORLD_PROJECTION.md`.
+7. **Resolved** — C3: nearest-anchor switch (not interpolation) — see `PerAnchorTransform`'s docstring in `WORLD_PROJECTION.md`.
 8. **Resolved (by the user)** — C4: TraTrac ships only correspondence-proposal, interactive confirm/adjust lives in URBAn. Implemented as `scripts/propose_calibration.py`.
 9. **Partially open** — D2: DINOv3 crop-sampling policy is still undecided (no embed stage exists, A2/GPU-blocked); the merge-scoring function (motion gate + cosine similarity) is implemented and has run against real footage (with a placeholder embedding, not DINOv3) — see `application/REID_MERGE.md`.
 10. **Resolved, shipped as proposed** — C1: per-frame Link ID classification (not per-track majority vote) — see `application/ROAD_GRAPH.md`.
@@ -252,7 +252,7 @@ read record
 | SuperPoint+LightGlue | ❌ Not built (B3 held) | `test_ego_motion_orb.py` (close model) | `test_ego_motion_superpoint.py` |
 | TorchCodec decode | ❌ Not built (B4 held) | `test_cadence.py`, `test_video_window.py` | `test_video_torchcodec.py` |
 | Link/Lane ID | ✅ Done | `test_exclusion.py`, `test_geometry.py` (close model) | `test_road_graph.py` |
-| Multi-anchor/homography projection | ✅ Done | `test_world_projection.py`, `test_world_calibration.py` | — |
+| Multi-anchor/homography projection | ✅ Done | `test_coordinate_transforms.py`, `test_world_calibration.py` | — |
 | Replay helper (Group D shared infra) | ✅ Done | `test_overlay_video.py`, `test_render.py` (close model) | `test_replay.py` |
 | Footprint sidecar | ✅ Done (storage + `--footprint`); segmentation stage itself ❌ blocked (GPU) | `test_tracks.py` (close model) | `test_footprint.py` |
 | ReID merge logic | ✅ Done, + real-footage run | — | `test_reid_merge.py` |

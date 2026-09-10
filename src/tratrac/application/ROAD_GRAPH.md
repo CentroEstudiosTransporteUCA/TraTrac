@@ -6,7 +6,7 @@ Link ID and Lane ID shipped (`docs/IMPLEMENTATION_PLAN.md` Groups C1/C2), Strate
 (hand-drawn polygons) of `docs/roadmap/road_topology.md`. Optional and off by default, applied
 **post-hoc** by `tratrac-postprocess` via `--link-zones`/`--lane-zones`. Plane ID's *zones and
 classification helper* also live here (Group C5), but its *consumer* is
-`application/world_projection.py`'s `MultiHomographyWorldProjector` — see
+`application/coordinate_transforms.py`'s `MultiPlaneTransform` — see
 `src/tratrac/application/WORLD_PROJECTION.md` for that story; this doc covers the shared
 zone/classification infrastructure the three fields build on.
 
@@ -69,7 +69,7 @@ frame by that anchor's pose).
 | Domain | `domain/road_graph.py` | `LinkZone`/`LinkZones`, `LaneZone`/`LaneZones`, `PlaneZone`/`PlaneZones` — pure value objects, validated label ranges |
 | Application | `application/road_graph.py` | `to_global_{link,lane,plane}_polygons` (reference-frame → global, mirrors `application/exclusion.py`), `{link,lane,plane}_id_for_point` (point-in-polygon classification) |
 | Infrastructure | `infrastructure/road_graph/json.py` | Sidecar JSON readers (`load_{link,lane,plane}_zones`), mirrors `infrastructure/exclusion/json.py` |
-| CLI | `cli_postprocess.py` | `--link-zones`/`--lane-zones` options + `_assign_labels` (shared fitter/classifier plumbing, generic over `LinkZones`/`LaneZones`) and `_apply_link_ids`/`_apply_lane_ids` (stamp the smoothed states); `--plane-zones` + `_fit_multi_homography_projector` (fits `MultiHomographyWorldProjector` instead of stamping a field — see `WORLD_PROJECTION.md`) |
+| CLI | `cli_postprocess.py` | `--link-zones`/`--lane-zones` options + `_assign_labels` (shared fitter/classifier plumbing, generic over `LinkZones`/`LaneZones`) and `_apply_link_ids`/`_apply_lane_ids` (stamp the smoothed states); `--plane-zones` + `_fit_multi_homography_projector` (fits `MultiPlaneTransform` instead of stamping a field — see `WORLD_PROJECTION.md`) |
 
 ## Sidecar schema
 

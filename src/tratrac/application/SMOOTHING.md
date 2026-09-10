@@ -27,10 +27,13 @@ pass 2 (offline):            record → forward KF + RTS per track → smoothed 
 - **Pass 1** is the `tratrac` run. Its **only** output is the **track record** (`export.out`)
   — the canonical dual-export **"B"** format (`src/tratrac/domain/ARCHITECTURE.md`), now the
   pipeline's primary product, not an opt-in sidecar. It is an **Apache Parquet** file: the
-  **raw measurements** (centroid + bbox + class per track per frame) as columns, with the run
-  metadata (`fps,width,height,total_frames,meters_per_pixel`) in the Parquet **schema metadata**
-  so the record is self-contained. The pipeline records to a `TrackSink` (`ParquetTrackSink`) it
-  owns directly. (Parquet is the MVP7 storage choice, pulled forward for the canonical record.)
+  **raw measurements** (centroid + bbox + class per track per frame) as columns, with the run's
+  video metadata (`fps,width,height,total_frames`) in the Parquet **schema metadata** so the
+  record is self-contained. The GSD metric scale is **not** here — it's its own sidecar file
+  (`export.scale_out`, `infrastructure/calibration/scale_sidecar.py`), like every other
+  `CoordinateTransform`, fed to pass 2 via `tratrac-postprocess --scale`. The pipeline records
+  to a `TrackSink` (`ParquetTrackSink`) it owns directly. (Parquet is the MVP7 storage choice,
+  pulled forward for the canonical record.)
 - **Pass 2** is `tratrac-postprocess RECORD.parquet [--out final.trj] [--smoothed-record final.parquet]
   [--exclusion-zones … --anchors …] [--pos-noise PX] [--jerk Q] [--timestep-precision S]`:
   (optionally **filter** out tracks inside exclusion zones, src/tratrac/application/EXCLUSION_ZONES.md) → group by track →
@@ -81,7 +84,7 @@ and vice versa. `--smoothed-record` is always raw image-space pixels, regardless
   division — exact, since it's a pure uniform scale, not a homography.
 - **With `--calibration`:** `invert_state_to_image` (same module) inverts the *same* projector
   `_project_to_world` fitted for the forward pass — not a fresh fit, the literal object,
-  via `InvertibleWorldProjector.inverse()` (`domain/ports.py`). It inverts **four points**
+  via `InvertibleCoordinateTransform.reverse(point, frame_index)` (`domain/ports.py`). It inverts **four points**
   independently (front/rear bumpers → centroid, heading, length; left/right side points →
   width) rather than transforming `centroid`+`heading`+`dimensions` directly — the same reason
   the SSAM `.trj` format itself stores front/rear bumper points instead of centroid+heading+
@@ -96,18 +99,18 @@ and vice versa. `--smoothed-record` is always raw image-space pixels, regardless
 
 **The 0-origin shift is part of what gets inverted, not just the homography.**
 `_project_to_world` also translates every projected point to a non-negative origin
-(`_normalize_world_recording`) — a real detail the naive "just call `projector.inverse()`"
-version of this design missed at first. `PerAnchorWorldProjector` gained a `.shifted(dx, dy)`
-method (`application/world_projection.py`) that composes the translation into every anchor's
+(`_normalize_world_recording`) — a real detail the naive "just call `projector.reverse(point, frame_index)`"
+version of this design missed at first. `PerAnchorTransform` gained a `.shifted(dx, dy)`
+method (`application/coordinate_transforms.py`) that composes the translation into every anchor's
 homography matrix itself (`T @ M`), so `_project_to_world` returns the **shifted** projector —
-the one whose `.inverse()` undoes the translation *and* the homography together, not just the
+the one whose `.reverse()` undoes the translation *and* the homography together, not just the
 homography.
 
-**Scope: `PerAnchorWorldProjector` only** (its single-anchor case covers what used to be a
+**Scope: `PerAnchorTransform` only** (its single-anchor case covers what used to be a
 separate `SingleHomographyProjector` class — see its docstring for why that class was removed;
 this dual-space export design is what surfaced the redundancy, while writing near-identical
-`.inverse()`/`.shifted()` methods for both).
-`MultiHomographyWorldProjector` (`--plane-zones`, MVP3) selects its homography by classifying
+`.reverse()`/`.shifted()` methods for both).
+`MultiPlaneTransform` (`--plane-zones`, MVP3) selects its homography by classifying
 the *input* image point's position — exactly what's unknown when starting from a world point.
 Combining `--smoothed-record` with `--plane-zones` is rejected upfront with a clear error
 (`postprocess` in `cli_postprocess.py`) rather than silently guessing or producing a
@@ -175,10 +178,10 @@ to fine-tune here, and no code has been written yet.
 - `application/track_smoothing.py` — observations → smoothed `VehicleState`s (`build_state`,
   `smooth_to_states`); `invert_state_to_image`/`unscale_state_to_image` — the dual-space export
   inverse (see above).
-- `application/world_projection.py` — `WorldProjector` impls; `.inverse()`/`.shifted()` on
-  `PerAnchorWorldProjector` back the dual-space export.
-- `domain/ports.py` — `TrackSink` (the pipeline's primary output port); `WorldProjector` +
-  `InvertibleWorldProjector`; `infrastructure/tracks/parquet.py` — `ParquetTrackSink` +
+- `application/coordinate_transforms.py` — `CoordinateTransform` impls; `.reverse()`/`.shifted()` on
+  `PerAnchorTransform` back the dual-space export.
+- `domain/ports.py` — `TrackSink` (the pipeline's primary output port); `CoordinateTransform` +
+  `InvertibleCoordinateTransform`; `infrastructure/tracks/parquet.py` — `ParquetTrackSink` +
   `read_tracks` (Parquet, `pyarrow`). The pipeline records to the sink directly (it owns its
   lifecycle); there is no `RecordingTracker` decorator anymore.
 - `infrastructure/tracks/smoothed_parquet.py` — `SmoothedTrackParquetSink` + `read_smoothed_tracks`,

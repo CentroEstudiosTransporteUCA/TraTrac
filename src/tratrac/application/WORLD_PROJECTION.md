@@ -5,15 +5,15 @@
 > order — see the roadmap reconciliation in `docs/ROADMAP.md`. **World projection** is
 > implemented as a **post-hoc homography** in `tratrac-postprocess` — see "Implementation
 > (Approach A — shipped)" below. **Multi-anchor projection** (`docs/IMPLEMENTATION_PLAN.md`
-> Group C3) has also landed: `PerAnchorWorldProjector` (`application/world_projection.py`) fits
+> Group C3) has also landed: `PerAnchorTransform` (`application/coordinate_transforms.py`) fits
 > one homography per anchor and picks the nearest one by frame-index distance (not interpolated
 > between neighbors — see its docstring for why); `cli_postprocess.py`'s `_fit_projector`
 > dispatches to it automatically when a calibration's correspondences span more than one
 > `reference_frame`, falling back to the original single-homography path unchanged for one
 > anchor. **Multi-homography plane projection** (MVP3, Group C5) has landed too:
-> `MultiHomographyWorldProjector` selects a homography by classifying the point itself against
+> `MultiPlaneTransform` selects a homography by classifying the point itself against
 > elevation-plane zones (`--plane-zones`, `application/ROAD_GRAPH.md`) — spatial selection,
-> orthogonal to `PerAnchorWorldProjector`'s temporal (`frame_index`) selection; the two are not
+> orthogonal to `PerAnchorTransform`'s temporal (`frame_index`) selection; the two are not
 > composed (a calibration spanning both multiple anchors and multiple planes pools an anchor's
 > correspondences per plane regardless of anchor, a known, documented limitation).
 > **Automatic-calibration correspondence proposal** (Group C4) has landed too, scoped to
@@ -91,7 +91,7 @@ Meaning:
 ### Multi-Homography Geometry — landed (Group C5, MVP3)
 
 > See "Multi-homography plane projection — landed (Group C5)" further below for the shipped
-> `MultiHomographyWorldProjector` design. The rationale below (why single-homography breaks for
+> `MultiPlaneTransform` design. The rationale below (why single-homography breaks for
 > grade separation, why not full 3D) is unchanged by that landing.
 
 #### Why
@@ -353,8 +353,8 @@ coordinates.
 | Layer | Artifact | Responsibility |
 | --- | --- | --- |
 | `domain/world.py` | `Correspondence`, `Calibration` | pure value objects (an `image`/`world` pair + its `reference_frame`) |
-| `domain/ports.py` | `WorldProjector` Protocol | `to_world(point, frame_index) -> Point2D` |
-| `application/world_projection.py` | `IdentityWorldProjector`, `PerAnchorWorldProjector`, `local_scale_at` | pure projection math (numpy only — the projective multiply + perspective divide) |
+| `domain/ports.py` | `CoordinateTransform` Protocol | `apply(point, frame_index) -> Point2D`, `reverse(point, frame_index) -> Point2D` |
+| `application/coordinate_transforms.py` | `IdentityTransform`, `PerAnchorTransform`, `local_scale_at` | pure projection math (numpy only — the projective multiply + perspective divide) |
 | `infrastructure/world/calibration.py` | `load_calibration`, `compute_homography` | sidecar-JSON reader + the cv2 homography **fit** (the only cv2 in the MVP2 path) |
 | `cli_postprocess.py` | `--calibration`, `_project_to_world`, `_project_observation` | composition root: load → lift correspondences to global → fit → rewrite the recording |
 
@@ -386,8 +386,8 @@ The seams described below (written when only Approach A existed) let the multi-a
 projector drop in **behind the same port**, with no caller changes — and that's exactly
 what happened:
 
-- `WorldProjector.to_world` already took `frame_index`; `PerAnchorWorldProjector`
-  (`application/world_projection.py`) uses it to pick the nearest anchor's homography
+- `CoordinateTransform.apply` already took `frame_index`; `PerAnchorTransform`
+  (`application/coordinate_transforms.py`) uses it to pick the nearest anchor's homography
   (nearest by frame-index distance — a deliberate hard switch, not an interpolated blend
   between neighboring anchors' homographies; see the class's docstring for why interpolation
   isn't the simple choice it sounds like for projective transforms).
@@ -397,9 +397,9 @@ what happened:
   `H` per group. **Update (Group F's dual-space export work):** a single-anchor (or static)
   calibration originally kept its own separate code path here, fitting a dedicated
   `SingleHomographyProjector` — that class was later removed as redundant (a one-entry
-  `PerAnchorWorldProjector` map is behaviorally identical: with only one anchor, selection by
+  `PerAnchorTransform` map is behaviorally identical: with only one anchor, selection by
   `frame_index` always resolves to it) and `_fit_projector` now always returns a
-  `PerAnchorWorldProjector`, one code path regardless of anchor count.
+  `PerAnchorTransform`, one code path regardless of anchor count.
 - The anchor-manifest lift (`pose(reference_frame)`) was already in place and needed no
   changes.
 
@@ -413,11 +413,11 @@ anchor hard switch was judged sufficient unless real footage shows a visible sea
 
 ### Multi-homography plane projection — landed (Group C5, MVP3)
 
-`MultiHomographyWorldProjector` (`application/world_projection.py`) selects a homography by
+`MultiPlaneTransform` (`application/coordinate_transforms.py`) selects a homography by
 **spatially classifying the point itself** against elevation-plane zones (ground, bridge,
 overpass, ...; `--plane-zones`, `application/ROAD_GRAPH.md`), rather than by `frame_index` —
 plane membership is *where* a point is, not *when* it was observed, which is why this is a
-genuinely different selection axis from `PerAnchorWorldProjector`, not a variant of it:
+genuinely different selection axis from `PerAnchorTransform`, not a variant of it:
 
 - Fitting (`cli_postprocess._fit_multi_homography_projector`) classifies each calibration
   correspondence's global-mapped image point against the same plane zones the projector will
@@ -430,7 +430,7 @@ genuinely different selection axis from `PerAnchorWorldProjector`, not a variant
   (never written into `VehicleState`) and a projector must resolve *some* homography for every
   point, so there's no safe place to default to "unclassified." A point that falls outside
   every explicit plane zone still needs a `plane_id: 0` calibration group to be projectable;
-  `MultiHomographyWorldProjector.to_world` raises clearly, naming the plane id, rather than
+  `MultiPlaneTransform.apply` raises clearly, naming the plane id, rather than
   guessing a "closest" plane — there's no principled distance metric between elevation
   surfaces the way there is between anchors in time.
 - `--plane-zones` requires `--calibration` and **supersedes** the anchor-based dispatch in

@@ -64,7 +64,7 @@ every run. The rule that resolves this, while keeping "no hidden default":
 > operator writes.
 
 - `timing_csv = ""` — profiling off; a path turns it on.
-- `transform_csv = ""` — no per-frame transform sidecar; a path turns it on.
+- `transform_file = ""` — no per-frame transform sidecar; a path turns it on.
 - `start = "" / end = ""` — the clip's natural bounds; else a timecode.
 
 (Overwrite policy is **not** in this list — it is not a config key at all; the
@@ -74,12 +74,16 @@ every run. The rule that resolves this, while keeping "no hidden default":
 Absence of a key is an error; an explicit "off" value is legal. The config is thus
 a complete, self-documenting declaration of the run with zero silent behaviour.
 
-A toggleable key can still be **conditionally incoherent**: `export.transform_csv`
+A toggleable key can still be **conditionally incoherent**: `export.transform_file`
 (the per-frame ego-motion transform sidecar, `src/tratrac/infrastructure/video/EGO_MOTION.md`) only makes sense
 when `ego_motion.enabled` is true — with stabilization off every transform is the
 identity. Setting it while stabilization is off is therefore an aggregated
 `ConfigError`, mirroring the "specify exactly one calibration method" guard: a
 present-but-contradictory value is rejected, not silently ignored.
+
+`export.scale_out` (the GSD metric-scale sidecar, `infrastructure/calibration/scale_sidecar.py`) is
+**not** a toggle — `[calibration]` is itself mandatory and always resolves to a
+scale, so there is no "off" state; it is a plain required path, like `export.out`.
 
 ---
 

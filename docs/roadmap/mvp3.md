@@ -3,7 +3,7 @@
 > **Status — 🟡 Partially shipped** (`docs/IMPLEMENTATION_PLAN.md` Groups C1/C5). The MVP number
 > is a capability ID, not execution order — see the roadmap reconciliation in `docs/ROADMAP.md`.
 > **Landed:** Link ID assignment (Strategy A hand-drawn polygons, `application/ROAD_GRAPH.md`)
-> and multi-homography Plane Assignment + Projection (`MultiHomographyWorldProjector`,
+> and multi-homography Plane Assignment + Projection (`MultiPlaneTransform`,
 > `src/tratrac/application/WORLD_PROJECTION.md`) — `tratrac-postprocess --link-zones`/`--plane-zones`. **Not landed:**
 > this milestone's full pipeline still names MVP1.5's YOLO-OBB detector as a stage, which
 > doesn't exist as a trained/default detector yet; automatic/assisted plane-and-link authoring
@@ -76,7 +76,7 @@ These are **different** point-in-polygon passes:
 
 - **Plane assignment** (this MVP, Group C5) sorts points into elevation
   layers — ground, bridge, overpass — to drive multi-homography projection.
-  Landed as `MultiHomographyWorldProjector` (`application/world_projection.py`):
+  Landed as `MultiPlaneTransform` (`application/coordinate_transforms.py`):
   classification happens **inside** the projector at `to_world()` time (spatial,
   keyed off the point itself) rather than as a separate pre-computed
   per-observation dict the way Link/Lane assignment works — plane membership

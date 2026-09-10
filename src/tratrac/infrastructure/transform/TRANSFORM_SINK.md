@@ -17,7 +17,9 @@ per frame of the 6 similarity coefficients. It is **not** a single static transf
 — the camera pose changes every frame.
 
 Captured exactly like step timing (`src/tratrac/infrastructure/timing/STEP_TIMING.md`): an output port plus an
-opt-in **decorator around the port**, leaving the pipeline untouched.
+opt-in **decorator around the port**, leaving the pipeline untouched. Persisted via the shared
+transform-record schema every `CoordinateTransform` sidecar now uses (`records.py`) — see
+"Transform unification" below.
 
 - `domain/stabilization.py` — `FrameTransform(frame_index, transform)`, the pure
   per-frame record (sibling of `StepTiming`). `frame_index` is the absolute
@@ -30,15 +32,39 @@ opt-in **decorator around the port**, leaving the pipeline untouched.
   records `(frame.index, result)`, returns it. The CLI keeps the *concrete*
   estimator for the overlay's `transform_source` and the `DetectionObserver`, and
   hands the decorator to the pipeline.
-- `infrastructure/transform/csv.py` — `CsvTransformSink`, header
-  `frame,a,b,c,d,tx,ty`, one row written immediately per frame (no buffering — each
-  record is self-contained, unlike the wide-row timing CSV).
-- `cli_render.py` (`tratrac-render`) — `--transforms` loads the table (`read_transforms`)
-  and maps each trajectory and violation position through `inverse(transform[frame])`
-  before drawing, using the domain `Transform2D.inverse().apply()` directly (it is a
+- `infrastructure/transform/sink.py` — `CoordinateTransformSink`, one JSON-Lines
+  `SimilarityRecord` written immediately per frame (no buffering — each record is
+  self-contained, unlike the wide-row timing CSV), staged to a `.partial` file and
+  atomically published (`Path.replace`) only on a clean exit — a reader of the
+  canonical path never observes a half-written table.
+- `cli_render.py` (`tratrac-render`) — `--transforms` loads the table
+  (`read_transforms`, returning a `PerFrameTransform`) and maps each trajectory and
+  violation position through `transform.at(frame).inverse().apply(point)` before
+  drawing, using the domain `Transform2D.inverse().apply()` directly (it is a
   package CLI, so it reuses the real geometry rather than re-deriving it).
 
-**Config (zero-defaults).** `export.transform_csv` is a required toggleable key
+## Transform unification
+
+This sidecar is one of three — alongside the GSD metric scale
+(`infrastructure/calibration/scale_sidecar.py`) and the world-projection homography
+(fit at `tratrac-postprocess` time, never persisted) — that implement one shared
+domain concept: `CoordinateTransform`/`InvertibleCoordinateTransform`
+(`domain/ports.py`: `apply(point, frame_index)` / `reverse(point, frame_index)`),
+with impls in `application/coordinate_transforms.py`. `PerFrameTransform` is the
+impl this sidecar round-trips into — the same class also backs the anchor
+manifest's sparse pose lookup (`infrastructure/anchors/manifest.py`), since both
+are exact-`frame_index` lookups into a `{frame_index: Transform2D}` table; only
+the table's density (every frame vs. anchor frames only) differs. All three
+sidecar kinds share one on-disk record schema
+(`infrastructure/transform/records.py`: `ScaleRecord`/`SimilarityRecord`/
+`HomographyRecord`, JSON-Lines, tagged by `"type"`) instead of each inventing its
+own shape — see that module's docstring. Unifying the *representation* did not
+change *when* any of the three gets built: ego-motion stays computed inline
+during the live run (masking needs live detections — see `EGO_MOTION.md`), scale
+stays resolved before the frame loop, and world-projection stays a post-hoc
+second pass.
+
+**Config (zero-defaults).** `export.transform_file` is a required toggleable key
 (`""` = off), like `run.timing_csv`. Because it only makes
 sense alongside stabilization, `RunConfig.resolve` **fails** if it is set while
 `ego_motion.enabled` is false (with stabilization off every transform is the
