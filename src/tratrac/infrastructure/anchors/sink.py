@@ -18,6 +18,7 @@ from numpy.typing import NDArray
 from tratrac.domain.frame import Frame
 from tratrac.domain.geometry import Transform2D
 from tratrac.infrastructure.anchors.manifest import ReferenceFrame, write_manifest
+from tratrac.infrastructure.transform.records import publish, staging_path
 
 ImageWriter = Callable[[Path, NDArray[np.uint8]], None]
 
@@ -62,6 +63,11 @@ class AnchorManifestSink:
 		exc_val: BaseException | None,
 		exc_tb: TracebackType | None,
 	) -> None:
-		write_manifest(
-			self._out_dir / self._manifest_name, self._references, video=self._video_label
-		)
+		"""Write the manifest to a staging path and publish it only on a clean exit, so a
+		reader of ``manifest.json`` never sees a partial anchor list — either it's the
+		complete run's anchors, or the run crashed and it isn't there at all."""
+		final = self._out_dir / self._manifest_name
+		staging = staging_path(final)
+		write_manifest(staging, self._references, video=self._video_label)
+		if exc_type is None:
+			publish(staging, final)

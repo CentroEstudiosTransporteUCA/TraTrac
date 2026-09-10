@@ -41,13 +41,12 @@ def _tracked(
 class TestParquetTrackSinkRoundTrip:
 	def test_round_trips_metadata_and_observations(self, tmp_path: Path) -> None:
 		path = tmp_path / "tracks.parquet"
-		with ParquetTrackSink(path, _META, scale=0.05) as sink:
+		with ParquetTrackSink(path, _META) as sink:
 			sink.record(0, [_tracked(1, 10.0, 20.0, 4.0, 2.0)])
 			sink.record(1, [_tracked(1, 12.0, 20.0, 4.0, 2.0), _tracked(2, 100.0, 50.0, 6.0, 3.0)])
 
 		recording = read_tracks(path)
 		assert recording.metadata == _META
-		assert recording.scale == 0.05
 		assert len(recording.observations) == 3
 		first = recording.observations[0]
 		# bbox center: (x + w/2, y + h/2) = (12, 21)
@@ -61,7 +60,7 @@ class TestParquetTrackSinkRoundTrip:
 
 	def test_round_trips_obb_fields(self, tmp_path: Path) -> None:
 		path = tmp_path / "obb.parquet"
-		with ParquetTrackSink(path, _META, scale=0.05) as sink:
+		with ParquetTrackSink(path, _META) as sink:
 			sink.record(
 				0,
 				[
@@ -97,7 +96,6 @@ class TestParquetTrackSinkRoundTrip:
 				b"width": b"1920",
 				b"height": b"1080",
 				b"total_frames": b"900",
-				b"meters_per_pixel": b"0.05",
 			}
 		)
 		table = pa.table(
@@ -122,14 +120,14 @@ class TestParquetTrackSinkRoundTrip:
 
 	def test_empty_record_round_trips_with_metadata(self, tmp_path: Path) -> None:
 		path = tmp_path / "empty.parquet"
-		with ParquetTrackSink(path, _META, scale=0.05):
+		with ParquetTrackSink(path, _META):
 			pass  # no observations (e.g. a clip with no detections)
 		recording = read_tracks(path)
 		assert recording.metadata == _META
 		assert recording.observations == []
 
 	def test_record_outside_context_raises(self, tmp_path: Path) -> None:
-		sink = ParquetTrackSink(tmp_path / "t.parquet", _META, scale=1.0)
+		sink = ParquetTrackSink(tmp_path / "t.parquet", _META)
 		with pytest.raises(RuntimeError, match="context manager"):
 			sink.record(0, [_tracked(1, 0.0, 0.0, 2.0, 2.0)])
 

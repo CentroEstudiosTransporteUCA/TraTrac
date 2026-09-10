@@ -4,7 +4,11 @@ The run emits each ORB keyframe **anchor** (see src/tratrac/application/EXCLUSIO
 a manifest row carrying the frame index, the global ego-motion pose, and the image name.
 The manifest is self-sufficient for exclusion: the post-process pass reads each anchor's
 pose from here to map zones authored on that anchor into the global frame — no separate
-transform CSV needed.
+transform sidecar needed.
+
+Each pose is serialized via ``infrastructure/transform/records.py``'s ``SimilarityRecord``
+— the same shape the ego-motion transform sidecar uses — so a ``Transform2D`` anchored to
+a frame has exactly one wire format wherever it's persisted.
 """
 
 from __future__ import annotations
@@ -15,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from tratrac.domain.geometry import Transform2D
+from tratrac.infrastructure.transform.records import SimilarityRecord, from_json, to_json
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,7 +39,7 @@ def write_manifest(path: Path, references: list[ReferenceFrame], *, video: str) 
 			{
 				"frame_index": ref.frame_index,
 				"image": ref.image_name,
-				"pose": _pose_dict(ref.pose),
+				"pose": to_json(SimilarityRecord(ref.frame_index, ref.pose)),
 			}
 			for ref in references
 		],
@@ -63,20 +68,11 @@ def read_manifest(path: Path) -> list[ReferenceFrame]:
 
 
 def _parse_reference(raw: Any) -> ReferenceFrame:
-	pose = raw["pose"]
+	record = from_json(raw["pose"])
+	if not isinstance(record, SimilarityRecord):
+		raise ValueError(f"anchor pose must be a similarity-transform record, got {raw['pose']!r}.")
 	return ReferenceFrame(
 		frame_index=int(raw["frame_index"]),
-		pose=Transform2D(
-			a=float(pose["a"]),
-			b=float(pose["b"]),
-			tx=float(pose["tx"]),
-			c=float(pose["c"]),
-			d=float(pose["d"]),
-			ty=float(pose["ty"]),
-		),
+		pose=record.transform,
 		image_name=str(raw["image"]),
 	)
-
-
-def _pose_dict(pose: Transform2D) -> dict[str, float]:
-	return {"a": pose.a, "b": pose.b, "tx": pose.tx, "c": pose.c, "d": pose.d, "ty": pose.ty}

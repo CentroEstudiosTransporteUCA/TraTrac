@@ -2,10 +2,12 @@
 
 Pass 1 (the perception run) writes one row per tracked detection per frame — the raw
 centroid + bbox + class the offline ``tratrac-smooth`` pass needs to run the Kalman/RTS
-smoother (see src/tratrac/application/SMOOTHING.md). The video metadata + metric scale live in the
-Parquet **schema metadata** so the post-pass is self-contained (no video needed) and can
-reconstruct a metric ``.trj``. Centroids are in the tracker's coordinate frame —
-stabilized pixels when ego-motion is on.
+smoother (see src/tratrac/application/SMOOTHING.md). The video metadata lives in the
+Parquet **schema metadata** so the post-pass is self-contained (no video needed). The
+GSD metric scale is **not** here — it lives in its own sidecar file
+(``infrastructure/calibration/scale_sidecar.py``), like every other coordinate
+transform, rather than as a bespoke key on this schema. Centroids are in the tracker's
+coordinate frame — stabilized pixels when ego-motion is on.
 
 Columnar storage is the canonical record (Step 2 of the export inversion); it replaced a
 line-oriented CSV behind the same ``TrackSink`` / ``read_tracks`` seam. ``pyarrow`` is the
@@ -89,20 +91,18 @@ class TrackObservation:
 
 @dataclass(frozen=True, slots=True)
 class TrackRecording:
-	"""The full track record: the run's metadata, scale, and observations."""
+	"""The full track record: the run's metadata and observations."""
 
 	metadata: VideoMetadata
-	scale: float
 	observations: list[TrackObservation]
 
 
 class ParquetTrackSink:
 	"""Writes the track record as Parquet. Use as a context manager."""
 
-	def __init__(self, path: Path, metadata: VideoMetadata, *, scale: float) -> None:
+	def __init__(self, path: Path, metadata: VideoMetadata) -> None:
 		self._path = path
 		self._metadata = metadata
-		self._scale = scale
 		# pyarrow is treated as untyped at the third-party seam (mypy follow_imports=skip),
 		# so the writer is Any; None until the context manager is entered.
 		self._writer: Any = None
@@ -117,7 +117,6 @@ class ParquetTrackSink:
 				b"width": str(meta.width).encode(),
 				b"height": str(meta.height).encode(),
 				b"total_frames": str(meta.total_frames).encode(),
-				b"meters_per_pixel": str(self._scale).encode(),
 			}
 		)
 		self._writer = pq.ParquetWriter(self._path, self._schema)
@@ -182,7 +181,7 @@ def read_tracks(path: Path) -> TrackRecording:
 		table = pq.read_table(path)
 	except (OSError, ValueError) as exc:
 		raise ValueError(f"{path} is not a readable Parquet track record: {exc}") from exc
-	metadata, scale = _parse_schema_metadata(table.schema.metadata, path)
+	metadata = _parse_schema_metadata(table.schema.metadata, path)
 	columns = table.to_pydict()
 	# Tolerate a record written before the OBB columns existed (Group A6): missing entirely,
 	# rather than a hard schema-version bump, so old records stay readable.
@@ -205,7 +204,7 @@ def read_tracks(path: Path) -> TrackRecording:
 		)
 		for i in range(table.num_rows)
 	]
-	return TrackRecording(metadata=metadata, scale=scale, observations=observations)
+	return TrackRecording(metadata=metadata, observations=observations)
 
 
 def _optional_float(column: list[Any] | None, index: int) -> float | None:
@@ -217,18 +216,15 @@ def _optional_float(column: list[Any] | None, index: int) -> float | None:
 	return None if value is None else float(value)
 
 
-def _parse_schema_metadata(
-	raw: dict[bytes, bytes] | None, path: Path
-) -> tuple[VideoMetadata, float]:
+def _parse_schema_metadata(raw: dict[bytes, bytes] | None, path: Path) -> VideoMetadata:
 	if not raw or b"fps" not in raw:
-		raise ValueError(f"{path} is missing its track-record schema metadata (fps, scale, ...).")
+		raise ValueError(f"{path} is missing its track-record schema metadata (fps, width, ...).")
 	try:
-		metadata = VideoMetadata(
+		return VideoMetadata(
 			width=int(raw[b"width"]),
 			height=int(raw[b"height"]),
 			fps=float(raw[b"fps"]),
 			total_frames=int(raw[b"total_frames"]),
 		)
-		return metadata, float(raw[b"meters_per_pixel"])
 	except (KeyError, ValueError) as exc:
 		raise ValueError(f"{path} has malformed track-record metadata: {exc}") from exc
