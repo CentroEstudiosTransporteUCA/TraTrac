@@ -57,7 +57,7 @@ from tratrac.application.world_projection import (
 	local_scale_at,
 )
 from tratrac.domain.frame import VideoMetadata
-from tratrac.domain.geometry import Point2D, Transform2D
+from tratrac.domain.geometry import Point2D, Polygon, Transform2D, oriented_extent
 from tratrac.domain.ports import TrajectoryExporter, WorldProjector
 from tratrac.domain.road_graph import LaneZones, LinkZones
 from tratrac.domain.vehicle import VehicleState
@@ -72,6 +72,7 @@ from tratrac.infrastructure.road_graph.json import (
 	load_link_zones,
 	load_plane_zones,
 )
+from tratrac.infrastructure.tracks.footprint_parquet import read_footprints
 from tratrac.infrastructure.tracks.parquet import TrackObservation, TrackRecording, read_tracks
 from tratrac.infrastructure.world.calibration import compute_homography, load_calibration
 
@@ -163,6 +164,17 @@ def postprocess(
 			"by anchor, for scenes with grade separation (bridges, overpasses, ramps).",
 		),
 	] = None,
+	footprint: Annotated[
+		Path | None,
+		typer.Option(
+			"--footprint",
+			exists=True,
+			dir_okay=False,
+			help="Segmentation footprint sidecar (Group D1, infrastructure/tracks/footprint_parquet.py "
+			"-- a polygon per (track_id, frame_index)); replaces bbox/OBB-derived Dimensions with "
+			"mask-derived ones before smoothing, for observations it covers.",
+		),
+	] = None,
 	exclusion_min_fraction: Annotated[
 		float,
 		typer.Option(
@@ -203,6 +215,10 @@ def postprocess(
 		recording = read_tracks(tracks)
 	except (ValueError, OSError) as exc:
 		raise typer.BadParameter(str(exc)) from exc
+
+	footprint_count = 0
+	if footprint is not None:
+		recording, footprint_count = _apply_footprint(recording, footprint)
 
 	merged_count = 0
 	if reid_merge is not None:
@@ -250,6 +266,8 @@ def postprocess(
 	_emit_trj(out, recording, states_by_frame, timestep_precision=timestep_precision)
 
 	notes = []
+	if footprint is not None:
+		notes.append(f"replaced dimensions for {footprint_count} observations from footprints")
 	if reid_merge is not None:
 		notes.append(f"merged {merged_count} ReID track ids")
 	if exclusion_zones is not None:
@@ -264,6 +282,44 @@ def postprocess(
 	typer.echo(
 		f"Post-processed {tracks} -> {out} "
 		f"({len(states_by_frame)} frames, pos_noise={pos_noise:g}, jerk={jerk:g}{note})."
+	)
+
+
+def _apply_footprint(recording: TrackRecording, footprint_path: Path) -> tuple[TrackRecording, int]:
+	"""Replace bbox/OBB-derived dimensions with footprint-derived ones (Group D1) by writing
+	into ``obb_w``/``obb_h`` — the same slot Group A's OBB detector already occupies, so every
+	downstream consumer (``build_state`` preferring ``oriented_size`` over the bbox,
+	``_project_observation`` correctly dropping it post-projection) treats a footprint-derived
+	size exactly like an OBB one, with no new special-casing.
+
+	Runs **before** ``--reid-merge`` (keyed by the *original* ``track_id`` the segmentation run
+	saw — the same one a footprint sidecar would be authored against — not any later remapped
+	canonical id) so a merged track's footprint coverage still matches by the time it's looked
+	up. An observation absent from the footprint sidecar is left unchanged.
+	"""
+	try:
+		observations = read_footprints(footprint_path)
+	except (ValueError, OSError) as exc:
+		raise typer.BadParameter(str(exc)) from exc
+	polygon_by_key: dict[tuple[int, int], Polygon] = {
+		(f.track_id, f.frame_index): f.polygon for f in observations
+	}
+	if not polygon_by_key:
+		return recording, 0
+
+	updated: list[TrackObservation] = []
+	replaced = 0
+	for o in recording.observations:
+		polygon = polygon_by_key.get((o.track_id, o.frame_index))
+		if polygon is None:
+			updated.append(o)
+			continue
+		length, width = oriented_extent(polygon, o.angle)
+		updated.append(replace(o, obb_w=length, obb_h=width))
+		replaced += 1
+	return (
+		TrackRecording(metadata=recording.metadata, scale=recording.scale, observations=updated),
+		replaced,
 	)
 
 

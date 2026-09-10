@@ -289,6 +289,34 @@ def _intersect_y(a: Point2D, b: Point2D, y: float) -> Point2D:
 	return Point2D(a.x + t * (b.x - a.x), y)
 
 
+def oriented_extent(polygon: Polygon, angle: float | None) -> tuple[float, float]:
+	"""A ``(length, width)`` pair describing how far ``polygon`` extends along ``angle`` and its
+	perpendicular — the real occupancy-derived dimensions a footprint (Group D1,
+	``docs/IMPLEMENTATION_PLAN.md``) buys over a bbox/OBB estimate.
+
+	When ``angle`` is known (radians, standard math convention — matches
+	``Detection.angle``/``Heading.from_angle``), each vertex is projected onto the heading axis
+	and its perpendicular; the extent along each is that axis's ``max - min``. This is exact
+	when the polygon's true orientation matches ``angle`` (e.g. the OBB angle that also produced
+	the crop the mask came from) and only approximate otherwise (a mask's own principal axis
+	need not exactly match a detector's OBB angle).
+
+	When ``angle`` is ``None`` (no OBB angle available for this observation), falls back to the
+	polygon's plain axis-aligned bounding box extent — not a fitted principal axis (e.g. minimum-
+	area rectangle / PCA): simpler, and correct precisely in the already-common case where the
+	vehicle happens to be axis-aligned, same honesty tradeoff ``_major_axis_heading`` already
+	makes for the low-speed heading fallback (``application/track_smoothing.py``).
+	"""
+	xs = [v.x for v in polygon.vertices]
+	ys = [v.y for v in polygon.vertices]
+	if angle is None:
+		return max(xs) - min(xs), max(ys) - min(ys)
+	cos_a, sin_a = math.cos(angle), math.sin(angle)
+	along = [x * cos_a + y * sin_a for x, y in zip(xs, ys, strict=True)]
+	perp = [-x * sin_a + y * cos_a for x, y in zip(xs, ys, strict=True)]
+	return max(along) - min(along), max(perp) - min(perp)
+
+
 def oriented_box_to_aabb(cx: float, cy: float, w: float, h: float, angle: float) -> BoundingBox:
 	"""The axis-aligned enclosing box of a rotated ``(cx, cy, w, h, angle)`` rectangle.
 

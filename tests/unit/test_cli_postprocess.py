@@ -15,8 +15,9 @@ from typer.testing import CliRunner
 from tratrac.cli_postprocess import app
 from tratrac.domain.detection import Detection, TrackedDetection, VehicleClass
 from tratrac.domain.frame import VideoMetadata
-from tratrac.domain.geometry import BoundingBox
+from tratrac.domain.geometry import BoundingBox, Point2D, Polygon
 from tratrac.infrastructure.export.ssam_trj import read_trj
+from tratrac.infrastructure.tracks.footprint_parquet import FootprintParquetSink
 from tratrac.infrastructure.tracks.parquet import ParquetTrackSink
 
 _META = VideoMetadata(width=200, height=200, fps=10.0, total_frames=10)
@@ -324,3 +325,55 @@ class TestPostprocessReidMerge:
 
 		vehicle_ids = {state.vehicle_id for frame in read_trj(out).frames for state in frame.states}
 		assert vehicle_ids == {1, 2}
+
+
+class TestPostprocessFootprint:
+	def test_footprint_replaces_bbox_derived_dimensions(self, tmp_path: Path) -> None:
+		record = tmp_path / "tracks.parquet"
+		out = tmp_path / "footprint.trj"
+		footprint = tmp_path / "footprint.parquet"
+		with ParquetTrackSink(record, _META, scale=1.0) as sink:
+			for frame in range(5):
+				# bbox 4x2 -> dims would be 4.0 x 2.0 without a footprint.
+				sink.record(frame, [_tracked(x=10.0 * frame + 20.0, y=50.0, track_id=1)])
+		# An axis-aligned footprint polygon spanning 8x4 -> larger than the bbox.
+		with FootprintParquetSink(footprint) as sink:
+			for frame in range(5):
+				cx, cy = 10.0 * frame + 22.0, 51.0
+				polygon = Polygon(
+					(
+						Point2D(cx - 4.0, cy - 2.0),
+						Point2D(cx + 4.0, cy - 2.0),
+						Point2D(cx + 4.0, cy + 2.0),
+						Point2D(cx - 4.0, cy + 2.0),
+					)
+				)
+				sink.record(frame, 1, polygon)
+
+		result = CliRunner().invoke(
+			app, [str(record), "--out", str(out), "--footprint", str(footprint)]
+		)
+		assert result.exit_code == 0, result.output
+		assert "replaced dimensions for 5 observations from footprints" in result.output
+
+		state = read_trj(out).frames[2].states[0]
+		assert state.dimensions.length == pytest.approx(8.0, abs=0.1)
+		assert state.dimensions.width == pytest.approx(4.0, abs=0.1)
+
+	def test_uncovered_observations_keep_bbox_dimensions(self, tmp_path: Path) -> None:
+		record = tmp_path / "tracks.parquet"
+		out = tmp_path / "footprint.trj"
+		footprint = tmp_path / "footprint.parquet"
+		_write_record(record, scale=1.0)
+		with FootprintParquetSink(footprint):
+			pass  # no footprint rows at all -> nothing covered
+
+		result = CliRunner().invoke(
+			app, [str(record), "--out", str(out), "--footprint", str(footprint)]
+		)
+		assert result.exit_code == 0, result.output
+
+		state = read_trj(out).frames[3].states[0]
+		# bbox 4x2 px, scale 1.0 -> unchanged dims (same as the no-footprint baseline).
+		assert state.dimensions.length == pytest.approx(4.0, abs=0.1)
+		assert state.dimensions.width == pytest.approx(2.0, abs=0.1)

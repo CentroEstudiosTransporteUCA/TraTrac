@@ -1,18 +1,24 @@
 # MVP 4 — PRECISE OCCUPANCY-AWARE TRAJECTORIES
 
-> **Status — 🟡 Partially pulled forward, rescoped.** The MVP number is a capability ID, not
-> execution order — see the roadmap reconciliation in `docs/ROADMAP.md`. This MVP's **dual-export
-> "B-first" architecture** ("dual export begins") was pulled forward and is already the core
-> design (perception run → Parquet record → post-hoc `.trj` — see `src/tratrac/application/SMOOTHING.md`).
-> The segmentation half is **not started**, and its scope has narrowed: **MVP1.5's replanned
-> YOLO-OBB detector already reports orientation directly** (see
+> **Status — 🟡 Partially pulled forward, rescoped, sidecar landed.** The MVP number is a
+> capability ID, not execution order — see the roadmap reconciliation in `docs/ROADMAP.md`. This
+> MVP's **dual-export "B-first" architecture** ("dual export begins") was pulled forward and is
+> already the core design (perception run → Parquet record → post-hoc `.trj` — see
+> `src/tratrac/application/SMOOTHING.md`). Its scope has narrowed: **MVP1.5's replanned YOLO-OBB
+> detector already reports orientation directly** (see
 > `src/tratrac/infrastructure/detection/DETECTOR_CHOICE.md`), which was this MVP's original
-> justification for needing segmentation at all. What segmentation still adds on top is a
-> precise occupancy **mask/footprint**, not orientation — worth confirming that's still needed
-> before investing in it. Also: **the target model is SAM 3, not SAM2** — SAM2 is superseded
-> (Meta shipped SAM 3 in November 2025) and was already measured as slower/heavier than current
-> YOLO-seg alternatives for pure instance segmentation. See `docs/TECH_STACK.md`'s Segmentation
-> section for sources.
+> justification for needing segmentation at all — what segmentation still adds on top is a
+> precise occupancy **mask/footprint**, not orientation. **Landed** (Group D1,
+> `docs/IMPLEMENTATION_PLAN.md`): the footprint sidecar storage format and
+> `tratrac-postprocess --footprint` (`src/tratrac/application/FOOTPRINT.md`) — it reuses Group A's
+> OBB dimension slot (`obb_w`/`obb_h`), so `build_state` and world-projection already handle a
+> footprint-derived size correctly with no new consumer code. **Not started:** the segmentation
+> stage itself (`cli_segment.py`, actually running SAM 3) — needs a GPU + a real model, so nothing
+> can populate a footprint sidecar yet; the sidecar format and `--footprint` exist ahead of their
+> producer, same as `application/reid_merge.py` landed ahead of DINOv3. Also: **the target model
+> is SAM 3, not SAM2** — SAM2 is superseded (Meta shipped SAM 3 in November 2025) and was already
+> measured as slower/heavier than current YOLO-seg alternatives for pure instance segmentation.
+> See `docs/TECH_STACK.md`'s Segmentation section for sources.
 
 ---
 

@@ -4,7 +4,9 @@
 > a GPU, additional footage, or a cross-repo decision has landed — Groups C (all five tasks) and
 > E/F (their own stated first deliverable, a design spike) are fully done; Group A is done except
 > the two GPU-bound tasks and the one gated on them; Group B's real-footage validation pass ran
-> against real footage (see below); Group D landed everything except the two GPU-bound stages.
+> against real footage (see below); Group D's shared infra, both D1/D2 storage formats +
+> `cli_postprocess` integrations, and D2's merge-decision stage are all done — only the two
+> stages that actually run a GPU-bound model (D1's segmentation, D2's embedding) remain blocked.
 > Per-task status is marked inline below (✅ done / 🟡 partial / ❌ blocked, with why). See
 > `docs/ROADMAP.md`'s capability-ladder table and each task's own design doc for the authoritative,
 > continuously-updated status — this file is a point-in-time plan, annotated rather than rewritten.
@@ -135,14 +137,16 @@ so segmentation and ReID-embed call it instead of each reimplementing the window
 `OpenCvVideoSource` open + `round(timestamp*fps)` bucketing + transform remap. Test:
 `test_replay.py`, modeled on `test_overlay_video.py` + `tests/integration/test_render.py`.
 
-**D1 — Segmentation (SAM 3, MVP4 remainder).** ❌ Blocked — needs a GPU + real SAM 3 model; the
-footprint sidecar schema depends on SAM 3's actual output shape, which can't be designed with
-confidence without running it (see `docs/ROADMAP.md`'s Group F caution against inventing
-unvalidated detail).
+**D1 — Segmentation (SAM 3, MVP4 remainder).** 🟡 Partial — the sidecar storage format and
+`--footprint` consumption are done (the storage format doesn't depend on SAM 3's specific
+output shape, the same reasoning that let D2's merge-decision land before DINOv3 — see
+`application/FOOTPRINT.md`); the segmentation stage itself (`cli_segment.py`, actually running
+SAM 3) remains blocked on a GPU + real model.
 - **Scope gate, not a code blocker:** MVP4's narrowed "footprint only" scope is only valid once Group A's OBB adapter has landed. Start in earnest after A2–A4.
-- New `cli_segment.py` (`tratrac-segment`), shaped like `cli_render.py`: re-opens via the shared replay helper, runs SAM 3 per track-frame crop (box- or text-prompted from the OBB), extracts the occupancy contour, writes `infrastructure/tracks/footprint_parquet.py` sidecar.
-- `cli_postprocess.py` gains optional `--footprint sidecar.parquet`, replacing bbox/OBB-derived dimensions with mask-derived ones before smoothing.
-- Test: `test_footprint.py` (new), SAM 3 kept behind an injected seam so unit tests never import it — same discipline `overlay_video.py` already uses for `draw`/`open_writer`.
+- ❌ New `cli_segment.py` (`tratrac-segment`), shaped like `cli_render.py`: re-opens via the shared replay helper, runs SAM 3 per track-frame crop (box- or text-prompted from the OBB), extracts the occupancy contour, writes `infrastructure/tracks/footprint_parquet.py` sidecar. Blocked — GPU + real SAM 3.
+- ✅ `cli_postprocess.py` gains optional `--footprint sidecar.parquet`, replacing bbox/OBB-derived dimensions with mask-derived ones before smoothing. Done — reuses Group A's `obb_w`/`obb_h` slot rather than adding new fields, so `build_state`/world-projection dropping already handle it correctly with no new special-casing.
+- ✅ `infrastructure/tracks/footprint_parquet.py` — done (writer/reader, mirrors `parquet.py`'s shape).
+- Test: `test_footprint.py` ✅ done (pure Parquet round-trip, no SAM 3 involved — the "seam" ended up being the storage format itself needing no model at all, simpler than an injected-seam mock).
 
 **D2 — ReID (DINOv3, MVP5).** 🟡 Partial — stages 2 and 3 done and validated against real footage; stage 1 blocked on a GPU. The largest net-new algorithm in the whole plan. Three stages, split expensive/cacheable from cheap/re-tunable — the same split `SMOOTHING.md`'s two-pass design already uses:
 
@@ -183,12 +187,16 @@ design/exploration pass, which is what landed.
 ## Composition-root integration order (matters once multiple groups land)
 
 Groups A (via richer `TrackSample`), C (plane/link/lane assignment, multi-anchor projection), and
-D (ReID-merge) all add steps to `cli_postprocess.postprocess`. Target final order so parallel work
-doesn't collide:
+D (ReID-merge, footprint) all add steps to `cli_postprocess.postprocess`. Target final order so
+parallel work doesn't collide — **shipped as follows**, with `--footprint` added ahead of the
+`--reid-merge` slot originally planned first (a footprint sidecar is keyed by the pre-merge
+`track_id` too, so it has to run before the remap for the same reason `--reid-merge` has to run
+before exclusion/link/lane/projection):
 
 ```
 read record
-  → apply --reid-merge (D2)         [track_id remap — before anything track-lifetime-aware]
+  → apply --footprint               (D1)        [obb_w/obb_h override — keyed by the pre-merge track_id]
+  → apply --reid-merge (D2)         [track_id remap — before anything else track-lifetime-aware]
   → filter --exclusion-zones        [already shipped]
   → assign plane / link / lane      (C1 / C5)   [needed before projection knows which H to use]
   → project --calibration           [already shipped; C3/C5 extend the projector itself]
@@ -226,7 +234,7 @@ read record
 | Link/Lane ID | ✅ Done | `test_exclusion.py`, `test_geometry.py` (close model) | `test_road_graph.py` |
 | Multi-anchor/homography projection | ✅ Done | `test_world_projection.py`, `test_world_calibration.py` | — |
 | Replay helper (Group D shared infra) | ✅ Done | `test_overlay_video.py`, `test_render.py` (close model) | `test_replay.py` |
-| Footprint sidecar | ❌ Blocked (D1, GPU) | `test_tracks.py` (close model) | `test_footprint.py` |
+| Footprint sidecar | ✅ Done (storage + `--footprint`); segmentation stage itself ❌ blocked (GPU) | `test_tracks.py` (close model) | `test_footprint.py` |
 | ReID merge logic | ✅ Done, + real-footage run | — | `test_reid_merge.py` |
 | `cli_postprocess.py` new sidecars | ✅ Done | `test_cli_postprocess.py` | — |
 

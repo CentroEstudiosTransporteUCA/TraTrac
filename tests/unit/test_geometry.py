@@ -11,10 +11,12 @@ from tratrac.domain.geometry import (
 	Dimensions,
 	Heading,
 	Point2D,
+	Polygon,
 	Transform2D,
 	Vector2D,
 	clipped_overlap_fraction,
 	oriented_box_to_aabb,
+	oriented_extent,
 	point_in_polygon,
 )
 
@@ -213,6 +215,36 @@ class TestOrientedBoxToAabb:
 		diag = 2.0 * math.sqrt(2.0)
 		assert box.width == pytest.approx(diag, abs=1e-6)
 		assert box.height == pytest.approx(diag, abs=1e-6)
+
+
+class TestOrientedExtent:
+	_AXIS_ALIGNED_RECT = Polygon(
+		(Point2D(0.0, 0.0), Point2D(6.0, 0.0), Point2D(6.0, 2.0), Point2D(0.0, 2.0))
+	)
+
+	def test_no_angle_is_the_axis_aligned_bbox_extent(self) -> None:
+		length, width = oriented_extent(self._AXIS_ALIGNED_RECT, angle=None)
+		assert length == pytest.approx(6.0)
+		assert width == pytest.approx(2.0)
+
+	def test_zero_angle_matches_axis_aligned_extent(self) -> None:
+		length, width = oriented_extent(self._AXIS_ALIGNED_RECT, angle=0.0)
+		assert length == pytest.approx(6.0)
+		assert width == pytest.approx(2.0)
+
+	def test_quarter_turn_swaps_extents(self) -> None:
+		length, width = oriented_extent(self._AXIS_ALIGNED_RECT, angle=math.pi / 2)
+		assert length == pytest.approx(2.0, abs=1e-9)
+		assert width == pytest.approx(6.0, abs=1e-9)
+
+	def test_forty_five_degrees_of_a_square_is_the_diagonal(self) -> None:
+		square = Polygon(
+			(Point2D(-1.0, -1.0), Point2D(1.0, -1.0), Point2D(1.0, 1.0), Point2D(-1.0, 1.0))
+		)
+		length, width = oriented_extent(square, angle=math.pi / 4)
+		diag = 2.0 * math.sqrt(2.0)
+		assert length == pytest.approx(diag, abs=1e-9)
+		assert width == pytest.approx(diag, abs=1e-9)
 
 
 class TestClippedOverlapFraction:
