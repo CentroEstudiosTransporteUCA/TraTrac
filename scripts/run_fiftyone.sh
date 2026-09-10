@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Bootstrap MongoDB (fiftyone-db has no Linux wheel -- see CLAUDE.md Dependency Notes) and
-# launch the FiftyOne App against an already-built dataset.
+# launch the bare FiftyOne App -- no dataset is loaded or built here; pick/import datasets from
+# the App's own UI (its dataset selector lists everything already in this MongoDB instance).
+# To build a dataset from TraTrac's outputs, use `tratrac-fiftyone` (see the Commands table in
+# CLAUDE.md), separately from this script.
 #
-# Usage: scripts/run_fiftyone.sh [DATASET_NAME]
-#   DATASET_NAME defaults to "cruce". The dataset must already exist (built via
-#   `tratrac-fiftyone ... --dataset-name NAME`) -- this script only runs the app, it doesn't
-#   build a dataset.
+# Usage: scripts/run_fiftyone.sh
 #
 # Idempotent: safe to re-run. Reuses an already-running mongod on the expected port; downloads
 # the mongod binary only once (cached under .fiftyone-mongo/, gitignored).
@@ -16,7 +16,6 @@
 
 set -euo pipefail
 
-DATASET_NAME="${1:-cruce}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MONGO_DIR="$REPO_ROOT/.fiftyone-mongo"
 BIN_DIR="$MONGO_DIR/bin"
@@ -82,29 +81,14 @@ else
 	mongod_running || { echo "mongod did not come up -- check $DATA_DIR/mongod.log" >&2; exit 1; }
 fi
 
-# --- 3. Launch the FiftyOne App -----------------------------------------------------------
-echo "==> Launching the FiftyOne App for dataset \"${DATASET_NAME}\"..."
+# --- 3. Launch the bare FiftyOne App -------------------------------------------------------
+echo "==> Launching the FiftyOne App..."
+echo "    Pick or import a dataset from the App's own UI (top-left dataset selector)."
 echo "    (Ctrl+C stops the app; mongod keeps running in the background.)"
 cd "$REPO_ROOT"
 FIFTYONE_DATABASE_URI="$DB_URI" uv run --extra fiftyone python -c "
-import sys
 import fiftyone as fo
 
-name = '${DATASET_NAME}'
-if not fo.dataset_exists(name):
-	existing = fo.list_datasets()
-	print(f'No dataset named {name!r} in this database.', file=sys.stderr)
-	if existing:
-		print(f'Datasets that do exist here: {existing}', file=sys.stderr)
-	else:
-		print(
-			'No datasets exist here yet -- build one first, e.g.:\n'
-			f'  uv run --extra fiftyone tratrac-fiftyone VIDEO --dataset-name {name} '
-			'--record RECORD.parquet --trj RUN.trj',
-			file=sys.stderr,
-		)
-	sys.exit(1)
-
-session = fo.launch_app(fo.load_dataset(name))
+session = fo.launch_app()
 session.wait()
 "
