@@ -1,22 +1,36 @@
 """Typer entry point for FiftyOne dataset export (``tratrac-fiftyone``).
 
 Post-hoc visualization: builds a FiftyOne video dataset from already-produced outputs — the
-raw track record (``infrastructure/tracks/parquet.py``) and/or a smoothed SSAM ``.trj``
-(``infrastructure/export/ssam_trj.py``) — so both can be inspected/compared in the FiftyOne
-App. A reader, not a pipeline stage: nothing here runs detection or tracking; it reads what
-``tratrac``/``tratrac-postprocess`` already wrote, the same "post-hoc tool over existing
-outputs" shape as ``scripts/plot_run.py`` and ``scripts/validate_trj.py``. See
-``docs/roadmap/mvp7.md``'s "Exploration pass" for the design this follows.
+raw track record (``infrastructure/tracks/parquet.py``) and/or a smoothed record
+(``infrastructure/tracks/smoothed_parquet.py``, ``tratrac-postprocess --smoothed-record``) — so
+both can be inspected/compared in the FiftyOne App. A reader, not a pipeline stage: nothing
+here runs detection or tracking; it reads what ``tratrac``/``tratrac-postprocess`` already
+wrote, the same "post-hoc tool over existing outputs" shape as ``scripts/plot_run.py`` and
+``scripts/validate_trj.py``. See ``docs/roadmap/mvp7.md``'s "Exploration pass" for the design
+this follows.
+
+**Not the SSAM ``.trj``, deliberately.** An earlier version of this module read ``--trj``
+directly and normalized its coordinates as if they were always raw video pixels. That's true
+only for an uncalibrated ``.trj`` — a calibrated one (``tratrac-postprocess --calibration``,
+MVP2) carries real-world metres from a homography the ``.trj`` file itself doesn't store, and
+dividing metres by the video's pixel width/height silently produced boxes clustered near the
+origin, disconnected from where the vehicle actually was. Confirmed visually in the FiftyOne
+App, not just in theory. ``--smoothed-record`` exists precisely to give this tool something
+that's always genuinely pixel-space, whether or not the run was calibrated — see
+``application/SMOOTHING.md``'s "Dual-space export" section for the full mechanism (one Kalman/
+RTS smoothing pass, inverted back through the same projector for this output, not a second
+smoothing pass in pixel space).
 
 ``fiftyone`` is an optional extra (``uv sync --extra fiftyone``), not a core dependency — see
 ``pyproject.toml``'s comment on ``[project.optional-dependencies]`` for why. This module is
 only importable when it's installed.
 
-**Verified end-to-end against real footage** (``cruce.mp4``/``out/cruce.parquet``/
-``out/cruce.trj`` — a real 27,319-frame dataset with both ``record_detections`` and
-``trj_detections`` populated correctly). The conversion logic below
-(``record_frame_detections``, ``trj_frame_detections``) is pure — no ``fiftyone`` import — and
-is separately unit-tested without a live FiftyOne/MongoDB instance.
+**Verified end-to-end against real footage** (``cruce.mp4``/``out/cruce.parquet`` — a real
+27,319-frame dataset with ``record_detections`` populated correctly; re-verify
+``smoothed_detections`` the same way once a ``--smoothed-record`` output exists for real
+footage). The conversion logic below (``record_frame_detections``,
+``smoothed_frame_detections``) is pure — no ``fiftyone`` import — and is separately
+unit-tested without a live FiftyOne/MongoDB instance.
 
 **On Linux, ``fiftyone``'s bundled MongoDB doesn't exist** — ``fiftyone-db`` stopped publishing
 Linux wheels after version 0.4.5; every version since (including whatever this resolves to)
@@ -26,12 +40,11 @@ on ``PATH``. Set ``FIFTYONE_DATABASE_URI`` to point at a ``mongod`` you run your
 Linux-native install, or MongoDB's official static binary run through the same raw-ELF-loader
 trick this project's NixOS sessions use for other generic-glibc binaries, e.g. ``ruff`` —
 ``curl``/``openssl``'s shared libs from ``nixpkgs`` cover its only two missing deps). See
-``CLAUDE.md`` Dependency Notes.
+``CLAUDE.md`` Dependency Notes. ``scripts/run_fiftyone.sh`` automates this.
 """
 
 from __future__ import annotations
 
-import math
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -40,17 +53,15 @@ from typing import TYPE_CHECKING, Annotated, Any
 import typer
 
 from tratrac.domain.geometry import oriented_box_to_aabb
-from tratrac.domain.vehicle import VehicleState
-from tratrac.infrastructure.export.ssam_trj import TrjRecording, read_trj
 from tratrac.infrastructure.tracks.parquet import TrackRecording, read_tracks
-from tratrac.infrastructure.video.opencv import OpenCvVideoSource
+from tratrac.infrastructure.tracks.smoothed_parquet import SmoothedRecording, read_smoothed_tracks
 
 if TYPE_CHECKING:
 	import fiftyone as fo
 
 app = typer.Typer(
 	name="tratrac-fiftyone",
-	help="Build a FiftyOne dataset from a track record and/or a smoothed .trj.",
+	help="Build a FiftyOne dataset from a track record and/or a smoothed record.",
 	no_args_is_help=True,
 )
 
@@ -79,7 +90,7 @@ def record_frame_detections(recording: TrackRecording) -> dict[int, list[FrameDe
 
 	Always axis-aligned (the record's ``w``/``h`` are AABB dimensions even when the
 	detector also reported an OBB angle) — this is the raw-bbox path; see
-	``trj_frame_detections`` for the OBB-aware smoothed path.
+	``smoothed_frame_detections`` for the OBB-aware smoothed path.
 	"""
 	width, height = float(recording.metadata.width), float(recording.metadata.height)
 	by_frame: dict[int, list[FrameDetection]] = defaultdict(list)
@@ -98,40 +109,34 @@ def record_frame_detections(recording: TrackRecording) -> dict[int, list[FrameDe
 	return dict(by_frame)
 
 
-def trj_frame_detections(trj: TrjRecording, fps: float) -> dict[int, list[FrameDetection]]:
-	"""Bucket a smoothed ``.trj``'s vehicle states onto video frames, as normalized boxes.
+def smoothed_frame_detections(recording: SmoothedRecording) -> dict[int, list[FrameDetection]]:
+	"""Group a smoothed record's observations by frame, as normalized boxes.
 
-	Frames are aligned by ``round(timestamp * fps)``, the same convention ``cli_render.py``
-	uses (the ``.trj`` carries time but not fps). Each state's oriented heading/dimensions
-	are collapsed to an enclosing AABB via ``oriented_box_to_aabb`` (Group A4/A5) —
-	FiftyOne's plain ``Detection`` box is axis-aligned; the true rotated footprint isn't
-	drawn here.
+	Always image-space pixels by construction (``application/SMOOTHING.md``'s "Dual-space
+	export" section) regardless of whether the run producing it used ``--calibration`` — unlike
+	the SSAM ``.trj``, there's no coordinate-space ambiguity to guard against here. Each
+	observation's ``(cx, cy, angle, length, width)`` are collapsed to an enclosing AABB via
+	``oriented_box_to_aabb`` — FiftyOne's plain ``Detection`` box is axis-aligned; the true
+	rotated footprint isn't drawn here.
 	"""
-	width, height = float(trj.width), float(trj.height)
+	width, height = float(recording.metadata.width), float(recording.metadata.height)
 	by_frame: dict[int, list[FrameDetection]] = defaultdict(list)
-	for frame in trj.frames:
-		frame_index = round(frame.timestamp_seconds * fps)
-		for state in frame.states:
-			by_frame[frame_index].append(_trj_state_to_detection(state, width, height))
+	for obs in recording.observations:
+		# oriented_box_to_aabb's (w, h) convention is (length, width) — the axis that rotates
+		# with `angle` is the vehicle's forward/length axis (matches track_smoothing.py's
+		# `oriented_size` unpacking: `size_length, size_width = oriented_size`).
+		box = oriented_box_to_aabb(obs.cx, obs.cy, obs.length, obs.width, obs.angle)
+		by_frame[obs.frame_index].append(
+			FrameDetection(
+				track_id=obs.track_id,
+				x=box.x / width,
+				y=box.y / height,
+				width=box.width / width,
+				height=box.height / height,
+				label="vehicle",
+			)
+		)
 	return dict(by_frame)
-
-
-def _trj_state_to_detection(state: VehicleState, width: float, height: float) -> FrameDetection:
-	angle = math.atan2(state.heading.dy, state.heading.dx)
-	# oriented_box_to_aabb's (w, h) convention is (length, width) — the axis that rotates
-	# with `angle` is the vehicle's forward/length axis (matches track_smoothing.py's
-	# `oriented_size` unpacking: `size_length, size_width = oriented_size`).
-	box = oriented_box_to_aabb(
-		state.centroid.x, state.centroid.y, state.dimensions.length, state.dimensions.width, angle
-	)
-	return FrameDetection(
-		track_id=state.vehicle_id,
-		x=box.x / width,
-		y=box.y / height,
-		width=box.width / width,
-		height=box.height / height,
-		label="vehicle",
-	)
 
 
 @app.command()
@@ -144,9 +149,15 @@ def build(
 		Path | None,
 		typer.Option("--record", exists=True, dir_okay=False, help="Raw track record (Parquet)."),
 	] = None,
-	trj: Annotated[
+	smoothed_record: Annotated[
 		Path | None,
-		typer.Option("--trj", exists=True, dir_okay=False, help="Smoothed SSAM .trj."),
+		typer.Option(
+			"--smoothed-record",
+			exists=True,
+			dir_okay=False,
+			help="Smoothed record (Parquet, tratrac-postprocess --smoothed-record). Always "
+			"image-space, unlike a --calibration'd .trj -- see the module docstring.",
+		),
 	] = None,
 	overwrite: Annotated[
 		bool,
@@ -158,29 +169,22 @@ def build(
 		bool, typer.Option("--launch/--no-launch", help="Open the FiftyOne App after building.")
 	] = False,
 ) -> None:
-	"""Build DATASET_NAME in FiftyOne from --record and/or --trj (at least one required).
+	"""Build DATASET_NAME in FiftyOne from --record and/or --smoothed-record (>= 1 required).
 
-	Passing both adds two label fields per frame (``record_detections``, ``trj_detections``)
-	so the raw and smoothed trajectories can be compared directly in the FiftyOne App.
+	Passing both adds two label fields per frame (``record_detections``,
+	``smoothed_detections``) so the raw and smoothed trajectories can be compared directly in
+	the FiftyOne App.
 	"""
-	if record is None and trj is None:
-		raise typer.BadParameter("Pass at least one of --record or --trj.")
+	if record is None and smoothed_record is None:
+		raise typer.BadParameter("Pass at least one of --record or --smoothed-record.")
 
 	record_by_frame: dict[int, list[FrameDetection]] = {}
-	trj_by_frame: dict[int, list[FrameDetection]] = {}
-	fps: float | None = None
+	smoothed_by_frame: dict[int, list[FrameDetection]] = {}
 	try:
 		if record is not None:
-			recording = read_tracks(record)
-			fps = recording.metadata.fps
-			record_by_frame = record_frame_detections(recording)
-		if trj is not None:
-			trj_recording = read_trj(trj)
-			if fps is None:
-				# .trj carries time but not fps; probe it from the video itself, same as a
-				# bare --trj cli_render.py invocation would need.
-				fps = _probe_fps(video)
-			trj_by_frame = trj_frame_detections(trj_recording, fps)
+			record_by_frame = record_frame_detections(read_tracks(record))
+		if smoothed_record is not None:
+			smoothed_by_frame = smoothed_frame_detections(read_smoothed_tracks(smoothed_record))
 	except (ValueError, OSError) as exc:
 		raise typer.BadParameter(str(exc)) from exc
 
@@ -188,15 +192,10 @@ def build(
 		video=video,
 		dataset_name=dataset_name,
 		record_by_frame=record_by_frame,
-		trj_by_frame=trj_by_frame,
+		smoothed_by_frame=smoothed_by_frame,
 		overwrite=overwrite,
 		launch=launch,
 	)
-
-
-def _probe_fps(video: Path) -> float:
-	with OpenCvVideoSource(video) as source:
-		return source.metadata.fps
 
 
 def _build_dataset(
@@ -204,7 +203,7 @@ def _build_dataset(
 	video: Path,
 	dataset_name: str,
 	record_by_frame: dict[int, list[FrameDetection]],
-	trj_by_frame: dict[int, list[FrameDetection]],
+	smoothed_by_frame: dict[int, list[FrameDetection]],
 	overwrite: bool,
 	launch: bool,
 ) -> None:
@@ -225,16 +224,16 @@ def _build_dataset(
 
 	dataset = fo.Dataset(name=dataset_name, persistent=True)
 	sample = fo.Sample(filepath=str(video))
-	all_frames = sorted(set(record_by_frame) | set(trj_by_frame))
+	all_frames = sorted(set(record_by_frame) | set(smoothed_by_frame))
 	for frame_index in all_frames:
 		frame = fo.Frame()
 		if frame_index in record_by_frame:
 			frame["record_detections"] = fo.Detections(
 				detections=[_to_fo_detection(d) for d in record_by_frame[frame_index]]
 			)
-		if frame_index in trj_by_frame:
-			frame["trj_detections"] = fo.Detections(
-				detections=[_to_fo_detection(d) for d in trj_by_frame[frame_index]]
+		if frame_index in smoothed_by_frame:
+			frame["smoothed_detections"] = fo.Detections(
+				detections=[_to_fo_detection(d) for d in smoothed_by_frame[frame_index]]
 			)
 		# FiftyOne video frame numbers are 1-indexed; our frame_index is 0-indexed.
 		sample.frames[frame_index + 1] = frame

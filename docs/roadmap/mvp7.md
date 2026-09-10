@@ -69,11 +69,24 @@ trajectories, computing/storing trajectory statistics. No better-fit alternative
 from TraTrac's existing outputs, not a new export format —
 - one FiftyOne video **sample** per source clip,
 - **frame-level detections** from the track record (`infrastructure/tracks/parquet.py`,
-  `--record`) and/or a `.trj` (`infrastructure/export/ssam_trj.py`'s `read_trj`, `--trj`) —
-  passing both adds two label fields per frame (`record_detections`/`trj_detections`) so raw
-  and smoothed trajectories can be compared directly in the FiftyOne App,
+  `--record`) and/or the smoothed record (`infrastructure/tracks/smoothed_parquet.py`,
+  `--smoothed-record`) — passing both adds two label fields per frame
+  (`record_detections`/`smoothed_detections`) so raw and smoothed trajectories can be
+  compared directly in the FiftyOne App,
 - each vehicle's FiftyOne `Detection.index` carries its track/vehicle id (FiftyOne's own field
   for this, used by its video-tracking visualization).
+
+**Deliberately reads `--smoothed-record`, not the SSAM `.trj`.** An earlier version read
+`--trj` directly and normalized its coordinates as raw video pixels — true only for an
+uncalibrated `.trj`; a `--calibration`'d one carries real-world metres from a homography the
+`.trj` file itself doesn't store, and dividing metres by pixel width/height silently produced
+boxes clustered near the origin. This was caught by actually looking at the rendered output in
+the FiftyOne App, not by inspection — every box pinned near the top-left corner regardless of
+the vehicle's true position. The fix wasn't a defensive check on `.trj`; it was building a
+proper pixel-space output (`tratrac-postprocess --smoothed-record`, see
+`application/SMOOTHING.md`'s "Dual-space export" section) from the *same* smoothing pass that
+feeds `.trj`, so this tool always has something genuinely pixel-space to read regardless of
+calibration.
 
 A straightforward *reader*, not a pipeline change — the same "post-hoc tool over existing
 outputs" shape as `scripts/plot_run.py` and `scripts/validate_trj.py`. `fiftyone` is an
@@ -86,12 +99,14 @@ the per-frame detections above, are **not yet added** — a natural next increme
 in real use.
 
 **Verified end-to-end against real footage.** The conversion logic
-(`record_frame_detections`, `trj_frame_detections` — pure, no `fiftyone` import) is unit-tested;
-`_build_dataset` (the part that actually calls the `fiftyone` SDK) was run for real against this
-project's `cruce.mp4`/`out/cruce.parquet`/`out/cruce.trj`, producing a persisted FiftyOne
-dataset with 27,319 frames and both `record_detections`/`trj_detections` label layers populated
-(spot-checked mid-clip: 16 vehicles in each layer at a representative frame, correct normalized
-boxes, track ids landing in `Detection.index` as designed).
+(`record_frame_detections`, `smoothed_frame_detections` — pure, no `fiftyone` import) is
+unit-tested; `_build_dataset` (the part that actually calls the `fiftyone` SDK) was run for
+real against this project's `cruce.mp4`/`out/cruce.parquet`/`out/cruce_smoothed.parquet`
+(the latter built via `tratrac-postprocess --smoothed-record`), producing a persisted FiftyOne
+dataset with 27,319 frames and both `record_detections`/`smoothed_detections` label layers
+populated (spot-checked mid-clip: 16 vehicles in each layer at a representative frame, correct
+normalized boxes spread across real vehicle positions — not clustered near the origin, the
+symptom of the bug this replaced — track ids landing in `Detection.index` as designed).
 
 Getting there required working around one real environment gap, worth recording: `fiftyone-db`
 (the package `fiftyone` uses for its bundled MongoDB) **stopped publishing Linux wheels after

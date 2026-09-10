@@ -180,12 +180,15 @@ plan existed. No phase gate; doesn't block or get blocked by anything above.
 in detail; summary:
 
 - ✅ **FiftyOne** — `src/tratrac/cli_fiftyone.py` (`tratrac-fiftyone`, optional `fiftyone` extra:
-  `uv sync --extra fiftyone`). Builds a FiftyOne video dataset from `--record`/`--trj`. **Fully
-  verified end-to-end**: the pure conversion logic is unit-tested, and `_build_dataset` (the
-  live `fiftyone` SDK call) was run for real against `cruce.mp4`/`out/cruce.parquet`/
-  `out/cruce.trj`, producing a persisted 27,319-frame dataset with both raw and smoothed
-  detection layers populated correctly (see `docs/roadmap/mvp7.md` for the spot-check and the
-  real `fiftyone-db`-has-no-Linux-wheel finding this took to work around). Adding `fiftyone`
+  `uv sync --extra fiftyone`). Builds a FiftyOne video dataset from `--record`/
+  `--smoothed-record` (deliberately not `--trj` — its coordinates are world-space metric when
+  `--calibration` was used, not raw pixels; see `application/SMOOTHING.md`'s "Dual-space
+  export" section, which `--smoothed-record` itself is). **Fully verified end-to-end**: the
+  pure conversion logic is unit-tested, and `_build_dataset` (the live `fiftyone` SDK call)
+  was run for real against `cruce.mp4`/`out/cruce.parquet`/`out/cruce_smoothed.parquet`,
+  producing a persisted 27,319-frame dataset with both raw and smoothed detection layers
+  populated correctly (see `docs/roadmap/mvp7.md` for the spot-check and the real
+  `fiftyone-db`-has-no-Linux-wheel finding this took to work around). Adding `fiftyone`
   also surfaced and fixed a real `opencv-python` vs. `opencv-python-headless` conflict (see
   `CLAUDE.md` Dependency Notes).
 - ✅ **Docker + CUDA** — repo-root `Dockerfile` + `.dockerignore`, multi-stage `-devel`/
