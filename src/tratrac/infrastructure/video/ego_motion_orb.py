@@ -20,22 +20,26 @@ raw, full-resolution frame and nothing is cropped — see src/tratrac/infrastruc
 
 Feature-based (not intensity ECC) because aerial traffic is dominated by moving
 foreground: explicit correspondences let RANSAC reject moving-vehicle matches. The
-estimator also masks vehicles out of feature extraction — it subscribes to the
-pipeline's detections (``observe``), which are now in *raw* frame coordinates, so
-the boxes mask the current frame directly with no remapping. SuperPoint+LightGlue
-is the eventual upgrade (``docs/BACKLOG.md`` item 1).
+estimator masks vehicles out of feature extraction; where the mask comes from is
+pluggable behind ``MaskSource`` (below) — live pipeline detections
+(``DetectionMaskSource``, the default in a `tratrac` run) or operator-authored
+background zones (``BackgroundZoneMaskSource``, no detector needed, used by
+`tratrac-stabilize` — see "Detector-free ego-motion" in
+src/tratrac/infrastructure/video/EGO_MOTION.md). SuperPoint+LightGlue is the
+eventual estimator upgrade (``docs/BACKLOG.md`` item 1).
 """
 
 from __future__ import annotations
 
 import math
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Protocol
 
 import cv2
 import numpy as np
 from numpy.typing import NDArray
 
+from tratrac.domain.background import BackgroundZone, BackgroundZones
 from tratrac.domain.detection import Detection
 from tratrac.domain.frame import Frame
 from tratrac.domain.geometry import Transform2D, clipped_overlap_fraction
@@ -43,6 +47,82 @@ from tratrac.domain.geometry import Transform2D, clipped_overlap_fraction
 # Notified when a frame becomes a keyframe anchor: (frame_index, global pose). The
 # scout subscribes to enumerate the reference frames an operator draws zones on.
 AnchorObserver = Callable[[int, Transform2D], None]
+
+
+class MaskSource(Protocol):
+	"""Supplies the per-frame ORB feature mask (255 = usable, 0 = ignore).
+
+	``observe`` receives each frame's detections (a no-op for a source that doesn't
+	need them, e.g. ``BackgroundZoneMaskSource``) so every source satisfies the same
+	shape regardless of whether it's detection-fed or operator-authored.
+	"""
+
+	def observe(self, detections: list[Detection]) -> None: ...
+	def mask_for(self, frame_index: int, height: int, width: int) -> NDArray[np.uint8] | None: ...
+
+
+class DetectionMaskSource:
+	"""Masks vehicles out using the live pipeline's own detections (today's default).
+
+	Detections are in raw frame coordinates (the detector runs on the raw frame), so
+	the boxes mask the current frame directly — no transform, no ``frame_index``
+	lookup (``mask_for`` ignores it; the mask always reflects the most recent
+	``observe`` call).
+	"""
+
+	def __init__(self) -> None:
+		self._detections: list[Detection] = []
+
+	def observe(self, detections: list[Detection]) -> None:
+		self._detections = detections
+
+	def mask_for(self, frame_index: int, height: int, width: int) -> NDArray[np.uint8] | None:
+		del frame_index
+		if not self._detections:
+			return None
+		mask: NDArray[np.uint8] = np.full((height, width), 255, dtype=np.uint8)
+		for detection in self._detections:
+			box = detection.bbox
+			x0 = max(0, math.floor(box.x))
+			x1 = min(width, math.ceil(box.x + box.width))
+			y0 = max(0, math.floor(box.y))
+			y1 = min(height, math.ceil(box.y + box.height))
+			if x1 > x0 and y1 > y0:
+				mask[y0:y1, x0:x1] = 0
+		return mask
+
+
+class BackgroundZoneMaskSource:
+	"""Masks ORB feature extraction to operator-authored background zones — no
+	detector, no live detections needed (see `tratrac-stabilize`).
+
+	``zones`` is a `BackgroundZones` ordered by ``reference_frame``; each entry marks
+	"use this polygon as the keep-region from this frame until a later entry
+	supersedes it" — not tied to ORB's own re-anchor points. ``mask_for`` resolves
+	the most recent entry at or before ``frame_index`` (falling back to the earliest
+	zone for a frame before the first entry, rather than masking nothing).
+	"""
+
+	def __init__(self, zones: BackgroundZones) -> None:
+		self._zones = sorted(zones.zones, key=lambda zone: zone.reference_frame)
+
+	def observe(self, detections: list[Detection]) -> None:
+		del detections  # the mask is entirely operator-authored; no detections needed
+
+	def mask_for(self, frame_index: int, height: int, width: int) -> NDArray[np.uint8] | None:
+		zone = self._zone_at(frame_index)
+		mask: NDArray[np.uint8] = np.zeros((height, width), dtype=np.uint8)
+		points = np.array([[v.x, v.y] for v in zone.polygon.vertices], dtype=np.int32)
+		cv2.fillPoly(mask, [points], 255)
+		return mask
+
+	def _zone_at(self, frame_index: int) -> BackgroundZone:
+		candidate = self._zones[0]
+		for zone in self._zones:
+			if zone.reference_frame > frame_index:
+				break
+			candidate = zone
+		return candidate
 
 
 class _AnchorChain:
@@ -100,6 +180,7 @@ class OrbEgoMotionEstimator:
 		min_matches: int,
 		ransac_threshold: float,
 		min_anchor_overlap: float,
+		mask_source: MaskSource,
 		anchor_observer: AnchorObserver | None = None,
 	) -> None:
 		if n_features <= 0:
@@ -116,6 +197,7 @@ class OrbEgoMotionEstimator:
 		self._min_matches = min_matches
 		self._ransac_threshold = ransac_threshold
 		self._min_anchor_overlap = min_anchor_overlap
+		self._mask_source = mask_source
 		self._anchor_observer = anchor_observer
 		# ORB_create is a factory alias absent from opencv's bundled type stubs.
 		self._orb: Any = cv2.ORB_create(nfeatures=n_features)  # type: ignore[attr-defined]
@@ -125,9 +207,6 @@ class OrbEgoMotionEstimator:
 		self._chain = _AnchorChain()
 		# The current frame's global pose; what the overlay reads to map back to raw.
 		self._current = Transform2D.identity()
-		# Latest detections fed back by the pipeline (raw frame coordinates), used to
-		# mask vehicles out of the current frame's feature extraction.
-		self._mask_detections: list[Detection] = []
 
 	@property
 	def current_transform(self) -> Transform2D:
@@ -135,12 +214,12 @@ class OrbEgoMotionEstimator:
 		return self._current
 
 	def observe(self, detections: list[Detection]) -> None:
-		self._mask_detections = detections
+		self._mask_source.observe(detections)
 
 	def estimate(self, frame: Frame) -> Transform2D:
 		gray = cv2.cvtColor(frame.pixels, cv2.COLOR_BGR2GRAY)
 		height, width = gray.shape[:2]
-		mask = self._vehicle_mask(height, width)
+		mask = self._mask_source.mask_for(frame.index, height, width)
 		keypoints, descriptors = self._orb.detectAndCompute(gray, mask)
 		has_features = descriptors is not None and len(keypoints) >= self._min_matches
 
@@ -176,26 +255,6 @@ class OrbEgoMotionEstimator:
 	def _set_anchor(self, keypoints: Any, descriptors: NDArray[np.uint8]) -> None:
 		self._anchor_keypoints = keypoints
 		self._anchor_descriptors = descriptors
-
-	def _vehicle_mask(self, height: int, width: int) -> NDArray[np.uint8] | None:
-		"""Build an ORB feature mask (255 = keep, 0 = ignore) excluding vehicles.
-
-		``None`` (no masking) when there are no detections yet. Detections are in raw
-		frame coordinates (the detector runs on the raw frame), so the boxes mask the
-		current frame directly — no transform.
-		"""
-		if not self._mask_detections:
-			return None
-		mask: NDArray[np.uint8] = np.full((height, width), 255, dtype=np.uint8)
-		for detection in self._mask_detections:
-			box = detection.bbox
-			x0 = max(0, math.floor(box.x))
-			x1 = min(width, math.ceil(box.x + box.width))
-			y0 = max(0, math.floor(box.y))
-			y1 = min(height, math.ceil(box.y + box.height))
-			if x1 > x0 and y1 > y0:
-				mask[y0:y1, x0:x1] = 0
-		return mask
 
 	def _fit_against_anchor(
 		self, keypoints: Any, descriptors: NDArray[np.uint8]

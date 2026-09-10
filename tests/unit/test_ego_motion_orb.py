@@ -12,10 +12,16 @@ import numpy as np
 import pytest
 from numpy.typing import NDArray
 
+from tratrac.domain.background import BackgroundZone, BackgroundZones
 from tratrac.domain.detection import Detection, VehicleClass
 from tratrac.domain.frame import Frame
-from tratrac.domain.geometry import BoundingBox, Transform2D
-from tratrac.infrastructure.video.ego_motion_orb import OrbEgoMotionEstimator, _AnchorChain
+from tratrac.domain.geometry import BoundingBox, Point2D, Polygon, Transform2D
+from tratrac.infrastructure.video.ego_motion_orb import (
+	BackgroundZoneMaskSource,
+	DetectionMaskSource,
+	OrbEgoMotionEstimator,
+	_AnchorChain,
+)
 
 
 def _vehicle(x: float, y: float, width: float, height: float) -> Detection:
@@ -46,6 +52,7 @@ def _make_estimator(min_anchor_overlap: float = 0.5) -> OrbEgoMotionEstimator:
 		min_matches=10,
 		ransac_threshold=3.0,
 		min_anchor_overlap=min_anchor_overlap,
+		mask_source=DetectionMaskSource(),
 	)
 
 
@@ -102,6 +109,7 @@ class TestOrbEgoMotionEstimator:
 			min_matches=10,
 			ransac_threshold=3.0,
 			min_anchor_overlap=0.6,
+			mask_source=DetectionMaskSource(),
 			anchor_observer=lambda index, pose: anchors.append((index, pose)),
 		)
 		estimator.estimate(Frame(index=0, pixels=_textured_image()))
@@ -116,6 +124,7 @@ class TestOrbEgoMotionEstimator:
 			min_matches=10,
 			ransac_threshold=3.0,
 			min_anchor_overlap=0.99,
+			mask_source=DetectionMaskSource(),
 			anchor_observer=lambda index, pose: anchors.append((index, pose)),
 		)
 		base = _textured_image()
@@ -151,6 +160,76 @@ class TestOrbEgoMotionEstimator:
 			_make_estimator(min_anchor_overlap=0.0)
 		with pytest.raises(ValueError, match="min_anchor_overlap"):
 			_make_estimator(min_anchor_overlap=1.0)
+
+
+def _square_zone(
+	reference_frame: int, x0: float, y0: float, x1: float, y1: float
+) -> BackgroundZone:
+	return BackgroundZone(
+		reference_frame=reference_frame,
+		polygon=Polygon((Point2D(x0, y0), Point2D(x1, y0), Point2D(x1, y1), Point2D(x0, y1))),
+	)
+
+
+class TestDetectionMaskSource:
+	def test_no_detections_yet_means_no_mask(self) -> None:
+		source = DetectionMaskSource()
+		assert source.mask_for(0, 100, 100) is None
+
+	def test_observed_detections_mask_their_bbox(self) -> None:
+		source = DetectionMaskSource()
+		source.observe([_vehicle(10.0, 10.0, 20.0, 20.0)])
+		mask = source.mask_for(0, 100, 100)
+		assert mask is not None
+		assert mask[15, 15] == 0  # inside the vehicle bbox
+		assert mask[0, 0] == 255  # outside it
+
+	def test_frame_index_is_ignored(self) -> None:
+		source = DetectionMaskSource()
+		source.observe([_vehicle(10.0, 10.0, 20.0, 20.0)])
+		mask_a = source.mask_for(0, 50, 50)
+		mask_b = source.mask_for(999, 50, 50)
+		assert mask_a is not None
+		assert mask_b is not None
+		assert np.array_equal(mask_a, mask_b)
+
+
+class TestBackgroundZoneMaskSource:
+	def test_masks_outside_the_zone(self) -> None:
+		zones = BackgroundZones(zones=(_square_zone(0, 10.0, 10.0, 30.0, 30.0),))
+		source = BackgroundZoneMaskSource(zones)
+		mask = source.mask_for(0, 100, 100)
+		assert mask is not None
+		assert mask[20, 20] == 255  # inside the zone
+		assert mask[0, 0] == 0  # outside it
+
+	def test_no_detections_needed(self) -> None:
+		zones = BackgroundZones(zones=(_square_zone(0, 0.0, 0.0, 10.0, 10.0),))
+		source = BackgroundZoneMaskSource(zones)
+		source.observe([])  # a no-op; must not raise
+		assert source.mask_for(0, 20, 20) is not None
+
+	def test_resolves_the_most_recent_zone_at_or_before_frame_index(self) -> None:
+		early = _square_zone(0, 0.0, 0.0, 10.0, 10.0)
+		late = _square_zone(100, 50.0, 50.0, 90.0, 90.0)
+		source = BackgroundZoneMaskSource(BackgroundZones(zones=(early, late)))
+
+		before_switch = source.mask_for(50, 100, 100)
+		assert before_switch is not None
+		assert before_switch[5, 5] == 255  # still the early zone
+		assert before_switch[70, 70] == 0
+
+		after_switch = source.mask_for(150, 100, 100)
+		assert after_switch is not None
+		assert after_switch[5, 5] == 0
+		assert after_switch[70, 70] == 255  # now the late zone
+
+	def test_frame_before_the_first_zone_falls_back_to_the_earliest_one(self) -> None:
+		only = _square_zone(50, 10.0, 10.0, 30.0, 30.0)
+		source = BackgroundZoneMaskSource(BackgroundZones(zones=(only,)))
+		mask = source.mask_for(0, 100, 100)
+		assert mask is not None
+		assert mask[20, 20] == 255
 
 
 class TestAnchorChain:

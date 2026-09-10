@@ -36,7 +36,7 @@ from tratrac.infrastructure.video.stabilized import _cv2_warp
 
 from tratrac.domain.frame import Frame
 from tratrac.domain.geometry import Transform2D
-from tratrac.infrastructure.video.ego_motion_orb import OrbEgoMotionEstimator
+from tratrac.infrastructure.video.ego_motion_orb import DetectionMaskSource, OrbEgoMotionEstimator
 
 
 def _decompose(t: Transform2D) -> tuple[float, float, float]:
@@ -63,6 +63,7 @@ def main() -> int:
 	parser.add_argument("--orb-match-ratio", type=float, default=0.75)
 	parser.add_argument("--orb-min-matches", type=int, default=10)
 	parser.add_argument("--orb-ransac-threshold", type=float, default=3.0)
+	parser.add_argument("--orb-min-anchor-overlap", type=float, default=0.6)
 	parser.add_argument("--checkpoint", default="Mahadih534/YoloV8-VisDrone")
 	parser.add_argument("--filename", default="visDrone.pt")
 	parser.add_argument("--conf", type=float, default=0.25)
@@ -87,6 +88,8 @@ def main() -> int:
 		match_ratio=args.orb_match_ratio,
 		min_matches=args.orb_min_matches,
 		ransac_threshold=args.orb_ransac_threshold,
+		min_anchor_overlap=args.orb_min_anchor_overlap,
+		mask_source=DetectionMaskSource(),
 	)
 	detector = None
 	if args.mask:
