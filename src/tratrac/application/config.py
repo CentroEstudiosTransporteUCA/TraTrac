@@ -141,6 +141,15 @@ class EgoMotionConfig:
 	# Minimum fraction of the keyframe anchor still visible before re-anchoring
 	# (see src/tratrac/infrastructure/video/EGO_MOTION.md). Only meaningful when ``enabled``.
 	min_anchor_overlap: float
+	# Optional pre-built transforms file (a `tratrac-stabilize` run's output). ``None``
+	# = off (live ORB, the default). When set, the run reads this table instead of
+	# estimating ego-motion live, so its own single detector pass never also runs
+	# ORB — see "Detector-free ego-motion", src/tratrac/infrastructure/video/EGO_MOTION.md.
+	# Only meaningful when ``enabled`` (same toggleable-key coherence guard as
+	# ``export.transform_file``). The ORB parameters above are still required
+	# whenever ``enabled`` is true, even though they go unused in this path — kept
+	# simple rather than adding a second conditional-requirement branch.
+	transforms_in: Path | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -245,6 +254,12 @@ class RunConfig:
 			resolver.problems.append(
 				"export.anchors_dir requires ego_motion.enabled = true; a static run has no "
 				'keyframe anchors (use "").'
+			)
+		if anchors_dir is not None and ego_motion.transforms_in is not None:
+			resolver.problems.append(
+				"export.anchors_dir is incompatible with ego_motion.transforms_in; a "
+				'precomputed-transforms run discovers no new anchors of its own (use "") -- '
+				"draw zones/correspondences on the tratrac-stabilize run's own anchors instead."
 			)
 
 		window = WindowConfig(
@@ -496,6 +511,7 @@ def _resolve_ego_motion(resolver: _Resolver) -> EgoMotionConfig:
 			min_matches=0,
 			ransac_threshold=0.0,
 			min_anchor_overlap=0.0,
+			transforms_in=None,
 		)
 
 	n_features = resolver.required_int("ego_motion.n_features")
@@ -513,6 +529,7 @@ def _resolve_ego_motion(resolver: _Resolver) -> EgoMotionConfig:
 	min_anchor_overlap = resolver.required_float("ego_motion.min_anchor_overlap")
 	if resolver.present("ego_motion.min_anchor_overlap") and not 0.0 < min_anchor_overlap < 1.0:
 		resolver.problems.append("ego_motion.min_anchor_overlap must be in (0, 1).")
+	transforms_in = resolver.toggleable_path("ego_motion.transforms_in")
 	return EgoMotionConfig(
 		enabled=True,
 		n_features=n_features,
@@ -520,6 +537,7 @@ def _resolve_ego_motion(resolver: _Resolver) -> EgoMotionConfig:
 		min_matches=min_matches,
 		ransac_threshold=ransac_threshold,
 		min_anchor_overlap=min_anchor_overlap,
+		transforms_in=transforms_in,
 	)
 
 

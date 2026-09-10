@@ -8,11 +8,16 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from tratrac.application.coordinate_transforms import PerFrameTransform
 from tratrac.domain.frame import Frame
 from tratrac.domain.geometry import Transform2D
 from tratrac.domain.stabilization import FrameTransform
 from tratrac.infrastructure.transform.recording import RecordingEgoMotionEstimator
-from tratrac.infrastructure.transform.sink import CoordinateTransformSink, read_transforms
+from tratrac.infrastructure.transform.sink import (
+	CoordinateTransformSink,
+	PrecomputedEgoMotionEstimator,
+	read_transforms,
+)
 
 
 class _RecordingSink:
@@ -96,6 +101,23 @@ class TestReadTransforms:
 		assert table.at(0) == Transform2D.identity()
 		assert table.at(7) == t1
 		assert table.at(99) is None
+
+
+class TestPrecomputedEgoMotionEstimator:
+	def test_estimate_looks_up_the_exact_frame(self) -> None:
+		t1 = Transform2D(a=2.0, b=0.0, tx=1.0, c=0.0, d=2.0, ty=3.0)
+		estimator = PrecomputedEgoMotionEstimator(
+			PerFrameTransform({0: Transform2D.identity(), 7: t1})
+		)
+		assert estimator.estimate(Frame(index=0, pixels=np.zeros((2, 2, 3), dtype=np.uint8))) == (
+			Transform2D.identity()
+		)
+		assert estimator.estimate(Frame(index=7, pixels=np.zeros((2, 2, 3), dtype=np.uint8))) == t1
+
+	def test_missing_frame_raises(self) -> None:
+		estimator = PrecomputedEgoMotionEstimator(PerFrameTransform({0: Transform2D.identity()}))
+		with pytest.raises(KeyError, match="frame 5"):
+			estimator.estimate(Frame(index=5, pixels=np.zeros((2, 2, 3), dtype=np.uint8)))
 
 
 class TestRecordingEgoMotionEstimator:

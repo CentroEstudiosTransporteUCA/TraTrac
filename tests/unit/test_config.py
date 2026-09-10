@@ -203,6 +203,7 @@ class TestEgoMotion:
 		"min_matches": 10,
 		"ransac_threshold": 3.0,
 		"min_anchor_overlap": 0.6,
+		"transforms_in": "",
 	}
 
 	def test_disabled_needs_no_orb_params(self, tmp_path: Path) -> None:
@@ -233,6 +234,23 @@ class TestEgoMotion:
 		assert "ego_motion.min_matches is missing." in problems
 		assert "ego_motion.ransac_threshold is missing." in problems
 		assert "ego_motion.min_anchor_overlap is missing." in problems
+		assert any("ego_motion.transforms_in is missing" in p for p in problems)
+
+	def test_transforms_in_off_resolves_to_none(self, tmp_path: Path) -> None:
+		run = RunConfig.resolve(_complete(tmp_path, ego_motion=self._ENABLED), {})
+		assert run.ego_motion.transforms_in is None  # "" disables (live ORB)
+
+	def test_transforms_in_path_resolves(self, tmp_path: Path) -> None:
+		enabled = {**self._ENABLED, "transforms_in": str(tmp_path / "transforms.jsonl")}
+		run = RunConfig.resolve(_complete(tmp_path, ego_motion=enabled), {})
+		assert run.ego_motion.transforms_in == tmp_path / "transforms.jsonl"
+
+	def test_transforms_in_with_anchors_dir_is_an_error(self, tmp_path: Path) -> None:
+		enabled = {**self._ENABLED, "transforms_in": str(tmp_path / "transforms.jsonl")}
+		file_values = _complete(tmp_path, ego_motion=enabled)
+		file_values["export"]["anchors_dir"] = str(tmp_path / "anchors")
+		with pytest.raises(ConfigError, match=r"incompatible with ego_motion\.transforms_in"):
+			RunConfig.resolve(file_values, {})
 
 	def test_out_of_range_anchor_overlap_is_an_error(self, tmp_path: Path) -> None:
 		bad = {**self._ENABLED, "min_anchor_overlap": 1.5}
@@ -295,6 +313,7 @@ class TestTransformCsv:
 		"min_matches": 10,
 		"ransac_threshold": 3.0,
 		"min_anchor_overlap": 0.6,
+		"transforms_in": "",
 	}
 
 	def test_off_resolves_to_none(self, tmp_path: Path) -> None:
@@ -330,6 +349,7 @@ class TestAnchorsDir:
 		"min_matches": 10,
 		"ransac_threshold": 3.0,
 		"min_anchor_overlap": 0.6,
+		"transforms_in": "",
 	}
 
 	def test_off_resolves_to_none(self, tmp_path: Path) -> None:

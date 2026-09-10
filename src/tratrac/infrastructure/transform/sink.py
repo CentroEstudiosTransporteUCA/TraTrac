@@ -14,6 +14,7 @@ from types import TracebackType
 from typing import TextIO
 
 from tratrac.application.coordinate_transforms import PerFrameTransform
+from tratrac.domain.frame import Frame
 from tratrac.domain.geometry import Transform2D
 from tratrac.domain.stabilization import FrameTransform
 from tratrac.infrastructure.transform.records import (
@@ -42,6 +43,32 @@ def read_transforms(path: Path) -> PerFrameTransform:
 			)
 		transforms[record.frame_index] = record.transform
 	return PerFrameTransform(transforms)
+
+
+class PrecomputedEgoMotionEstimator:
+	"""``EgoMotionEstimator`` reading an already-known transform table instead of
+	estimating live — the `tratrac` side of `ego_motion.transforms_in`: a
+	`tratrac-stabilize` run's output, consumed so the live run's detector pass never
+	needs to also run ORB (see "Detector-free ego-motion",
+	src/tratrac/infrastructure/video/EGO_MOTION.md).
+
+	``estimate`` is an exact `PerFrameTransform` lookup by `frame.index` — no
+	feature matching. Raises ``KeyError`` (with a clearer message) if the table
+	doesn't cover a frame the run processes; the table is expected to be complete
+	for the whole clip.
+	"""
+
+	def __init__(self, transforms: PerFrameTransform) -> None:
+		self._transforms = transforms
+
+	def estimate(self, frame: Frame) -> Transform2D:
+		found = self._transforms.at(frame.index)
+		if found is None:
+			raise KeyError(
+				f"no pre-built transform for frame {frame.index}; ego_motion.transforms_in "
+				"must cover every frame this run processes."
+			)
+		return found
 
 
 class CoordinateTransformSink:

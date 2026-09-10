@@ -66,8 +66,12 @@ from tratrac.infrastructure.timing.decorators import (
 from tratrac.infrastructure.tracking.boxmot_bot_sort import BoxmotBotSortTracker
 from tratrac.infrastructure.tracks.parquet import ParquetTrackSink
 from tratrac.infrastructure.transform.recording import RecordingEgoMotionEstimator
-from tratrac.infrastructure.transform.sink import CoordinateTransformSink
-from tratrac.infrastructure.video.ego_motion_orb import OrbEgoMotionEstimator
+from tratrac.infrastructure.transform.sink import (
+	CoordinateTransformSink,
+	PrecomputedEgoMotionEstimator,
+	read_transforms,
+)
+from tratrac.infrastructure.video.ego_motion_orb import DetectionMaskSource, OrbEgoMotionEstimator
 from tratrac.infrastructure.video.opencv import OpenCvVideoSource
 
 app = typer.Typer(
@@ -168,22 +172,34 @@ def process(
 		# once here rather than threaded into the track record (src/tratrac/infrastructure/calibration/scale_sidecar.py).
 		write_scale(run.export.scale_out, scale)
 		# Coordinate stabilization (MVP1.9, src/tratrac/infrastructure/video/EGO_MOTION.md): the detector and
-		# tracker run on the raw frame; the live ORB ego-motion transform is applied to
-		# the detections (not the pixels) inside the pipeline. None when stabilization
-		# is off. The ORB estimator is also the DetectionObserver (masking vehicles out
-		# of its own feature extraction), and — when exporting anchors — notifies a queue
-		# the anchor recorder drains.
+		# tracker run on the raw frame; the ego-motion transform is applied to the
+		# detections (not the pixels) inside the pipeline. None when stabilization is
+		# off. With ego_motion.transforms_in unset (the default), a live ORB estimator
+		# is also the DetectionObserver (masking vehicles out of its own feature
+		# extraction) and — when exporting anchors — notifies a queue the anchor
+		# recorder drains. With transforms_in set (a tratrac-stabilize run's output,
+		# "Detector-free ego-motion", src/tratrac/infrastructure/video/EGO_MOTION.md),
+		# the transform table is already known, so no ORB runs here at all and there
+		# is no DetectionObserver or new anchors to emit (export.anchors_dir is
+		# rejected alongside it at config-resolve time).
 		anchor_poses: list[Transform2D] = []
 		emit_anchors = run.export.anchors_dir is not None
 		ego_motion: EgoMotionEstimator | None = None
 		detection_observer: DetectionObserver | None = None
-		if run.ego_motion.enabled:
+		if run.ego_motion.enabled and run.ego_motion.transforms_in is not None:
+			try:
+				transforms_table = read_transforms(run.ego_motion.transforms_in)
+			except (ValueError, OSError) as exc:
+				raise typer.BadParameter(str(exc)) from exc
+			ego_motion = PrecomputedEgoMotionEstimator(transforms_table)
+		elif run.ego_motion.enabled:
 			orb = OrbEgoMotionEstimator(
 				n_features=run.ego_motion.n_features,
 				match_ratio=run.ego_motion.match_ratio,
 				min_matches=run.ego_motion.min_matches,
 				ransac_threshold=run.ego_motion.ransac_threshold,
 				min_anchor_overlap=run.ego_motion.min_anchor_overlap,
+				mask_source=DetectionMaskSource(),
 				anchor_observer=(
 					(lambda _index, pose: anchor_poses.append(pose)) if emit_anchors else None
 				),
