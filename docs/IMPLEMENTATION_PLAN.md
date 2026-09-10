@@ -211,8 +211,8 @@ read record
 1. **Still open** — Does the fine-tuned YOLO-OBB checkpoint report a full 0–360° heading or only 0–180°? Unknown until trained (A2, GPU-blocked).
 2. **Still open** — Should per-frame OBB angle be smoothed (circular EMA) across a track? Ship raw first, add smoothing only if `validate_trj.py` shows jitter on real footage (A7) — no OBB output exists yet to check this against (A2 blocked).
 3. **Resolved, shipped as recommended** — Parquet schema evolution: backward-compatible tolerate-missing-columns, not a hard version bump (A6); see `infrastructure/tracks/parquet.py`.
-4. **Still open** — `DetectorConfig.filename`: drop or repurpose for the OBB checkpoint path (A9); left as-is (still yolov8-only) since removing it is gated on A10, which is gated on A2.
-5. **Still open** — `rt_detr.py`: keep dormant behind `Detector`, or delete as dead code (A10/A11); left dormant, no decision forced.
+4. **Open, but not blocking anything** — `DetectorConfig.filename`: drop or repurpose for the OBB checkpoint path (A9). The status quo (leave it as-is, still yolov8-only) is itself the correct choice until A10 (gated on A2) actually removes the yolov8 adapter — there's no pending action this question is holding up.
+5. **Open, but not blocking anything** — `rt_detr.py`: keep dormant behind `Detector`, or delete as dead code (A10/A11). Dormant costs nothing functionally; deleting it is a one-way call better made once A2/A10 are actually in motion, not preemptively. The status quo (kept) is the safe default, not an unresolved gap holding anything up.
 6. **Resolved, followed as recommended** — B3/B4: hold for their measured triggers, not build opportunistically. Held; B1's real-footage pass measured both trigger conditions (no camera motion to test B3 against; decode measured cheap on CPU, not supporting B4) without firing either.
 7. **Resolved** — C3: nearest-anchor switch (not interpolation) — see `PerAnchorWorldProjector`'s docstring in `WORLD_PROJECTION.md`.
 8. **Resolved (by the user)** — C4: TraTrac ships only correspondence-proposal, interactive confirm/adjust lives in URBAn. Implemented as `scripts/propose_calibration.py`.
