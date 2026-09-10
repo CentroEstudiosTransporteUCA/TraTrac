@@ -253,7 +253,16 @@ This is where MVP1.5 actually lives, and the repo provides no harness for it.
 1. **Secure a GPU.** `pyproject.toml` `[tool.uv.sources]` pins `torch` /
    `torchvision` to the CPU wheel index; fine-tuning on CPU is impractical.
    Switching to a CUDA index is a prerequisite (both packages must come from the
-   same index or `torchvision::nms` won't register — see `CLAUDE.md`).
+   same index or `torchvision::nms` won't register — see `CLAUDE.md`). This is a
+   manual one-line index-URL edit, done at the point a GPU is actually available
+   — a `uv` extras restructuring (`--extra cpu`/`--extra cuda`, avoiding the
+   manual edit) was tried and rejected: bare `uv sync`/`uv run` silently resolved
+   to `cuda` with no explicit flag, an unacceptable footgun in a normally-CPU
+   environment (see `docs/IMPLEMENTATION_PLAN.md` Group A1). A working index slug
+   was verified at the time: `cu128` only publishes torch wheels up to 2.11.0
+   (short of this project's `torch>=2.12.0` pin); `cu130` resolves — re-check
+   https://pytorch.org/get-started/locally/ before trusting that slug is still
+   current.
 2. **Acquire the UAV-OBB dataset** (Mendeley Data) — already in YOLO-OBB label
    format, so no conversion step is needed, unlike the original VisDrone-for-RT-DETR
    plan. Layer in DroneVehicle if more data/robustness is needed.
