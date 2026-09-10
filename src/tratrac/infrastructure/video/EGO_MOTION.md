@@ -116,8 +116,10 @@ intermediate, recorded as `docs/BACKLOG.md` item 1.
 RANSAC alone is not enough on low-texture aerial footage: the background is
 feature-poor (bare asphalt), so coherently-moving vehicles can become the inlier
 majority and bias the fit. The fix masks detected vehicles out of
-`detectAndCompute`, reusing the pipeline's detections via the `DetectionObserver`
-port (no second detector).
+`detectAndCompute`. Where the mask comes from is pluggable — see "Detector-free
+ego-motion" below — but a live `tratrac` run's default source
+(`DetectionMaskSource`) still reuses the pipeline's detections via the
+`DetectionObserver` port (no second detector).
 
 With coordinate stabilization this is simpler than before: the detector now runs on
 the **raw** frame, so the detections are already in raw coordinates and mask the
@@ -125,10 +127,95 @@ the **raw** frame, so the detections are already in raw coordinates and mask the
 lag**. The pipeline calls `observe(detections)` right after detection and before
 `estimate(frame)`, so the mask reflects exactly the frame being estimated.
 
-Masking is intrinsic to the estimator (no config key). It addresses the bias source
-but not every failure mode — a genuinely static camera has no ego-motion to remove,
-so `ego_motion` should stay **off** there regardless (ORB would otherwise inject
-phantom motion into the *coordinates* of parked cars).
+Masking is intrinsic to the estimator (`mask_source` is a required constructor
+argument, not a config key). It addresses the bias source but not every failure
+mode — a genuinely static camera has no ego-motion to remove, so `ego_motion`
+should stay **off** there regardless (ORB would otherwise inject phantom motion
+into the *coordinates* of parked cars).
+
+---
+
+## Detector-free ego-motion (`MaskSource`, `tratrac-stabilize`)
+
+**The idea.** `DetectionMaskSource` couples masking to the live detector — which is
+exactly why anchor discovery couldn't be a separate pass without either losing mask
+quality or running the detector twice (both explored and rejected; see
+"Why not a genuinely separate pre-pass" below). Swapping the mask *source* removes
+that coupling: if the mask instead comes from operator-drawn polygons, ORB needs no
+detector at all, ever.
+
+**`MaskSource`** (`infrastructure/video/ego_motion_orb.py`) is the seam this
+required: `observe(detections)` / `mask_for(frame_index, height, width) ->
+NDArray[np.uint8] | None`. `OrbEgoMotionEstimator` takes one at construction instead
+of building the mask inline.
+
+- `DetectionMaskSource` — today's behaviour, extracted unchanged: rasterizes the
+  most recently `observe`d detections' bounding boxes, `None` when there are none
+  yet. `observe` is real (stores the detections).
+- `BackgroundZoneMaskSource(zones: BackgroundZones)` — reads a `domain/background.py`
+  `BackgroundZones` collection instead: each zone is a polygon plus the frame it
+  starts applying from ("use this mask from here until a later entry supersedes
+  it" — not tied to ORB's own re-anchor points). `mask_for` resolves the most
+  recent zone at or before `frame_index` (falling back to the earliest zone for a
+  frame before the first entry) and rasterizes it as the **keep** region — the
+  opposite construction from `DetectionMaskSource`'s **exclude**-the-boxes mask.
+  `observe` is a no-op: the mask is entirely operator-authored, no detections
+  needed.
+
+`background_zones.json` (`infrastructure/background/json.py`,
+`src/tratrac/infrastructure/background/BACKGROUND_ZONES.md`) is the sidecar an
+external tool (out of scope for this repo — same footing as `calibration.json` and
+`exclusion_zones.json` today) produces: an operator watches the video and draws the
+region safe for ORB feature extraction, redrawing only when the view has changed
+enough to warrant it.
+
+**`tratrac-stabilize`** (`cli_stabilize.py`) is the new tool this unlocks: walks a
+clip once with `OrbEgoMotionEstimator(mask_source=BackgroundZoneMaskSource(zones))`
+— no detector, no tracker — writing the same per-frame transform sidecar and anchor
+manifest a stabilized `tratrac` run would. `tratrac`'s `[ego_motion]` then gains
+`transforms_in` (`""` = off, the default): when set, `cli.py` loads the table via
+`read_transforms` into a `PerFrameTransform` and wraps it in
+`PrecomputedEgoMotionEstimator` (`infrastructure/transform/sink.py`) — an
+`EgoMotionEstimator` that's a plain per-frame lookup, no ORB call — instead of
+constructing `OrbEgoMotionEstimator`. The detector then runs exactly once, ever,
+against already-known ego-motion. `export.anchors_dir` is rejected alongside
+`transforms_in` at config-resolve time: a precomputed run discovers no new anchors
+of its own (`tratrac-stabilize` already produced them).
+
+Revised operator workflow:
+
+```
+[external tool] operator watches VIDEO, draws background zones -> background_zones.json
+tratrac-stabilize VIDEO --background-zones background_zones.json \
+    --out transforms.jsonl --anchors-dir anchors/          # detector-free
+[external tool] operator draws exclusion zones / world-projection
+    correspondences on anchors/*.png -> zones.json / calibration.json
+tratrac --config run.toml   # ego_motion.transforms_in = transforms.jsonl
+    # detector runs exactly once here; ego-motion already resolved
+tratrac-postprocess run.parquet --out run.trj \
+    --calibration calibration.json --anchors anchors/manifest.json   # unchanged, still post-hoc
+```
+
+The old workflow (no `background_zones.json`, `ego_motion.transforms_in = ""`)
+still works unchanged — `tratrac-stabilize` is additive, not a replacement.
+
+**Why not a genuinely separate pre-pass, before this landed.** Two things were
+tried and rejected before settling on operator-authored zones: (1) a cheap
+*detector-free* self-referential masking scheme (fit unmasked, treat RANSAC's own
+outliers as the mask) — real technique in the literature, but the same
+sparse-background/dense-foreground failure mode that motivated detection-based
+masking in the first place (RANSAC's *first*, unmasked pass can itself get captured
+by the vehicle majority on bare asphalt) means it needs validation this project
+hasn't done, and domain-specific literature for exactly this footage (dense urban
+traffic, aerial) converges on detection-based masking, not self-referential
+schemes; (2) reusing the *live-detector's* mask in an earlier, separate pass would
+mean either running the detector twice (the "scout + replay = ORB twice" pattern
+`EXCLUSION_ZONES.md` already documents rejecting, generalized to the detector) or
+accepting an unmasked, lower-quality estimate whose discovered anchor set could
+diverge from what the real masked run would produce — invalidating any
+correspondences authored against it. Operator-authored zones route around both: no
+detector dependency, and (since it *is* the real computation, not an approximation
+of it) no anchor-set divergence risk.
 
 ---
 
@@ -153,6 +240,18 @@ phantom motion into the *coordinates* of parked cars).
 - `infrastructure/export/overlay_video.py` — maps stabilized coordinates back onto
   the raw frame for drawing via the inverse of `current_transform` (see
   `src/tratrac/infrastructure/export/VIDEO_EXPORT.md`).
+- `domain/background.py` — `BackgroundZone`/`BackgroundZones`, the operator-authored
+  polygon collection `BackgroundZoneMaskSource` reads.
+- `infrastructure/background/json.py` — `load_background_zones`, the
+  `background_zones.json` reader (shares `infrastructure/zones.py`'s parser with
+  `infrastructure/exclusion/json.py`). See
+  `src/tratrac/infrastructure/background/BACKGROUND_ZONES.md`.
+- `infrastructure/transform/sink.py` — `PrecomputedEgoMotionEstimator`, the
+  `transforms_in` side: an `EgoMotionEstimator` that's an exact `PerFrameTransform`
+  lookup, no ORB call.
+- `cli_stabilize.py` (`tratrac-stabilize`) — the detector-free pre-pass: walks a
+  clip once with `BackgroundZoneMaskSource`, writing the transforms sidecar +
+  anchor manifest via the same sinks a stabilized `tratrac` run uses.
 
 There is **no `StabilizedVideoSource`** — pixel warping was removed.
 
@@ -187,9 +286,12 @@ There is **no `StabilizedVideoSource`** — pixel warping was removed.
 
 Per `src/tratrac/application/CONFIG_DESIGN.md`, every key is mandatory and "off is explicit". The
 `[ego_motion]` section has a **required** `enabled` boolean; when true the ORB
-parameters **and** `min_anchor_overlap` (the re-anchor threshold, in `(0, 1)`) are
-required, when false they may be absent — the same conditional pattern as
-`[calibration]`'s one-of.
+parameters, `min_anchor_overlap` (the re-anchor threshold, in `(0, 1)`), **and**
+`transforms_in` (`""` = live ORB, the default; else a `tratrac-stabilize`
+transforms file — see "Detector-free ego-motion" above) are required, when false
+they may be absent — the same conditional pattern as `[calibration]`'s one-of. The
+ORB parameters stay required even when `transforms_in` is set (unused in that path)
+rather than adding a second conditional-requirement branch.
 
 ---
 

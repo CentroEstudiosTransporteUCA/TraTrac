@@ -66,8 +66,8 @@ uniform `scale` (metres-per-pixel) multiple of pixels; there is no homography ye
 (MVP1.x). To draw, the overlay divides by `scale` and uses the **raw y** (the SSAM
 y-flip `image_height − y` is export-specific and deliberately not applied), then maps
 the point back onto the raw frame via `transform_source().inverse()`. For
-`tratrac-render` that per-frame transform comes from the run's `--transforms` CSV
-(identity when omitted / stabilization was off). Trails are stored in stabilized
+`tratrac-render` that per-frame transform comes from the run's `--transforms`
+JSONL sidecar (identity when omitted / stabilization was off). Trails are stored in stabilized
 coordinates and mapped through the *current* inverse each frame, showing the world
 path from the current camera pose. Validator violation marks (`--violations`) ride the
 same transform, so they land in the same raw-frame space as the trajectories.
@@ -138,7 +138,7 @@ produced with `timestep_precision = 0`.
 
 | Tool | Invocation |
 | --- | --- |
-| `tratrac-render` | `tratrac-render VIDEO --trj RUN.trj --out OVERLAY.mp4 [--transforms TCSV] [--trail N] [--force]` |
+| `tratrac-render` | `tratrac-render VIDEO --trj RUN.trj --out OVERLAY.mp4 [--transforms TRANSFORMS.jsonl] [--trail N] [--force]` |
 
 `--out` must not pre-exist without `--force`. For an ego-motion run pass
 `--transforms` (the run's `export.transform_file`) so the global-frame trajectories
