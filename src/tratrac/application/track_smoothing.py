@@ -10,10 +10,12 @@ metric (by ``meters_per_pixel``) exactly as the EMA estimator does, so the resul
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 from tratrac.application.kalman import SmoothedSample, smooth_track
 from tratrac.domain.geometry import Dimensions, Heading, Point2D, Vector2D
+from tratrac.domain.ports import InvertibleWorldProjector
 from tratrac.domain.vehicle import VehicleState
 
 # Below this speed the velocity direction is pure jitter; fall back to the last good
@@ -144,3 +146,68 @@ def build_state(
 def _major_axis_heading(width: float, height: float) -> Heading:
 	"""Fallback heading from bbox shape when speed is too low to trust velocity."""
 	return Heading(1.0, 0.0) if width >= height else Heading(0.0, 1.0)
+
+
+def invert_state_to_image(
+	state: VehicleState, projector: InvertibleWorldProjector, frame_index: int
+) -> tuple[Point2D, float, Dimensions]:
+	"""Map a world-smoothed ``VehicleState`` back to image-space pixels via ``projector``.
+
+	Returns ``(centroid, heading_angle_radians, dimensions)`` — deliberately not a
+	``VehicleState`` (see ``infrastructure/tracks/smoothed_parquet.py``'s module docstring for
+	why velocity/acceleration don't make the trip).
+
+	Inverts **four points** independently — front/rear bumpers (recovering centroid, heading,
+	and length) and left/right side points (recovering width) — rather than transforming
+	``centroid``/``heading``/``dimensions`` directly. This is the same reason the SSAM ``.trj``
+	format itself stores front/rear bumper points instead of centroid+heading+length: a point
+	transforms correctly under an arbitrary coordinate change (a homography, here), a
+	direction+magnitude pair does not. This is a genuine geometric inverse of the one smoothing
+	pass that already ran — not a second smoothing pass in a different space (see
+	``application/SMOOTHING.md``'s "Dual-space export" section for why that would be a real
+	problem: perspective-varying jitter looks different in each space, so smoothing twice risks
+	damping real motion in whichever space wasn't the one physically justified).
+	"""
+	inverse = projector.inverse()
+	half_width = state.dimensions.width / 2.0
+	perpendicular = Heading(-state.heading.dy, state.heading.dx)
+
+	front_img = inverse.to_world(state.front_bumper, frame_index)
+	rear_img = inverse.to_world(state.rear_bumper, frame_index)
+	left_img = inverse.to_world(
+		state.centroid.translate_by(perpendicular.as_vector_with_magnitude(half_width)),
+		frame_index,
+	)
+	right_img = inverse.to_world(
+		state.centroid.translate_by(perpendicular.reversed().as_vector_with_magnitude(half_width)),
+		frame_index,
+	)
+
+	axis = rear_img.displacement_to(front_img)
+	heading = axis.normalized() if axis.magnitude > 0.0 else Heading(1.0, 0.0)
+	length = max(axis.magnitude, 1e-6)
+	width = max(left_img.displacement_to(right_img).magnitude, 1e-6)
+	centroid = Point2D((front_img.x + rear_img.x) / 2.0, (front_img.y + rear_img.y) / 2.0)
+	angle = math.atan2(heading.dy, heading.dx)
+	return centroid, angle, Dimensions(length=length, width=width)
+
+
+def unscale_state_to_image(state: VehicleState, scale: float) -> tuple[Point2D, float, Dimensions]:
+	"""Undo ``build_state``'s metric scaling (no homography involved) to recover pixels.
+
+	Used when ``--calibration`` was **not** given: ``recording.scale`` still reflects the GSD
+	metric scale a real ``tratrac`` run always carries (``src/tratrac/calibration/GSD_CALIBRATION.md`` —
+	config-only, zero-defaults means it's essentially never exactly ``1.0``), so ``state``'s
+	position/dimensions are metric, not raw pixels, even without a homography. Dividing back
+	out is exact — a pure uniform scale, unlike ``invert_state_to_image``'s general homography
+	inverse — so this stays a plain arithmetic helper rather than routing through
+	``InvertibleWorldProjector``.
+	"""
+	return (
+		Point2D(state.centroid.x / scale, state.centroid.y / scale),
+		math.atan2(state.heading.dy, state.heading.dx),
+		Dimensions(
+			length=state.dimensions.length / scale,
+			width=state.dimensions.width / scale,
+		),
+	)

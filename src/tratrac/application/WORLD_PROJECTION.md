@@ -354,7 +354,7 @@ coordinates.
 | --- | --- | --- |
 | `domain/world.py` | `Correspondence`, `Calibration` | pure value objects (an `image`/`world` pair + its `reference_frame`) |
 | `domain/ports.py` | `WorldProjector` Protocol | `to_world(point, frame_index) -> Point2D` |
-| `application/world_projection.py` | `IdentityWorldProjector`, `SingleHomographyProjector`, `local_scale_at` | pure projection math (numpy only — the projective multiply + perspective divide) |
+| `application/world_projection.py` | `IdentityWorldProjector`, `PerAnchorWorldProjector`, `local_scale_at` | pure projection math (numpy only — the projective multiply + perspective divide) |
 | `infrastructure/world/calibration.py` | `load_calibration`, `compute_homography` | sidecar-JSON reader + the cv2 homography **fit** (the only cv2 in the MVP2 path) |
 | `cli_postprocess.py` | `--calibration`, `_project_to_world`, `_project_observation` | composition root: load → lift correspondences to global → fit → rewrite the recording |
 
@@ -386,17 +386,20 @@ The seams described below (written when only Approach A existed) let the multi-a
 projector drop in **behind the same port**, with no caller changes — and that's exactly
 what happened:
 
-- `WorldProjector.to_world` already took `frame_index`; `SingleHomographyProjector` ignores
-  it, and `PerAnchorWorldProjector` (`application/world_projection.py`) now uses it to pick
-  the nearest anchor's homography (nearest by frame-index distance — a deliberate hard
-  switch, not an interpolated blend between neighboring anchors' homographies; see the
-  class's docstring for why interpolation isn't the simple choice it sounds like for
-  projective transforms).
+- `WorldProjector.to_world` already took `frame_index`; `PerAnchorWorldProjector`
+  (`application/world_projection.py`) uses it to pick the nearest anchor's homography
+  (nearest by frame-index distance — a deliberate hard switch, not an interpolated blend
+  between neighboring anchors' homographies; see the class's docstring for why interpolation
+  isn't the simple choice it sounds like for projective transforms).
 - `Calibration`/`Correspondence` already carried `reference_frame` per correspondence, so a
   calibration spanning many anchors parsed before this landed — only the *fitter* changed:
   `cli_postprocess._fit_projector` groups correspondences by `reference_frame` and fits one
-  `H` per group when there's more than one, instead of pooling everything into one global
-  `H`. A single-anchor (or static) calibration is unaffected — same code path as before.
+  `H` per group. **Update (Group F's dual-space export work):** a single-anchor (or static)
+  calibration originally kept its own separate code path here, fitting a dedicated
+  `SingleHomographyProjector` — that class was later removed as redundant (a one-entry
+  `PerAnchorWorldProjector` map is behaviorally identical: with only one anchor, selection by
+  `frame_index` always resolves to it) and `_fit_projector` now always returns a
+  `PerAnchorWorldProjector`, one code path regardless of anchor count.
 - The anchor-manifest lift (`pose(reference_frame)`) was already in place and needed no
   changes.
 

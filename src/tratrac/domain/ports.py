@@ -107,6 +107,24 @@ class WorldProjector(Protocol):
 	def to_world(self, point: Point2D, frame_index: int) -> Point2D: ...
 
 
+class InvertibleWorldProjector(Protocol):
+	"""A ``WorldProjector`` that can also map a world point back to image space.
+
+	Satisfied by ``IdentityWorldProjector`` and ``PerAnchorWorldProjector``
+	(``application/world_projection.py``, whose single-anchor case covers what used to be a
+	separate single-homography class — see its docstring) — each selects its homography by
+	something available in both directions (nothing to select, or ``frame_index``, never the
+	point's own position). **Not** satisfied by ``MultiHomographyWorldProjector``: it selects
+	its homography by classifying the *input* point's position, which is exactly what's
+	unknown when starting from a world point — see its own docstring and
+	``application/SMOOTHING.md``'s "Dual-space export" section for why this is a real,
+	not-yet-closed gap rather than an oversight.
+	"""
+
+	def to_world(self, point: Point2D, frame_index: int) -> Point2D: ...
+	def inverse(self) -> WorldProjector: ...
+
+
 class TrajectoryExporter(Protocol):
 	"""
 	Writes per-timestep vehicle states to some trajectory output.

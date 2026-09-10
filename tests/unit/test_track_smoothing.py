@@ -7,15 +7,24 @@ import math
 import struct
 from pathlib import Path
 
+import numpy as np
 import pytest
 from typer.testing import CliRunner
 
 from tratrac.application.kalman import SmoothedSample
-from tratrac.application.track_smoothing import TrackSample, build_state, smooth_to_states
+from tratrac.application.track_smoothing import (
+	TrackSample,
+	build_state,
+	invert_state_to_image,
+	smooth_to_states,
+	unscale_state_to_image,
+)
+from tratrac.application.world_projection import PerAnchorWorldProjector
 from tratrac.cli_postprocess import app
 from tratrac.domain.detection import Detection, TrackedDetection, VehicleClass
 from tratrac.domain.frame import VideoMetadata
-from tratrac.domain.geometry import BoundingBox, Heading, Point2D
+from tratrac.domain.geometry import BoundingBox, Dimensions, Heading, Point2D, Vector2D
+from tratrac.domain.vehicle import VehicleState
 from tratrac.infrastructure.tracks.parquet import ParquetTrackSink
 
 
@@ -112,6 +121,83 @@ class TestSmoothToStates:
 		# Scaled by 2.0 m/px: length 9*2=18, width 3*2=6 — not the bbox's 4*2=8 / 2*2=4.
 		assert states[-1].dimensions.length == pytest.approx(18.0)
 		assert states[-1].dimensions.width == pytest.approx(6.0)
+
+
+def _scale_homography(s: float) -> np.ndarray:
+	return np.array([[s, 0.0, 0.0], [0.0, s, 0.0], [0.0, 0.0, 1.0]], dtype=np.float64)
+
+
+class TestInvertStateToImage:
+	def test_undoes_a_pure_scale_projection(self) -> None:
+		# world = 0.5 * image -> image = 2 * world, the inverse this test checks.
+		projector = PerAnchorWorldProjector({0: _scale_homography(0.5)})
+		world_state = VehicleState(
+			vehicle_id=1,
+			timestamp_seconds=0.0,
+			centroid=Point2D(10.0, 20.0),
+			heading=Heading(1.0, 0.0),
+			dimensions=Dimensions(length=4.0, width=2.0),
+			velocity=Vector2D(0.0, 0.0),
+			acceleration=0.0,
+		)
+		centroid, angle, dimensions = invert_state_to_image(world_state, projector, frame_index=0)
+		assert centroid.x == pytest.approx(20.0)
+		assert centroid.y == pytest.approx(40.0)
+		assert angle == pytest.approx(0.0)  # heading (1, 0) unchanged direction under pure scale
+		assert dimensions.length == pytest.approx(8.0)
+		assert dimensions.width == pytest.approx(4.0)
+
+	def test_round_trips_through_shifted_and_general_homography(self) -> None:
+		# A real (non-axis-aligned-preserving) homography plus the 0-origin shift
+		# _project_to_world composes in — the combination cli_postprocess.py actually uses.
+		matrix = np.array([[2.0, 0.3, 5.0], [0.1, 1.5, -2.0], [0.001, 0.0005, 1.0]])
+		projector = PerAnchorWorldProjector({0: matrix}).shifted(37.0, -11.0)
+
+		pixel_centroid = Point2D(50.0, 80.0)
+		pixel_heading = Heading.from_angle(0.7)
+		pixel_dimensions = Dimensions(length=6.0, width=3.0)
+		front = pixel_centroid.translate_by(pixel_heading.as_vector_with_magnitude(3.0))
+		rear = pixel_centroid.translate_by(pixel_heading.reversed().as_vector_with_magnitude(3.0))
+
+		world_front = projector.to_world(front, frame_index=5)
+		world_rear = projector.to_world(rear, frame_index=5)
+		world_centroid = Point2D(
+			(world_front.x + world_rear.x) / 2.0, (world_front.y + world_rear.y) / 2.0
+		)
+		world_axis = world_rear.displacement_to(world_front)
+		world_state = VehicleState(
+			vehicle_id=2,
+			timestamp_seconds=0.0,
+			centroid=world_centroid,
+			heading=world_axis.normalized(),
+			dimensions=Dimensions(length=world_axis.magnitude, width=pixel_dimensions.width),
+			velocity=Vector2D(0.0, 0.0),
+			acceleration=0.0,
+		)
+		centroid, angle, dimensions = invert_state_to_image(world_state, projector, frame_index=5)
+		assert centroid.x == pytest.approx(pixel_centroid.x, abs=1e-4)
+		assert centroid.y == pytest.approx(pixel_centroid.y, abs=1e-4)
+		assert angle == pytest.approx(0.7, abs=1e-4)
+		assert dimensions.length == pytest.approx(pixel_dimensions.length, abs=1e-3)
+
+
+class TestUnscaleStateToImage:
+	def test_divides_position_and_dimensions_by_scale(self) -> None:
+		state = VehicleState(
+			vehicle_id=1,
+			timestamp_seconds=0.0,
+			centroid=Point2D(10.0, 20.0),
+			heading=Heading(0.0, 1.0),
+			dimensions=Dimensions(length=4.0, width=2.0),
+			velocity=Vector2D(0.0, 0.0),
+			acceleration=0.0,
+		)
+		centroid, angle, dimensions = unscale_state_to_image(state, scale=0.5)
+		assert centroid.x == pytest.approx(20.0)
+		assert centroid.y == pytest.approx(40.0)
+		assert angle == pytest.approx(math.pi / 2)
+		assert dimensions.length == pytest.approx(8.0)
+		assert dimensions.width == pytest.approx(4.0)
 
 
 def _write_tracks(path: Path, samples: list[TrackSample]) -> None:

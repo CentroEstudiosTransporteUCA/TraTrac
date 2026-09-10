@@ -31,18 +31,103 @@ pass 2 (offline):            record → forward KF + RTS per track → smoothed 
   metadata (`fps,width,height,total_frames,meters_per_pixel`) in the Parquet **schema metadata**
   so the record is self-contained. The pipeline records to a `TrackSink` (`ParquetTrackSink`) it
   owns directly. (Parquet is the MVP7 storage choice, pulled forward for the canonical record.)
-- **Pass 2** is `tratrac-postprocess RECORD.parquet --out final.trj [--exclusion-zones … --anchors …]
-  [--pos-noise PX] [--jerk Q] [--timestep-precision S]`: (optionally **filter** out tracks inside
-  exclusion zones, src/tratrac/application/EXCLUSION_ZONES.md) → group by track → forward+RTS smooth → reconstruct `VehicleState`
-  (kinematics via `build_state`) → write via `SsamTrjExporter` (wrapped in
-  `DecimatingTrajectoryExporter` when `--timestep-precision` thins the TIMESTEPs). It produces
-  only the smoothed `.trj`; to visualize it, render with `tratrac-render` (src/tratrac/infrastructure/export/VIDEO_EXPORT.md).
+- **Pass 2** is `tratrac-postprocess RECORD.parquet [--out final.trj] [--smoothed-record final.parquet]
+  [--exclusion-zones … --anchors …] [--pos-noise PX] [--jerk Q] [--timestep-precision S]`:
+  (optionally **filter** out tracks inside exclusion zones, src/tratrac/application/EXCLUSION_ZONES.md) → group by track →
+  forward+RTS smooth (**once**) → reconstruct `VehicleState` (kinematics via `build_state`) →
+  write **either or both** of two independent, optional outputs from that one smoothing pass —
+  see "Dual-space export" below. At least one of `--out`/`--smoothed-record` is required. To
+  visualize the `.trj`, render with `tratrac-render` (src/tratrac/infrastructure/export/VIDEO_EXPORT.md); to visualize
+  directly over raw video frames (e.g. in FiftyOne), use `--smoothed-record` instead.
 
 **Why raw measurements, not filter state:** pass 2 re-runs the forward pass (cheap) so the
 sidecar stays small and inspectable, and the smoother can be **re-tuned offline with no
 re-detection** — rerun `tratrac-postprocess` with different `--jerk`/`--pos-noise` to sweep.
 Keeping the record raw (not filtered) is what makes this re-tuning possible: smoothing
 always starts from the measurements, never from already-smoothed kinematics.
+
+## Dual-space export: one smoothing pass, two optional outputs
+
+**The problem this solves.** `--calibration` (MVP2) projects a track onto the metric world
+plane *before* smoothing (deliberately — see "Why smoothing runs after projection, not
+before" below), so a calibrated `.trj`'s positions are real-world metres from a homography the
+`.trj` file itself doesn't store. A tool that wants to overlay trajectories on the *raw video*
+(pixel canvas) — `tratrac-fiftyone` is the motivating case — can't use a calibrated `.trj` for
+that: dividing metres by the video's pixel width/height produces boxes clustered near the
+origin, disconnected from where the vehicle actually is. This was a real bug, not a
+hypothetical one: confirmed visually in the FiftyOne App, every box pinned near the top-left
+corner regardless of the vehicle's true position, traced to exactly this — `cli_fiftyone.py`
+naively normalizing a calibrated `.trj`'s world coordinates as if they were pixels.
+
+**The fix is not "smooth twice."** The first design considered was running the Kalman/RTS
+smoother a second time directly on the raw pixel-space record, independent of the
+world-space smoothing pass that feeds `.trj`. Rejected: perspective distortion makes
+pixel-space jitter and world-space jitter statistically different, so a smoother configured
+(implicitly, through its physically-meaningful noise parameters) for one space risks damping
+*real* motion when run on data in the other. Smoothing must run in whichever space is
+physically justified — world space, when there's a homography involved — exactly once.
+
+**The actual fix: smooth once, export twice.** `--out` (`.trj`) and `--smoothed-record`
+(Parquet, `infrastructure/tracks/smoothed_parquet.py`) are both optional, independent outputs
+built from the **same** `states_by_frame` the one smoothing pass produces (`_smooth_recording`
+in `cli_postprocess.py`, unchanged) — `--out` is not required if `--smoothed-record` is given,
+and vice versa. `--smoothed-record` is always raw image-space pixels, regardless of whether
+`--calibration` was used:
+
+- **No `--calibration`:** the smoothed `VehicleState`s are already image-space *up to* the
+  metric GSD scale every real `tratrac` run carries (MVP1.75, `calibration/GSD_CALIBRATION.md`
+  — the zero-defaults config means a run is essentially never un-calibrated in this sense).
+  `unscale_state_to_image` (`application/track_smoothing.py`) undoes that scale by plain
+  division — exact, since it's a pure uniform scale, not a homography.
+- **With `--calibration`:** `invert_state_to_image` (same module) inverts the *same* projector
+  `_project_to_world` fitted for the forward pass — not a fresh fit, the literal object,
+  via `InvertibleWorldProjector.inverse()` (`domain/ports.py`). It inverts **four points**
+  independently (front/rear bumpers → centroid, heading, length; left/right side points →
+  width) rather than transforming `centroid`+`heading`+`dimensions` directly — the same reason
+  the SSAM `.trj` format itself stores front/rear bumper points instead of centroid+heading+
+  length: a point transforms correctly under an arbitrary coordinate change (a homography,
+  here), a direction+magnitude pair does not. This is a genuine geometric inverse of the one
+  smoothing pass that already ran, not a second filter.
+- Velocity/acceleration are **not** carried into `--smoothed-record` — there's no general,
+  honest way to convert a world-space smoothed velocity into an image-space one without
+  differentiating the (possibly per-frame) inverse homography, and nothing consumes it yet.
+  `SmoothedObservation` only stores what a homography inverse actually recovers cleanly:
+  position, heading, dimensions.
+
+**The 0-origin shift is part of what gets inverted, not just the homography.**
+`_project_to_world` also translates every projected point to a non-negative origin
+(`_normalize_world_recording`) — a real detail the naive "just call `projector.inverse()`"
+version of this design missed at first. `PerAnchorWorldProjector` gained a `.shifted(dx, dy)`
+method (`application/world_projection.py`) that composes the translation into every anchor's
+homography matrix itself (`T @ M`), so `_project_to_world` returns the **shifted** projector —
+the one whose `.inverse()` undoes the translation *and* the homography together, not just the
+homography.
+
+**Scope: `PerAnchorWorldProjector` only** (its single-anchor case covers what used to be a
+separate `SingleHomographyProjector` class — see its docstring for why that class was removed;
+this dual-space export design is what surfaced the redundancy, while writing near-identical
+`.inverse()`/`.shifted()` methods for both).
+`MultiHomographyWorldProjector` (`--plane-zones`, MVP3) selects its homography by classifying
+the *input* image point's position — exactly what's unknown when starting from a world point.
+Combining `--smoothed-record` with `--plane-zones` is rejected upfront with a clear error
+(`postprocess` in `cli_postprocess.py`) rather than silently guessing or producing a
+misleading partial result. A future version could carry each observation's plane id forward
+through smoothing so the reverse pass knows which homography to invert — not built yet; no
+real footage has needed multi-plane `--smoothed-record` output so far.
+
+### Why smoothing runs after projection, not before
+
+`_project_to_world` is called before `_smooth_recording` in `postprocess` — deliberately, and
+this order is **not** changed by the dual-space export design above (both outputs still come
+from that one, post-projection smoothing pass). The constant-acceleration motion model is more
+physically meaningful applied in real-world metres than in perspective-distorted pixels: a
+homography's local scale/shear varies across the frame (more so off-axis; TraTrac's nadir-only
+target footage keeps this modest but doesn't eliminate it), so "constant pixel acceleration"
+doesn't correspond to constant real acceleration in general, while `pos_noise`/`jerk` — tuned
+against real physical units — stay meaningful only if the filter actually runs in those units.
+`_project_to_world` converts `pos_noise`/`jerk` from pixels to world units via the homography's
+local scale (`local_scale_at`) specifically so this ordering's physical meaning is preserved
+through the noise parameters too, not just the positions.
 
 ## The core (`application/kalman.py`)
 
@@ -87,9 +172,16 @@ to fine-tune here, and no code has been written yet.
 
 ## Files
 - `application/kalman.py` — CA filter + RTS core.
-- `application/track_smoothing.py` — observations → smoothed `VehicleState`s.
-- `domain/ports.py` — `TrackSink` (the pipeline's primary output port);
-  `infrastructure/tracks/parquet.py` — `ParquetTrackSink` + `read_tracks` (Parquet, `pyarrow`).
-  The pipeline records to the sink directly (it owns its lifecycle); there is no
-  `RecordingTracker` decorator anymore.
-- `cli_postprocess.py` — `tratrac-postprocess` (filter + smooth); `cli.py`/`config.py` — `export.out` is the record.
+- `application/track_smoothing.py` — observations → smoothed `VehicleState`s (`build_state`,
+  `smooth_to_states`); `invert_state_to_image`/`unscale_state_to_image` — the dual-space export
+  inverse (see above).
+- `application/world_projection.py` — `WorldProjector` impls; `.inverse()`/`.shifted()` on
+  `PerAnchorWorldProjector` back the dual-space export.
+- `domain/ports.py` — `TrackSink` (the pipeline's primary output port); `WorldProjector` +
+  `InvertibleWorldProjector`; `infrastructure/tracks/parquet.py` — `ParquetTrackSink` +
+  `read_tracks` (Parquet, `pyarrow`). The pipeline records to the sink directly (it owns its
+  lifecycle); there is no `RecordingTracker` decorator anymore.
+- `infrastructure/tracks/smoothed_parquet.py` — `SmoothedTrackParquetSink` + `read_smoothed_tracks`,
+  the `--smoothed-record` output (Parquet, image-space).
+- `cli_postprocess.py` — `tratrac-postprocess` (filter + smooth); `--out`/`--smoothed-record`
+  both optional, at least one required; `cli.py`/`config.py` — `export.out` is the record.

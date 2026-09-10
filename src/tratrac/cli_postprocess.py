@@ -2,9 +2,12 @@
 
 Reads the perception run's track record (Parquet), optionally **filters** out whole tracks
 that fall inside exclusion zones, runs the forward+RTS constant-acceleration Kalman smoother
-per surviving track, and writes a de-jittered SSAM ``.trj``. Offline and zero-phase — the
-second pass of the two-pass design (src/tratrac/application/SMOOTHING.md). Re-running with different ``--pos-noise`` /
-``--jerk`` / ``--exclusion-*`` re-tunes with no re-detection.
+per surviving track **once**, and writes it to either or both of two independent, optional
+outputs: ``--out`` (a de-jittered SSAM ``.trj``) and/or ``--smoothed-record`` (a de-jittered
+Parquet record, always image-space pixels regardless of ``--calibration`` — see
+``application/SMOOTHING.md``'s "Dual-space export" section). At least one is required. Offline
+and zero-phase — the second pass of the two-pass design (src/tratrac/application/SMOOTHING.md). Re-running with
+different ``--pos-noise``/``--jerk``/``--exclusion-*`` re-tunes with no re-detection.
 
 Exclusion is **track-aware** (src/tratrac/application/EXCLUSION_ZONES.md): a track is dropped when the majority of its
 observations fall inside a zone. Zones are authored on the anchor PNGs the run exported
@@ -17,6 +20,8 @@ metric **world** plane before smoothing: one homography is fitted from image↔w
 correspondences (mapped into the global frame via the same anchor poses), every observation
 is rewritten into world metres, and the ``.trj`` carries world coordinates with
 ``DIMENSIONS.Scale = 1.0``. Without it, coordinates stay image-space (the pre-MVP2 path).
+``--smoothed-record`` stays image-space either way — not yet supported together with
+``--plane-zones`` (see "Dual-space export" above for why).
 
 With ``--reid-merge`` (Group D2, ``docs/IMPLEMENTATION_PLAN.md``) a pre-computed ReID merge
 decision (``application/reid_merge.py``) remaps ``track_id`` on the record **first**, before
@@ -49,11 +54,16 @@ from tratrac.application.road_graph import (
 	to_global_link_polygons,
 	to_global_plane_polygons,
 )
-from tratrac.application.track_smoothing import TrackSample, smooth_to_states
+from tratrac.application.track_smoothing import (
+	TrackSample,
+	invert_state_to_image,
+	smooth_to_states,
+	unscale_state_to_image,
+)
 from tratrac.application.world_projection import (
+	IdentityWorldProjector,
 	MultiHomographyWorldProjector,
 	PerAnchorWorldProjector,
-	SingleHomographyProjector,
 	local_scale_at,
 )
 from tratrac.domain.frame import VideoMetadata
@@ -74,6 +84,10 @@ from tratrac.infrastructure.road_graph.json import (
 )
 from tratrac.infrastructure.tracks.footprint_parquet import read_footprints
 from tratrac.infrastructure.tracks.parquet import TrackObservation, TrackRecording, read_tracks
+from tratrac.infrastructure.tracks.smoothed_parquet import (
+	SmoothedObservation,
+	SmoothedTrackParquetSink,
+)
 from tratrac.infrastructure.world.calibration import compute_homography, load_calibration
 
 app = typer.Typer(
@@ -88,7 +102,29 @@ def postprocess(
 	tracks: Annotated[
 		Path, typer.Argument(exists=True, dir_okay=False, help="Track record (export.out).")
 	],
-	out: Annotated[Path, typer.Option("--out", "-o", dir_okay=False, help="Output .trj path.")],
+	out: Annotated[
+		Path | None,
+		typer.Option(
+			"--out",
+			"-o",
+			dir_okay=False,
+			help="Output .trj path. Optional -- pass --smoothed-record instead/as well for a "
+			"pixel-space output. At least one of the two is required.",
+		),
+	] = None,
+	smoothed_record: Annotated[
+		Path | None,
+		typer.Option(
+			"--smoothed-record",
+			dir_okay=False,
+			help="Output path for the de-jittered record in image-space pixels (Parquet) -- "
+			"the same smoothing pass as --out, just always in raw pixels regardless of "
+			"--calibration, for tools that overlay on the raw video (e.g. tratrac-fiftyone). "
+			"See src/tratrac/application/SMOOTHING.md's 'Dual-space export' section. Not yet "
+			"supported together with --plane-zones (MultiHomographyWorldProjector isn't "
+			"invertible).",
+		),
+	] = None,
 	reid_merge: Annotated[
 		Path | None,
 		typer.Option(
@@ -202,15 +238,25 @@ def postprocess(
 		bool, typer.Option("--force/--no-force", help="Overwrite existing outputs.")
 	] = False,
 ) -> None:
-	"""Filter (optional) + smooth TRACKS into a de-jittered .trj at --out."""
-	if out.exists() and not force:
+	"""Filter (optional) + smooth TRACKS into --out (.trj) and/or --smoothed-record (Parquet)."""
+	if out is None and smoothed_record is None:
+		raise typer.BadParameter("Pass at least one of --out or --smoothed-record.")
+	if out is not None and out.exists() and not force:
 		raise typer.BadParameter(f"{out} already exists; pass --force to overwrite.")
+	if smoothed_record is not None and smoothed_record.exists() and not force:
+		raise typer.BadParameter(f"{smoothed_record} already exists; pass --force to overwrite.")
 	if timestep_precision < 0.0:
 		raise typer.BadParameter("--timestep-precision must be >= 0 (0 = every frame).")
 	if not 0.0 < exclusion_min_fraction <= 1.0:
 		raise typer.BadParameter("--exclusion-min-fraction must be in (0, 1].")
 	if plane_zones is not None and calibration is None:
 		raise typer.BadParameter("--plane-zones requires --calibration.")
+	if plane_zones is not None and smoothed_record is not None:
+		raise typer.BadParameter(
+			"--smoothed-record isn't supported yet with --plane-zones "
+			"(MultiHomographyWorldProjector isn't invertible -- see "
+			"src/tratrac/application/SMOOTHING.md's 'Dual-space export' section)."
+		)
 	try:
 		recording = read_tracks(tracks)
 	except (ValueError, OSError) as exc:
@@ -252,8 +298,10 @@ def postprocess(
 			label_for_point=lane_id_for_point,
 		)
 
+	pixel_scale = recording.scale
+	projector: WorldProjector | None = None
 	if calibration is not None:
-		recording, pos_noise, jerk = _project_to_world(
+		recording, pos_noise, jerk, projector = _project_to_world(
 			recording, calibration, anchors, pos_noise, jerk, plane_zones=plane_zones
 		)
 
@@ -262,8 +310,20 @@ def postprocess(
 		states_by_frame = _apply_link_ids(states_by_frame, link_ids)
 	if lane_ids:
 		states_by_frame = _apply_lane_ids(states_by_frame, lane_ids)
-	out.parent.mkdir(parents=True, exist_ok=True)
-	_emit_trj(out, recording, states_by_frame, timestep_precision=timestep_precision)
+
+	if smoothed_record is not None:
+		smoothed_record.parent.mkdir(parents=True, exist_ok=True)
+		_emit_smoothed_record(
+			smoothed_record,
+			recording.metadata,
+			states_by_frame,
+			projector=projector,
+			scale=pixel_scale,
+		)
+
+	if out is not None:
+		out.parent.mkdir(parents=True, exist_ok=True)
+		_emit_trj(out, recording, states_by_frame, timestep_precision=timestep_precision)
 
 	notes = []
 	if footprint is not None:
@@ -279,8 +339,9 @@ def postprocess(
 	if calibration is not None:
 		notes.append("projected to world coordinates")
 	note = f", {', '.join(notes)}" if notes else ""
+	outputs = ", ".join(str(p) for p in (out, smoothed_record) if p is not None)
 	typer.echo(
-		f"Post-processed {tracks} -> {out} "
+		f"Post-processed {tracks} -> {outputs} "
 		f"({len(states_by_frame)} frames, pos_noise={pos_noise:g}, jerk={jerk:g}{note})."
 	)
 
@@ -463,7 +524,7 @@ def _project_to_world(
 	jerk: float,
 	*,
 	plane_zones: Path | None = None,
-) -> tuple[TrackRecording, float, float]:
+) -> tuple[TrackRecording, float, float, WorldProjector]:
 	"""Project the recording's image coordinates onto the metric world plane (MVP2).
 
 	Fits one homography from the calibration correspondences (each mapped into the global
@@ -481,6 +542,14 @@ def _project_to_world(
 	translation-invariant conflict analytics. ``pos_noise``/``jerk`` are converted from
 	pixels into world units by the homography's local scale, preserving the smoother's
 	behaviour.
+
+	The returned ``WorldProjector`` is the **shifted** one (homography + 0-origin
+	translation composed together, via ``.shifted()`` on the fitted projector) — the one
+	whose ``.inverse()`` (when it has one; ``MultiHomographyWorldProjector`` doesn't, see its
+	own docstring) correctly undoes everything this function did to a point, not just the
+	homography. Used by ``--smoothed-record`` (``application/SMOOTHING.md``'s "Dual-space
+	export" section), never by the forward path above, which already applied the unshifted
+	``projector`` + a separate observation-level shift and stays untouched.
 	"""
 	try:
 		calibration = load_calibration(calibration_path)
@@ -496,43 +565,41 @@ def _project_to_world(
 	)
 
 	projected = [_project_observation(o, projector) for o in recording.observations]
-	world_recording = _normalize_world_recording(recording.metadata, projected)
-	return world_recording, pos_noise * scale, jerk * scale * scale
+	world_recording, shift_x, shift_y = _normalize_world_recording(recording.metadata, projected)
+	shifted_projector: WorldProjector = (
+		projector.shifted(shift_x, shift_y)
+		if isinstance(projector, PerAnchorWorldProjector)
+		else projector
+	)
+	return world_recording, pos_noise * scale, jerk * scale * scale, shifted_projector
 
 
 def _fit_projector(
 	calibration: Calibration, pose_for: Callable[[int], Transform2D]
 ) -> tuple[WorldProjector, float]:
-	"""Fit a ``WorldProjector`` from calibration correspondences, plus a representative
+	"""Fit a ``PerAnchorWorldProjector`` from calibration correspondences, plus a representative
 	local scale (metres/pixel) for converting ``pos_noise``/``jerk`` into world units.
 
-	A calibration authored on a single anchor (or a static run, where every correspondence's
-	``reference_frame`` collapses to the same pose) fits one global homography
-	(``SingleHomographyProjector``) — the original Approach A behaviour, unchanged. A
-	calibration spanning multiple anchors (Group C3, ``docs/IMPLEMENTATION_PLAN.md``) fits one
-	homography per anchor (``PerAnchorWorldProjector``), grouping correspondences by their
-	``reference_frame``; each group needs its own >= 4 correspondences (``compute_homography``
-	enforces this and its ``ValueError`` is reported the same way for either path).
+	Always one ``PerAnchorWorldProjector``, grouping correspondences by ``reference_frame`` —
+	a calibration authored on a single anchor (or a static run, where every correspondence's
+	``reference_frame`` collapses to the same pose) is simply the one-anchor case, not a
+	structurally different fit (see the class's own docstring). Each anchor's group needs its
+	own >= 4 correspondences (``compute_homography`` enforces this).
 	"""
 	by_anchor: dict[int, list[Correspondence]] = defaultdict(list)
 	for correspondence in calibration.correspondences:
 		by_anchor[correspondence.reference_frame].append(correspondence)
 
-	if len(by_anchor) == 1:
-		[(anchor, group)] = by_anchor.items()
-		matrix = _fit_homography(group, pose_for)
-		single: WorldProjector = SingleHomographyProjector(matrix)
-		return single, local_scale_at(single, _centroid(group, pose_for), frame_index=anchor)
-
 	homographies: dict[int, NDArray[np.float64]] = {}
 	scales: list[float] = []
 	for anchor, group in by_anchor.items():
 		homographies[anchor] = _fit_homography(group, pose_for)
-		per_anchor = SingleHomographyProjector(homographies[anchor])
+		per_anchor = PerAnchorWorldProjector({anchor: homographies[anchor]})
 		scales.append(local_scale_at(per_anchor, _centroid(group, pose_for), frame_index=anchor))
 	# One global pos_noise/jerk feeds the smoother for the whole recording (it isn't
 	# per-observation), so multiple anchors' local scales are averaged into one
-	# representative value rather than tracked per anchor.
+	# representative value rather than tracked per anchor. With one anchor this is just that
+	# one scale.
 	return PerAnchorWorldProjector(homographies), sum(scales) / len(scales)
 
 
@@ -564,7 +631,7 @@ def _fit_multi_homography_projector(
 	scales: list[float] = []
 	for plane_id, group in by_plane.items():
 		homographies[plane_id] = _fit_homography(group, pose_for)
-		per_plane = SingleHomographyProjector(homographies[plane_id])
+		per_plane = PerAnchorWorldProjector({plane_id: homographies[plane_id]})
 		scales.append(local_scale_at(per_plane, _centroid(group, pose_for)))
 	# Same averaging caveat as the per-anchor path: one global pos_noise/jerk pair, so a
 	# track crossing a plane boundary mid-life gets a slightly-off noise model near the switch.
@@ -589,15 +656,20 @@ def _centroid(group: list[Correspondence], pose_for: Callable[[int], Transform2D
 
 def _normalize_world_recording(
 	metadata: VideoMetadata, projected: list[TrackObservation]
-) -> TrackRecording:
+) -> tuple[TrackRecording, float, float]:
 	"""Shift projected observations to a 0-origin and size the metadata to the world extent.
 
 	Pads the bounding box by the largest projected vehicle dimension so the front/rear
 	bumpers the smoother derives from each centroid stay inside the DIMENSIONS bounds. An
 	empty recording keeps the original (pixel) metadata — there are no coordinates to size.
+
+	Also returns the ``(shift_x, shift_y)`` applied (``cx - min_x`` etc. above, so the shift
+	itself is ``-min_x, -min_y``) — composed into an invertible projector by the caller
+	(``_project_to_world``) so ``--smoothed-record`` can undo this translation along with the
+	homography itself, not just the homography.
 	"""
 	if not projected:
-		return TrackRecording(metadata=metadata, scale=1.0, observations=projected)
+		return TrackRecording(metadata=metadata, scale=1.0, observations=projected), 0.0, 0.0
 	pad = max(max(o.width, o.height) for o in projected)
 	min_x = min(o.cx for o in projected) - pad
 	min_y = min(o.cy for o in projected) - pad
@@ -609,7 +681,7 @@ def _normalize_world_recording(
 		width=max(1, math.ceil(max_x - min_x)),
 		height=max(1, math.ceil(max_y - min_y)),
 	)
-	return TrackRecording(metadata=world_meta, scale=1.0, observations=shifted)
+	return TrackRecording(metadata=world_meta, scale=1.0, observations=shifted), -min_x, -min_y
 
 
 def _project_observation(o: TrackObservation, projector: WorldProjector) -> TrackObservation:
@@ -693,6 +765,51 @@ def _emit_trj(
 	with exporter:
 		for frame_index in sorted(states_by_frame):
 			exporter.emit_frame(frame_index / fps, states_by_frame[frame_index])
+
+
+def _emit_smoothed_record(
+	path: Path,
+	metadata: VideoMetadata,
+	states_by_frame: dict[int, list[VehicleState]],
+	*,
+	projector: WorldProjector | None,
+	scale: float,
+) -> None:
+	"""Write the smoothed record always in image-space pixels (see ``smoothed_parquet.py``).
+
+	``projector`` is ``None`` (no ``--calibration``) or the shifted, invertible projector
+	``_project_to_world`` returns — never the raw fitted one, and never
+	``MultiHomographyWorldProjector`` (rejected earlier, in ``postprocess``, when combined
+	with ``--smoothed-record``; the ``AssertionError`` below is an internal invariant, not a
+	user-facing error).
+	"""
+	with SmoothedTrackParquetSink(path, metadata) as sink:
+		for frame_index in sorted(states_by_frame):
+			for state in states_by_frame[frame_index]:
+				if projector is None or isinstance(projector, IdentityWorldProjector):
+					centroid, angle, dimensions = unscale_state_to_image(state, scale)
+				elif isinstance(projector, PerAnchorWorldProjector):
+					centroid, angle, dimensions = invert_state_to_image(
+						state, projector, frame_index
+					)
+				else:
+					raise AssertionError(
+						f"{type(projector).__name__} isn't invertible; --plane-zones should "
+						"have been rejected earlier when combined with --smoothed-record."
+					)
+				sink.record(
+					SmoothedObservation(
+						frame_index=frame_index,
+						track_id=state.vehicle_id,
+						cx=centroid.x,
+						cy=centroid.y,
+						angle=angle,
+						length=dimensions.length,
+						width=dimensions.width,
+						link_id=state.link_id,
+						lane_id=state.lane_id,
+					)
+				)
 
 
 if __name__ == "__main__":

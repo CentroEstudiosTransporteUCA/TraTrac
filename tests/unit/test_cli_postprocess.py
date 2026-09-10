@@ -19,6 +19,7 @@ from tratrac.domain.geometry import BoundingBox, Point2D, Polygon
 from tratrac.infrastructure.export.ssam_trj import read_trj
 from tratrac.infrastructure.tracks.footprint_parquet import FootprintParquetSink
 from tratrac.infrastructure.tracks.parquet import ParquetTrackSink
+from tratrac.infrastructure.tracks.smoothed_parquet import read_smoothed_tracks
 
 _META = VideoMetadata(width=200, height=200, fps=10.0, total_frames=10)
 
@@ -285,6 +286,116 @@ class TestPostprocessCalibration:
 		state = read_trj(out).frames[3].states[0]
 		assert state.dimensions.length == pytest.approx(2.0, abs=0.05)
 		assert state.dimensions.width == pytest.approx(1.0, abs=0.05)
+
+
+class TestPostprocessSmoothedRecord:
+	"""``--smoothed-record``: always image-space, independent of ``--calibration``."""
+
+	def test_requires_out_or_smoothed_record(self, tmp_path: Path) -> None:
+		record = tmp_path / "tracks.parquet"
+		_write_record(record, scale=1.0)
+
+		result = CliRunner().invoke(app, [str(record)])
+		assert result.exit_code != 0
+		assert "smoothed-record" in result.output
+
+	def test_smoothed_record_alone_needs_no_out(self, tmp_path: Path) -> None:
+		record = tmp_path / "tracks.parquet"
+		smoothed = tmp_path / "smoothed.parquet"
+		_write_record(record, scale=1.0)
+
+		result = CliRunner().invoke(app, [str(record), "--smoothed-record", str(smoothed)])
+		assert result.exit_code == 0, result.output
+		assert smoothed.exists()
+
+	def test_smoothed_record_without_calibration_matches_image_positions(
+		self, tmp_path: Path
+	) -> None:
+		record = tmp_path / "tracks.parquet"
+		smoothed = tmp_path / "smoothed.parquet"
+		_write_record(record, scale=1.0)
+
+		result = CliRunner().invoke(app, [str(record), "--smoothed-record", str(smoothed)])
+		assert result.exit_code == 0, result.output
+
+		recovered = read_smoothed_tracks(smoothed)
+		state = next(o for o in recovered.observations if o.frame_index == 3)
+		# frame 3 image centre: (10*3 + 20 + 2, 51) = (52, 51) -- same as the .trj-based
+		# test above (test_without_calibration_coordinates_stay_image_space), confirming the
+		# uncalibrated path (unscale_state_to_image with scale=1.0) is a no-op as expected.
+		assert state.cx == pytest.approx(52.0, abs=0.5)
+		assert state.cy == pytest.approx(51.0, abs=0.5)
+
+	def test_smoothed_record_with_calibration_still_recovers_image_positions(
+		self, tmp_path: Path
+	) -> None:
+		"""The real point of --smoothed-record: --calibration projects .trj to world metres,
+		but this output stays in the same raw pixels regardless -- inverting the homography
+		(+ the 0-origin shift _project_to_world applies) recovers the original image position."""
+		record = tmp_path / "tracks.parquet"
+		out = tmp_path / "world.trj"
+		smoothed = tmp_path / "smoothed.parquet"
+		calibration = tmp_path / "calibration.json"
+		_write_record(record, scale=1.0)
+		calibration.write_text(json.dumps(_HALF_SCALE_CALIBRATION))
+
+		result = CliRunner().invoke(
+			app,
+			[
+				str(record),
+				"--out",
+				str(out),
+				"--smoothed-record",
+				str(smoothed),
+				"--calibration",
+				str(calibration),
+			],
+		)
+		assert result.exit_code == 0, result.output
+
+		# .trj is world-space (the existing, unchanged behavior)...
+		assert read_trj(out).scale == pytest.approx(1.0)
+		# ...but --smoothed-record recovers the same raw image position the uncalibrated
+		# test above got, not the world-metric one.
+		recovered = read_smoothed_tracks(smoothed)
+		state = next(o for o in recovered.observations if o.frame_index == 3)
+		assert state.cx == pytest.approx(52.0, abs=0.5)
+		assert state.cy == pytest.approx(51.0, abs=0.5)
+
+	def test_smoothed_record_with_plane_zones_is_rejected(self, tmp_path: Path) -> None:
+		record = tmp_path / "tracks.parquet"
+		smoothed = tmp_path / "smoothed.parquet"
+		calibration = tmp_path / "calibration.json"
+		planes = tmp_path / "planes.json"
+		_write_record(record, scale=1.0)
+		calibration.write_text(json.dumps(_HALF_SCALE_CALIBRATION))
+		planes.write_text(
+			json.dumps(
+				{
+					"plane_zones": [
+						{
+							"plane_id": 0,
+							"vertices": [[-10, -10], [500, -10], [500, 500], [-10, 500]],
+						}
+					]
+				}
+			)
+		)
+
+		result = CliRunner().invoke(
+			app,
+			[
+				str(record),
+				"--smoothed-record",
+				str(smoothed),
+				"--calibration",
+				str(calibration),
+				"--plane-zones",
+				str(planes),
+			],
+		)
+		assert result.exit_code != 0
+		assert "plane-zones" in result.output
 
 
 class TestPostprocessReidMerge:
