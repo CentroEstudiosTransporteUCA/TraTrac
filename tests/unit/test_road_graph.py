@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from tratrac.application.coordinate_transforms import IdentityTransform, PerFrameTransform
 from tratrac.application.road_graph import (
 	lane_id_for_point,
 	link_id_for_point,
@@ -48,7 +49,7 @@ class TestToGlobalLinkPolygons:
 		zones = LinkZones(
 			zones=(LinkZone(link_id=1, reference_frame=0, polygon=Polygon(_square(1, 2, 3, 4))),)
 		)
-		out = to_global_link_polygons(zones, lambda _f: Transform2D.identity())
+		out = to_global_link_polygons(zones, IdentityTransform())
 		assert out == ((1, _square(1, 2, 3, 4)),)
 
 	def test_pose_lookup_is_keyed_by_reference_frame(self) -> None:
@@ -56,7 +57,7 @@ class TestToGlobalLinkPolygons:
 			zones=(LinkZone(link_id=5, reference_frame=7, polygon=Polygon(_square(0, 0, 10, 10))),)
 		)
 		shift = Transform2D(a=1.0, b=0.0, tx=5.0, c=0.0, d=1.0, ty=0.0)
-		out = to_global_link_polygons(zones, lambda f: shift if f == 7 else Transform2D.identity())
+		out = to_global_link_polygons(zones, PerFrameTransform({7: shift}))
 		assert out[0][0] == 5
 		assert out[0][1][0] == Point2D(5.0, 0.0)
 
@@ -196,7 +197,7 @@ class TestToGlobalLanePolygons:
 				),
 			)
 		)
-		out = to_global_lane_polygons(zones, lambda _f: Transform2D.identity())
+		out = to_global_lane_polygons(zones, IdentityTransform())
 		assert out == ((2, _square(1, 2, 3, 4)),)
 
 
@@ -280,7 +281,7 @@ class TestToGlobalPlanePolygons:
 		zones = PlaneZones(
 			zones=(PlaneZone(plane_id=1, reference_frame=0, polygon=Polygon(_square(1, 2, 3, 4))),)
 		)
-		out = to_global_plane_polygons(zones, lambda _f: Transform2D.identity())
+		out = to_global_plane_polygons(zones, IdentityTransform())
 		assert out == ((1, _square(1, 2, 3, 4)),)
 
 

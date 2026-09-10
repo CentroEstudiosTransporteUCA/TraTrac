@@ -4,15 +4,14 @@ Mirrors ``application/exclusion.py``'s reference-frame -> global-frame conversio
 but classification is per-observation (a vehicle can cross links/lanes/planes
 mid-track) rather than the track-level majority vote ``excluded_track_ids`` uses.
 Link/Lane classification feeds SSAM's per-VEHICLE-RECORD fields; Plane
-classification feeds `MultiHomographyWorldProjector` (Group C5) instead — see
+classification feeds `MultiPlaneTransform` (Group C5) instead — see
 ``docs/IMPLEMENTATION_PLAN.md`` Groups C1/C2/C5.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
-
-from tratrac.domain.geometry import Point2D, Transform2D, point_in_polygon
+from tratrac.domain.geometry import Point2D, point_in_polygon
+from tratrac.domain.ports import CoordinateTransform
 from tratrac.domain.road_graph import LaneZones, LinkZones, PlaneZones
 
 # One zone's global-frame polygon, paired with its label (link_id, lane_id, or plane_id).
@@ -23,20 +22,27 @@ GlobalPlanePolygon = GlobalLabeledPolygon
 
 
 def to_global_link_polygons(
-	zones: LinkZones, pose_for: Callable[[int], Transform2D]
+	zones: LinkZones, pose: CoordinateTransform
 ) -> tuple[GlobalLinkPolygon, ...]:
 	"""Map each zone's polygon from its reference frame into the global frame.
 
-	``pose_for(reference_frame)`` returns that frame's pose (raw -> global).
-	Order is preserved from ``zones`` — first match wins on overlapping zones.
+	``pose.apply(vertex, reference_frame)`` maps a vertex authored on that frame
+	(raw -> global). Order is preserved from ``zones`` — first match wins on
+	overlapping zones. Raises ``ValueError`` if a zone's ``reference_frame`` isn't
+	an anchor ``pose`` knows about.
 	"""
-	return tuple(
-		(
-			zone.link_id,
-			tuple(pose_for(zone.reference_frame).apply(v) for v in zone.polygon.vertices),
+	try:
+		return tuple(
+			(
+				zone.link_id,
+				tuple(pose.apply(v, zone.reference_frame) for v in zone.polygon.vertices),
+			)
+			for zone in zones.zones
 		)
-		for zone in zones.zones
-	)
+	except KeyError as exc:
+		raise ValueError(
+			f"link zone reference_frame is not an anchor in the manifest: {exc}"
+		) from exc
 
 
 def link_id_for_point(point: Point2D, global_link_polygons: tuple[GlobalLinkPolygon, ...]) -> int:
@@ -48,19 +54,24 @@ def link_id_for_point(point: Point2D, global_link_polygons: tuple[GlobalLinkPoly
 
 
 def to_global_lane_polygons(
-	zones: LaneZones, pose_for: Callable[[int], Transform2D]
+	zones: LaneZones, pose: CoordinateTransform
 ) -> tuple[GlobalLanePolygon, ...]:
 	"""Map each lane zone's polygon from its reference frame into the global frame.
 
 	Mirrors ``to_global_link_polygons``; the label carried is ``lane_id``, not ``link_id``.
 	"""
-	return tuple(
-		(
-			zone.lane_id,
-			tuple(pose_for(zone.reference_frame).apply(v) for v in zone.polygon.vertices),
+	try:
+		return tuple(
+			(
+				zone.lane_id,
+				tuple(pose.apply(v, zone.reference_frame) for v in zone.polygon.vertices),
+			)
+			for zone in zones.zones
 		)
-		for zone in zones.zones
-	)
+	except KeyError as exc:
+		raise ValueError(
+			f"lane zone reference_frame is not an anchor in the manifest: {exc}"
+		) from exc
 
 
 def lane_id_for_point(point: Point2D, global_lane_polygons: tuple[GlobalLanePolygon, ...]) -> int:
@@ -72,19 +83,24 @@ def lane_id_for_point(point: Point2D, global_lane_polygons: tuple[GlobalLanePoly
 
 
 def to_global_plane_polygons(
-	zones: PlaneZones, pose_for: Callable[[int], Transform2D]
+	zones: PlaneZones, pose: CoordinateTransform
 ) -> tuple[GlobalPlanePolygon, ...]:
 	"""Map each plane zone's polygon from its reference frame into the global frame.
 
 	Mirrors ``to_global_link_polygons``; the label carried is ``plane_id``.
 	"""
-	return tuple(
-		(
-			zone.plane_id,
-			tuple(pose_for(zone.reference_frame).apply(v) for v in zone.polygon.vertices),
+	try:
+		return tuple(
+			(
+				zone.plane_id,
+				tuple(pose.apply(v, zone.reference_frame) for v in zone.polygon.vertices),
+			)
+			for zone in zones.zones
 		)
-		for zone in zones.zones
-	)
+	except KeyError as exc:
+		raise ValueError(
+			f"plane zone reference_frame is not an anchor in the manifest: {exc}"
+		) from exc
 
 
 def plane_id_for_point(
@@ -96,7 +112,7 @@ def plane_id_for_point(
 	partition the *whole* scene (ground plus every bridge/overpass), so ``0`` is a legitimate
 	default/ground-plane label an operator can rely on for points outside every explicit zone.
 	It is the caller's responsibility to fit a homography for whichever plane ids actually
-	occur (``MultiHomographyWorldProjector`` raises clearly if one is missing).
+	occur (``MultiPlaneTransform`` raises clearly if one is missing).
 	"""
 	return _label_for_point(point, global_plane_polygons)
 

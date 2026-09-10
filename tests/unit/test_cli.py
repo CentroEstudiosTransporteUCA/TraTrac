@@ -113,7 +113,8 @@ def _full_config(
 		"det_thresh = 0.1\n"
 		"[export]\n"
 		f'out = "{out}"\n'
-		'transform_csv = ""\n'
+		f'scale_out = "{tmp_path / "scale.jsonl"}"\n'
+		'transform_file = ""\n'
 		'anchors_dir = ""\n'
 		"[window]\n"
 		'start = ""\n'

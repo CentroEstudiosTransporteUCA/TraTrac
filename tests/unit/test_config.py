@@ -40,7 +40,8 @@ def _complete(tmp_path: Path, **overrides: Any) -> dict[str, Any]:
 		"tracker": {"det_thresh": 0.1},
 		"export": {
 			"out": str(tmp_path / "record.parquet"),
-			"transform_csv": "",
+			"scale_out": str(tmp_path / "record.scale.jsonl"),
+			"transform_file": "",
 			"anchors_dir": "",
 		},
 		"window": {"start": "", "end": ""},
@@ -60,6 +61,7 @@ class TestResolveComplete:
 		assert run.calibration.meters_per_pixel == 0.05
 		assert run.tracker.det_thresh == 0.1
 		assert run.export.out == tmp_path / "record.parquet"
+		assert run.export.scale_out == tmp_path / "record.scale.jsonl"
 		assert run.window.start_seconds is None
 		assert run.window.end_seconds is None
 		assert run.options.timing_csv is None  # "" disables
@@ -69,7 +71,7 @@ class TestResolveComplete:
 		# Empty strings / false are valid "disabled" values, not missing keys.
 		assert run.options.timing_csv is None
 		assert run.window.start_seconds is None
-		assert run.export.transform_csv is None
+		assert run.export.transform_file is None
 
 
 class TestProcessFps:
@@ -297,26 +299,26 @@ class TestTransformCsv:
 
 	def test_off_resolves_to_none(self, tmp_path: Path) -> None:
 		run = RunConfig.resolve(_complete(tmp_path), {})
-		assert run.export.transform_csv is None  # "" disables
+		assert run.export.transform_file is None  # "" disables
 
 	def test_missing_key_is_an_error(self, tmp_path: Path) -> None:
 		file_values = _complete(tmp_path)
-		del file_values["export"]["transform_csv"]
-		with pytest.raises(ConfigError, match="transform_csv is missing"):
+		del file_values["export"]["transform_file"]
+		with pytest.raises(ConfigError, match="transform_file is missing"):
 			RunConfig.resolve(file_values, {})
 
 	def test_path_resolves_when_ego_motion_enabled(self, tmp_path: Path) -> None:
 		file_values = _complete(tmp_path, ego_motion=self._ENABLED)
-		file_values["export"]["transform_csv"] = str(tmp_path / "transforms.csv")
+		file_values["export"]["transform_file"] = str(tmp_path / "transforms.jsonl")
 		run = RunConfig.resolve(file_values, {})
-		assert run.export.transform_csv == tmp_path / "transforms.csv"
+		assert run.export.transform_file == tmp_path / "transforms.jsonl"
 
 	def test_set_without_stabilization_is_an_error(self, tmp_path: Path) -> None:
-		# ego_motion disabled in the default fixture: a transform CSV would only ever
+		# ego_motion disabled in the default fixture: a transform file would only ever
 		# hold identities, so requesting one is a contradictory run spec.
 		file_values = _complete(tmp_path)
-		file_values["export"]["transform_csv"] = str(tmp_path / "transforms.csv")
-		with pytest.raises(ConfigError, match=r"transform_csv requires ego_motion\.enabled"):
+		file_values["export"]["transform_file"] = str(tmp_path / "transforms.jsonl")
+		with pytest.raises(ConfigError, match=r"transform_file requires ego_motion\.enabled"):
 			RunConfig.resolve(file_values, {})
 
 

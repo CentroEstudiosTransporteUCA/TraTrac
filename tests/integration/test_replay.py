@@ -53,7 +53,7 @@ def _tracked(track_id: int) -> TrackedDetection:
 
 def _write_record(path: Path, *, observed_frames: range) -> None:
 	meta = VideoMetadata(width=_WIDTH, height=_HEIGHT, fps=float(_FPS), total_frames=_N_FRAMES)
-	with ParquetTrackSink(path, meta, scale=1.0) as sink:
+	with ParquetTrackSink(path, meta) as sink:
 		for frame in observed_frames:
 			sink.record(frame, [_tracked(track_id=1)])
 
@@ -81,7 +81,7 @@ def test_gap_between_observations_still_yields_with_empty_list(
 ) -> None:
 	record_path = tmp_path / "tracks.parquet"
 	meta = VideoMetadata(width=_WIDTH, height=_HEIGHT, fps=float(_FPS), total_frames=_N_FRAMES)
-	with ParquetTrackSink(record_path, meta, scale=1.0) as sink:
+	with ParquetTrackSink(record_path, meta) as sink:
 		sink.record(2, [_tracked(track_id=1)])
 		sink.record(5, [_tracked(track_id=1)])  # frames 3, 4 are a gap
 	recording = read_tracks(record_path)
@@ -113,7 +113,7 @@ def test_padding_extends_past_the_last_observation(synthetic_video: Path, tmp_pa
 def test_empty_recording_yields_nothing(synthetic_video: Path, tmp_path: Path) -> None:
 	record_path = tmp_path / "empty.parquet"
 	meta = VideoMetadata(width=_WIDTH, height=_HEIGHT, fps=float(_FPS), total_frames=_N_FRAMES)
-	with ParquetTrackSink(record_path, meta, scale=1.0):
+	with ParquetTrackSink(record_path, meta):
 		pass
 	recording = read_tracks(record_path)
 

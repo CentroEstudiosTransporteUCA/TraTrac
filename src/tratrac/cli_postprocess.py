@@ -45,6 +45,14 @@ import numpy as np
 import typer
 from numpy.typing import NDArray
 
+from tratrac.application.coordinate_transforms import (
+	IdentityTransform,
+	MultiPlaneTransform,
+	PerAnchorTransform,
+	PerFrameTransform,
+	ScaleTransform,
+	local_scale_at,
+)
 from tratrac.application.exclusion import excluded_track_ids, to_global_polygons
 from tratrac.application.road_graph import (
 	lane_id_for_point,
@@ -60,19 +68,14 @@ from tratrac.application.track_smoothing import (
 	smooth_to_states,
 	unscale_state_to_image,
 )
-from tratrac.application.world_projection import (
-	IdentityWorldProjector,
-	MultiHomographyWorldProjector,
-	PerAnchorWorldProjector,
-	local_scale_at,
-)
 from tratrac.domain.frame import VideoMetadata
-from tratrac.domain.geometry import Point2D, Polygon, Transform2D, oriented_extent
-from tratrac.domain.ports import TrajectoryExporter, WorldProjector
+from tratrac.domain.geometry import Point2D, Polygon, oriented_extent
+from tratrac.domain.ports import CoordinateTransform, TrajectoryExporter
 from tratrac.domain.road_graph import LaneZones, LinkZones
 from tratrac.domain.vehicle import VehicleState
 from tratrac.domain.world import Calibration, Correspondence
 from tratrac.infrastructure.anchors.manifest import ReferenceFrame, read_manifest
+from tratrac.infrastructure.calibration.scale_sidecar import read_scale
 from tratrac.infrastructure.exclusion.json import load_exclusion_zones
 from tratrac.infrastructure.export.decimating import DecimatingTrajectoryExporter
 from tratrac.infrastructure.export.ssam_trj import SsamTrjExporter
@@ -121,7 +124,7 @@ def postprocess(
 			"the same smoothing pass as --out, just always in raw pixels regardless of "
 			"--calibration, for tools that overlay on the raw video (e.g. tratrac-fiftyone). "
 			"See src/tratrac/application/SMOOTHING.md's 'Dual-space export' section. Not yet "
-			"supported together with --plane-zones (MultiHomographyWorldProjector isn't "
+			"supported together with --plane-zones (MultiPlaneTransform isn't "
 			"invertible).",
 		),
 	] = None,
@@ -173,6 +176,17 @@ def postprocess(
 			dir_okay=False,
 			help="Sidecar JSON of image-space Lane ID polygons (src/tratrac/domain/road_graph.py); "
 			"surviving observations are classified per-frame and stamped onto VehicleState.lane_id.",
+		),
+	] = None,
+	scale: Annotated[
+		Path | None,
+		typer.Option(
+			"--scale",
+			exists=True,
+			dir_okay=False,
+			help="The run's scale sidecar (export.scale_out from tratrac), the GSD metres-per-pixel "
+			"calibration. Required unless --calibration is given (a homography supersedes the "
+			"constant GSD scale, stamping DIMENSIONS.Scale = 1.0 instead) — pass exactly one.",
 		),
 	] = None,
 	calibration: Annotated[
@@ -254,8 +268,15 @@ def postprocess(
 	if plane_zones is not None and smoothed_record is not None:
 		raise typer.BadParameter(
 			"--smoothed-record isn't supported yet with --plane-zones "
-			"(MultiHomographyWorldProjector isn't invertible -- see "
+			"(MultiPlaneTransform isn't invertible -- see "
 			"src/tratrac/application/SMOOTHING.md's 'Dual-space export' section)."
+		)
+	if calibration is None and scale is None:
+		raise typer.BadParameter("Pass --scale, or --calibration to project to world coordinates.")
+	if calibration is not None and scale is not None:
+		raise typer.BadParameter(
+			"Pass exactly one of --scale or --calibration -- a homography supersedes the "
+			"constant GSD scale."
 		)
 	try:
 		recording = read_tracks(tracks)
@@ -298,14 +319,21 @@ def postprocess(
 			label_for_point=lane_id_for_point,
 		)
 
-	pixel_scale = recording.scale
-	projector: WorldProjector | None = None
+	projector: CoordinateTransform | None = None
 	if calibration is not None:
 		recording, pos_noise, jerk, projector = _project_to_world(
 			recording, calibration, anchors, pos_noise, jerk, plane_zones=plane_zones
 		)
+		# Observations are already in world metres; the scale multiplier is a no-op.
+		scale_transform = ScaleTransform(1.0)
+	else:
+		assert scale is not None  # the one-of check above guarantees this
+		try:
+			scale_transform = read_scale(scale)
+		except (ValueError, OSError) as exc:
+			raise typer.BadParameter(str(exc)) from exc
 
-	states_by_frame = _smooth_recording(recording, pos_noise=pos_noise, jerk=jerk)
+	states_by_frame = _smooth_recording(recording, scale_transform, pos_noise=pos_noise, jerk=jerk)
 	if link_ids:
 		states_by_frame = _apply_link_ids(states_by_frame, link_ids)
 	if lane_ids:
@@ -318,12 +346,14 @@ def postprocess(
 			recording.metadata,
 			states_by_frame,
 			projector=projector,
-			scale=pixel_scale,
+			scale=scale_transform,
 		)
 
 	if out is not None:
 		out.parent.mkdir(parents=True, exist_ok=True)
-		_emit_trj(out, recording, states_by_frame, timestep_precision=timestep_precision)
+		_emit_trj(
+			out, recording, states_by_frame, scale_transform, timestep_precision=timestep_precision
+		)
 
 	notes = []
 	if footprint is not None:
@@ -379,7 +409,7 @@ def _apply_footprint(recording: TrackRecording, footprint_path: Path) -> tuple[T
 		updated.append(replace(o, obb_w=length, obb_h=width))
 		replaced += 1
 	return (
-		TrackRecording(metadata=recording.metadata, scale=recording.scale, observations=updated),
+		TrackRecording(metadata=recording.metadata, observations=updated),
 		replaced,
 	)
 
@@ -405,9 +435,7 @@ def _apply_reid_merge(
 	remapped = [
 		replace(o, track_id=merges.get(o.track_id, o.track_id)) for o in recording.observations
 	]
-	return TrackRecording(
-		metadata=recording.metadata, scale=recording.scale, observations=remapped
-	), len(merges)
+	return TrackRecording(metadata=recording.metadata, observations=remapped), len(merges)
 
 
 def _filter_excluded(
@@ -417,10 +445,10 @@ def _filter_excluded(
 	try:
 		zones = load_exclusion_zones(zones_path)
 		references = read_manifest(anchors_path) if anchors_path is not None else None
+		polygons = to_global_polygons(zones, _pose_for(references))
 	except (ValueError, OSError) as exc:
 		raise typer.BadParameter(str(exc)) from exc
 
-	polygons = to_global_polygons(zones, _pose_for(references))
 	excluded = excluded_track_ids(
 		((o.track_id, Point2D(o.cx, o.cy)) for o in recording.observations),
 		polygons,
@@ -429,7 +457,7 @@ def _filter_excluded(
 	if not excluded:
 		return recording, 0
 	kept = [o for o in recording.observations if o.track_id not in excluded]
-	filtered = TrackRecording(metadata=recording.metadata, scale=recording.scale, observations=kept)
+	filtered = TrackRecording(metadata=recording.metadata, observations=kept)
 	return filtered, len(excluded)
 
 
@@ -442,7 +470,7 @@ def _assign_labels[Zones: (LinkZones, LaneZones)](
 	anchors_path: Path | None,
 	*,
 	load_zones: Callable[[Path], Zones],
-	to_global_polygons: Callable[[Zones, Callable[[int], Transform2D]], _GlobalLabeledPolygons],
+	to_global_polygons: Callable[[Zones, CoordinateTransform], _GlobalLabeledPolygons],
 	label_for_point: Callable[[Point2D, _GlobalLabeledPolygons], int],
 ) -> dict[tuple[int, int], int]:
 	"""Classify each surviving observation into a label (Link ID or Lane ID), keyed by
@@ -457,10 +485,10 @@ def _assign_labels[Zones: (LinkZones, LaneZones)](
 	try:
 		zones = load_zones(zones_path)
 		references = read_manifest(anchors_path) if anchors_path is not None else None
+		polygons = to_global_polygons(zones, _pose_for(references))
 	except (ValueError, OSError) as exc:
 		raise typer.BadParameter(str(exc)) from exc
 
-	polygons = to_global_polygons(zones, _pose_for(references))
 	return {
 		(o.track_id, o.frame_index): label_for_point(Point2D(o.cx, o.cy), polygons)
 		for o in recording.observations
@@ -493,27 +521,18 @@ def _apply_lane_ids(
 	}
 
 
-def _pose_for(references: list[ReferenceFrame] | None) -> Callable[[int], Transform2D]:
-	"""Resolve an exclusion zone's reference-frame pose (raw -> global) from the anchor manifest.
+def _pose_for(references: list[ReferenceFrame] | None) -> CoordinateTransform:
+	"""Resolve a zone's/correspondence's reference-frame pose (raw -> global) from the anchor
+	manifest, as a ``CoordinateTransform`` callers apply with ``.apply(point, reference_frame)``.
 
 	With a manifest (a moving-drone run), each pose comes from the matching anchor; a
-	``reference_frame`` that is not an anchor is rejected. Without one (a static run), every
-	pose is the identity (global == raw).
+	``reference_frame`` that is not an anchor raises ``KeyError`` from ``PerFrameTransform``,
+	which callers here re-raise as a clean ``typer.BadParameter``. Without a manifest (a static
+	run), every pose is the identity (global == raw).
 	"""
 	if references is None:
-		return lambda _reference_frame: Transform2D.identity()
-	by_index = {ref.frame_index: ref.pose for ref in references}
-
-	def pose(reference_frame: int) -> Transform2D:
-		resolved = by_index.get(reference_frame)
-		if resolved is None:
-			raise typer.BadParameter(
-				f"exclusion zone reference_frame {reference_frame} is not an anchor in the "
-				"manifest; draw zones on an exported anchor frame."
-			)
-		return resolved
-
-	return pose
+		return IdentityTransform()
+	return PerFrameTransform({ref.frame_index: ref.pose for ref in references})
 
 
 def _project_to_world(
@@ -524,7 +543,7 @@ def _project_to_world(
 	jerk: float,
 	*,
 	plane_zones: Path | None = None,
-) -> tuple[TrackRecording, float, float, WorldProjector]:
+) -> tuple[TrackRecording, float, float, CoordinateTransform]:
 	"""Project the recording's image coordinates onto the metric world plane (MVP2).
 
 	Fits one homography from the calibration correspondences (each mapped into the global
@@ -543,9 +562,9 @@ def _project_to_world(
 	pixels into world units by the homography's local scale, preserving the smoother's
 	behaviour.
 
-	The returned ``WorldProjector`` is the **shifted** one (homography + 0-origin
-	translation composed together, via ``.shifted()`` on the fitted projector) — the one
-	whose ``.inverse()`` (when it has one; ``MultiHomographyWorldProjector`` doesn't, see its
+	The returned ``CoordinateTransform`` is the **shifted** one (homography + 0-origin
+	translation composed together, via ``.shifted()`` on the fitted transform) — the one
+	whose ``.reverse()`` (when it has one; ``MultiPlaneTransform`` doesn't, see its
 	own docstring) correctly undoes everything this function did to a point, not just the
 	homography. Used by ``--smoothed-record`` (``application/SMOOTHING.md``'s "Dual-space
 	export" section), never by the forward path above, which already applied the unshifted
@@ -554,33 +573,36 @@ def _project_to_world(
 	try:
 		calibration = load_calibration(calibration_path)
 		references = read_manifest(anchors_path) if anchors_path is not None else None
+		pose = _pose_for(references)
+		projector, scale = (
+			_fit_multi_homography_projector(calibration, pose, plane_zones)
+			if plane_zones is not None
+			else _fit_projector(calibration, pose)
+		)
 	except (ValueError, OSError) as exc:
 		raise typer.BadParameter(str(exc)) from exc
-
-	pose_for = _pose_for(references)
-	projector, scale = (
-		_fit_multi_homography_projector(calibration, pose_for, plane_zones)
-		if plane_zones is not None
-		else _fit_projector(calibration, pose_for)
-	)
+	except KeyError as exc:
+		raise typer.BadParameter(
+			f"calibration correspondence reference_frame is not an anchor in the manifest: {exc}"
+		) from exc
 
 	projected = [_project_observation(o, projector) for o in recording.observations]
 	world_recording, shift_x, shift_y = _normalize_world_recording(recording.metadata, projected)
-	shifted_projector: WorldProjector = (
+	shifted_projector: CoordinateTransform = (
 		projector.shifted(shift_x, shift_y)
-		if isinstance(projector, PerAnchorWorldProjector)
+		if isinstance(projector, PerAnchorTransform)
 		else projector
 	)
 	return world_recording, pos_noise * scale, jerk * scale * scale, shifted_projector
 
 
 def _fit_projector(
-	calibration: Calibration, pose_for: Callable[[int], Transform2D]
-) -> tuple[WorldProjector, float]:
-	"""Fit a ``PerAnchorWorldProjector`` from calibration correspondences, plus a representative
+	calibration: Calibration, pose: CoordinateTransform
+) -> tuple[CoordinateTransform, float]:
+	"""Fit a ``PerAnchorTransform`` from calibration correspondences, plus a representative
 	local scale (metres/pixel) for converting ``pos_noise``/``jerk`` into world units.
 
-	Always one ``PerAnchorWorldProjector``, grouping correspondences by ``reference_frame`` —
+	Always one ``PerAnchorTransform``, grouping correspondences by ``reference_frame`` —
 	a calibration authored on a single anchor (or a static run, where every correspondence's
 	``reference_frame`` collapses to the same pose) is simply the one-anchor case, not a
 	structurally different fit (see the class's own docstring). Each anchor's group needs its
@@ -593,23 +615,23 @@ def _fit_projector(
 	homographies: dict[int, NDArray[np.float64]] = {}
 	scales: list[float] = []
 	for anchor, group in by_anchor.items():
-		homographies[anchor] = _fit_homography(group, pose_for)
-		per_anchor = PerAnchorWorldProjector({anchor: homographies[anchor]})
-		scales.append(local_scale_at(per_anchor, _centroid(group, pose_for), frame_index=anchor))
+		homographies[anchor] = _fit_homography(group, pose)
+		per_anchor = PerAnchorTransform({anchor: homographies[anchor]})
+		scales.append(local_scale_at(per_anchor, _centroid(group, pose), frame_index=anchor))
 	# One global pos_noise/jerk feeds the smoother for the whole recording (it isn't
 	# per-observation), so multiple anchors' local scales are averaged into one
 	# representative value rather than tracked per anchor. With one anchor this is just that
 	# one scale.
-	return PerAnchorWorldProjector(homographies), sum(scales) / len(scales)
+	return PerAnchorTransform(homographies), sum(scales) / len(scales)
 
 
 def _fit_multi_homography_projector(
-	calibration: Calibration, pose_for: Callable[[int], Transform2D], plane_zones_path: Path
-) -> tuple[WorldProjector, float]:
-	"""Fit a ``MultiHomographyWorldProjector`` (Group C5, MVP3) instead of grouping by anchor.
+	calibration: Calibration, pose: CoordinateTransform, plane_zones_path: Path
+) -> tuple[CoordinateTransform, float]:
+	"""Fit a ``MultiPlaneTransform`` (Group C5, MVP3) instead of grouping by anchor.
 
 	Each correspondence's global-mapped image point is classified against the plane zones
-	(the same rule ``MultiHomographyWorldProjector.to_world`` uses at query time — see its
+	(the same rule ``MultiPlaneTransform.apply`` uses at query time — see its
 	docstring for why that consistency matters), grouping correspondences by *plane* rather
 	than by *anchor*. Supersedes the anchor-based dispatch in ``_fit_projector`` entirely: a
 	calibration spanning both multiple anchors and multiple planes at once is not composed
@@ -620,28 +642,26 @@ def _fit_multi_homography_projector(
 		plane_zones = load_plane_zones(plane_zones_path)
 	except (ValueError, OSError) as exc:
 		raise typer.BadParameter(str(exc)) from exc
-	global_planes = to_global_plane_polygons(plane_zones, pose_for)
+	global_planes = to_global_plane_polygons(plane_zones, pose)
 
 	by_plane: dict[int, list[Correspondence]] = defaultdict(list)
 	for correspondence in calibration.correspondences:
-		point = pose_for(correspondence.reference_frame).apply(correspondence.image)
+		point = pose.apply(correspondence.image, correspondence.reference_frame)
 		by_plane[plane_id_for_point(point, global_planes)].append(correspondence)
 
 	homographies: dict[int, NDArray[np.float64]] = {}
 	scales: list[float] = []
 	for plane_id, group in by_plane.items():
-		homographies[plane_id] = _fit_homography(group, pose_for)
-		per_plane = PerAnchorWorldProjector({plane_id: homographies[plane_id]})
-		scales.append(local_scale_at(per_plane, _centroid(group, pose_for)))
+		homographies[plane_id] = _fit_homography(group, pose)
+		per_plane = PerAnchorTransform({plane_id: homographies[plane_id]})
+		scales.append(local_scale_at(per_plane, _centroid(group, pose)))
 	# Same averaging caveat as the per-anchor path: one global pos_noise/jerk pair, so a
 	# track crossing a plane boundary mid-life gets a slightly-off noise model near the switch.
-	return MultiHomographyWorldProjector(homographies, global_planes), sum(scales) / len(scales)
+	return MultiPlaneTransform(homographies, global_planes), sum(scales) / len(scales)
 
 
-def _fit_homography(
-	group: list[Correspondence], pose_for: Callable[[int], Transform2D]
-) -> NDArray[np.float64]:
-	image_points = [pose_for(c.reference_frame).apply(c.image) for c in group]
+def _fit_homography(group: list[Correspondence], pose: CoordinateTransform) -> NDArray[np.float64]:
+	image_points = [pose.apply(c.image, c.reference_frame) for c in group]
 	world_points = [c.world for c in group]
 	try:
 		return compute_homography(image_points, world_points)
@@ -649,8 +669,8 @@ def _fit_homography(
 		raise typer.BadParameter(str(exc)) from exc
 
 
-def _centroid(group: list[Correspondence], pose_for: Callable[[int], Transform2D]) -> Point2D:
-	points = [pose_for(c.reference_frame).apply(c.image) for c in group]
+def _centroid(group: list[Correspondence], pose: CoordinateTransform) -> Point2D:
+	points = [pose.apply(c.image, c.reference_frame) for c in group]
 	return Point2D(sum(p.x for p in points) / len(points), sum(p.y for p in points) / len(points))
 
 
@@ -669,7 +689,7 @@ def _normalize_world_recording(
 	homography itself, not just the homography.
 	"""
 	if not projected:
-		return TrackRecording(metadata=metadata, scale=1.0, observations=projected), 0.0, 0.0
+		return TrackRecording(metadata=metadata, observations=projected), 0.0, 0.0
 	pad = max(max(o.width, o.height) for o in projected)
 	min_x = min(o.cx for o in projected) - pad
 	min_y = min(o.cy for o in projected) - pad
@@ -681,10 +701,10 @@ def _normalize_world_recording(
 		width=max(1, math.ceil(max_x - min_x)),
 		height=max(1, math.ceil(max_y - min_y)),
 	)
-	return TrackRecording(metadata=world_meta, scale=1.0, observations=shifted), -min_x, -min_y
+	return TrackRecording(metadata=world_meta, observations=shifted), -min_x, -min_y
 
 
-def _project_observation(o: TrackObservation, projector: WorldProjector) -> TrackObservation:
+def _project_observation(o: TrackObservation, projector: CoordinateTransform) -> TrackObservation:
 	"""Map one observation's centroid + bbox extent into world metres.
 
 	Drops ``angle``/``obb_w``/``obb_h`` (Group A7/A8 OBB fields): they're image-space
@@ -694,11 +714,11 @@ def _project_observation(o: TrackObservation, projector: WorldProjector) -> Trac
 	here (see `src/tratrac/application/WORLD_PROJECTION.md`); the smoother's low-speed
 	fallback drops back to the bbox-major-axis heuristic for a projected run instead.
 	"""
-	center = projector.to_world(Point2D(o.cx, o.cy), o.frame_index)
-	left = projector.to_world(Point2D(o.cx - o.width / 2.0, o.cy), o.frame_index)
-	right = projector.to_world(Point2D(o.cx + o.width / 2.0, o.cy), o.frame_index)
-	top = projector.to_world(Point2D(o.cx, o.cy - o.height / 2.0), o.frame_index)
-	bottom = projector.to_world(Point2D(o.cx, o.cy + o.height / 2.0), o.frame_index)
+	center = projector.apply(Point2D(o.cx, o.cy), o.frame_index)
+	left = projector.apply(Point2D(o.cx - o.width / 2.0, o.cy), o.frame_index)
+	right = projector.apply(Point2D(o.cx + o.width / 2.0, o.cy), o.frame_index)
+	top = projector.apply(Point2D(o.cx, o.cy - o.height / 2.0), o.frame_index)
+	bottom = projector.apply(Point2D(o.cx, o.cy + o.height / 2.0), o.frame_index)
 	return replace(
 		o,
 		cx=center.x,
@@ -712,7 +732,7 @@ def _project_observation(o: TrackObservation, projector: WorldProjector) -> Trac
 
 
 def _smooth_recording(
-	recording: TrackRecording, *, pos_noise: float, jerk: float
+	recording: TrackRecording, scale: ScaleTransform, *, pos_noise: float, jerk: float
 ) -> dict[int, list[VehicleState]]:
 	"""Group observations by track, smooth each, and regroup the states by frame index."""
 	by_track: dict[int, list[TrackObservation]] = defaultdict(list)
@@ -739,9 +759,7 @@ def _smooth_recording(
 			)
 			for o in observations
 		]
-		states = smooth_to_states(
-			track_id, samples, recording.scale, pos_noise=pos_noise, jerk=jerk
-		)
+		states = smooth_to_states(track_id, samples, scale, pos_noise=pos_noise, jerk=jerk)
 		for sample, state in zip(samples, states, strict=True):
 			states_by_frame[sample.frame_index].append(state)
 	return states_by_frame
@@ -751,12 +769,13 @@ def _emit_trj(
 	out: Path,
 	recording: TrackRecording,
 	states_by_frame: dict[int, list[VehicleState]],
+	scale: ScaleTransform,
 	*,
 	timestep_precision: float,
 ) -> None:
 	"""Write the smoothed .trj from the per-frame states, optionally decimating TIMESTEPs."""
 	fps = recording.metadata.fps
-	exporter: TrajectoryExporter = SsamTrjExporter(out, recording.metadata, scale=recording.scale)
+	exporter: TrajectoryExporter = SsamTrjExporter(out, recording.metadata, scale=scale.factor)
 	if timestep_precision > 0.0:
 		# Thin the exported TIMESTEP stream; the smoothing still uses every observation.
 		exporter = DecimatingTrajectoryExporter(
@@ -772,23 +791,23 @@ def _emit_smoothed_record(
 	metadata: VideoMetadata,
 	states_by_frame: dict[int, list[VehicleState]],
 	*,
-	projector: WorldProjector | None,
-	scale: float,
+	projector: CoordinateTransform | None,
+	scale: ScaleTransform,
 ) -> None:
 	"""Write the smoothed record always in image-space pixels (see ``smoothed_parquet.py``).
 
 	``projector`` is ``None`` (no ``--calibration``) or the shifted, invertible projector
 	``_project_to_world`` returns — never the raw fitted one, and never
-	``MultiHomographyWorldProjector`` (rejected earlier, in ``postprocess``, when combined
+	``MultiPlaneTransform`` (rejected earlier, in ``postprocess``, when combined
 	with ``--smoothed-record``; the ``AssertionError`` below is an internal invariant, not a
 	user-facing error).
 	"""
 	with SmoothedTrackParquetSink(path, metadata) as sink:
 		for frame_index in sorted(states_by_frame):
 			for state in states_by_frame[frame_index]:
-				if projector is None or isinstance(projector, IdentityWorldProjector):
+				if projector is None or isinstance(projector, IdentityTransform):
 					centroid, angle, dimensions = unscale_state_to_image(state, scale)
-				elif isinstance(projector, PerAnchorWorldProjector):
+				elif isinstance(projector, PerAnchorTransform):
 					centroid, angle, dimensions = invert_state_to_image(
 						state, projector, frame_index
 					)

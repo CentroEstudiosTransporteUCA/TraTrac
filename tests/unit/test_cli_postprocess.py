@@ -16,6 +16,7 @@ from tratrac.cli_postprocess import app
 from tratrac.domain.detection import Detection, TrackedDetection, VehicleClass
 from tratrac.domain.frame import VideoMetadata
 from tratrac.domain.geometry import BoundingBox, Point2D, Polygon
+from tratrac.infrastructure.calibration.scale_sidecar import write_scale
 from tratrac.infrastructure.export.ssam_trj import read_trj
 from tratrac.infrastructure.tracks.footprint_parquet import FootprintParquetSink
 from tratrac.infrastructure.tracks.parquet import ParquetTrackSink
@@ -46,11 +47,16 @@ def _tracked(x: float, y: float, *, track_id: int = 1) -> TrackedDetection:
 	)
 
 
-def _write_record(path: Path, *, scale: float) -> None:
-	"""A single track moving at constant velocity along x (so the CA smoother reproduces it)."""
-	with ParquetTrackSink(path, _META, scale=scale) as sink:
+def _write_record(path: Path, *, scale: float) -> Path:
+	"""A single track moving at constant velocity along x (so the CA smoother reproduces it).
+
+	Returns the scale sidecar's path (for ``--scale``)."""
+	with ParquetTrackSink(path, _META) as sink:
 		for frame in range(6):
 			sink.record(frame, [_tracked(x=10.0 * frame + 20.0, y=50.0)])
+	scale_path = path.with_name(path.name + ".scale.jsonl")
+	write_scale(scale_path, scale)
+	return scale_path
 
 
 def _centroid_at(trj_path: Path, frame_index: int) -> tuple[float, float]:
@@ -71,9 +77,11 @@ class TestPostprocessCalibration:
 	def test_without_calibration_coordinates_stay_image_space(self, tmp_path: Path) -> None:
 		record = tmp_path / "tracks.parquet"
 		out = tmp_path / "image.trj"
-		_write_record(record, scale=1.0)
+		scale_path = _write_record(record, scale=1.0)
 
-		result = CliRunner().invoke(app, [str(record), "--out", str(out)])
+		result = CliRunner().invoke(
+			app, [str(record), "--out", str(out), "--scale", str(scale_path)]
+		)
 		assert result.exit_code == 0, result.output
 
 		assert read_trj(out).scale == pytest.approx(1.0)
@@ -134,7 +142,7 @@ class TestPostprocessCalibration:
 		out = tmp_path / "multi.trj"
 		calibration = tmp_path / "calibration.json"
 		with ParquetTrackSink(
-			record, VideoMetadata(width=300, height=300, fps=10.0, total_frames=10), scale=1.0
+			record, VideoMetadata(width=300, height=300, fps=10.0, total_frames=10)
 		) as sink:
 			for frame in range(10):
 				sink.record(frame, [_tracked(x=10.0 * frame, y=50.0)])
@@ -188,7 +196,7 @@ class TestPostprocessCalibration:
 		out = tmp_path / "planes.trj"
 		calibration = tmp_path / "calibration.json"
 		planes = tmp_path / "planes.json"
-		with ParquetTrackSink(record, _META, scale=1.0) as sink:
+		with ParquetTrackSink(record, _META) as sink:
 			for frame in range(6):
 				sink.record(
 					frame,
@@ -288,6 +296,39 @@ class TestPostprocessCalibration:
 		assert state.dimensions.width == pytest.approx(1.0, abs=0.05)
 
 
+class TestPostprocessScaleCalibrationOneOf:
+	def test_neither_scale_nor_calibration_is_an_error(self, tmp_path: Path) -> None:
+		record = tmp_path / "tracks.parquet"
+		out = tmp_path / "out.trj"
+		_write_record(record, scale=1.0)
+
+		result = CliRunner().invoke(app, [str(record), "--out", str(out)])
+		assert result.exit_code != 0
+		assert "scale" in result.output
+
+	def test_both_scale_and_calibration_is_an_error(self, tmp_path: Path) -> None:
+		record = tmp_path / "tracks.parquet"
+		out = tmp_path / "out.trj"
+		calibration = tmp_path / "calibration.json"
+		scale_path = _write_record(record, scale=1.0)
+		calibration.write_text(json.dumps(_HALF_SCALE_CALIBRATION))
+
+		result = CliRunner().invoke(
+			app,
+			[
+				str(record),
+				"--out",
+				str(out),
+				"--scale",
+				str(scale_path),
+				"--calibration",
+				str(calibration),
+			],
+		)
+		assert result.exit_code != 0
+		assert "exactly one" in result.output
+
+
 class TestPostprocessSmoothedRecord:
 	"""``--smoothed-record``: always image-space, independent of ``--calibration``."""
 
@@ -302,9 +343,11 @@ class TestPostprocessSmoothedRecord:
 	def test_smoothed_record_alone_needs_no_out(self, tmp_path: Path) -> None:
 		record = tmp_path / "tracks.parquet"
 		smoothed = tmp_path / "smoothed.parquet"
-		_write_record(record, scale=1.0)
+		scale_path = _write_record(record, scale=1.0)
 
-		result = CliRunner().invoke(app, [str(record), "--smoothed-record", str(smoothed)])
+		result = CliRunner().invoke(
+			app, [str(record), "--smoothed-record", str(smoothed), "--scale", str(scale_path)]
+		)
 		assert result.exit_code == 0, result.output
 		assert smoothed.exists()
 
@@ -313,9 +356,11 @@ class TestPostprocessSmoothedRecord:
 	) -> None:
 		record = tmp_path / "tracks.parquet"
 		smoothed = tmp_path / "smoothed.parquet"
-		_write_record(record, scale=1.0)
+		scale_path = _write_record(record, scale=1.0)
 
-		result = CliRunner().invoke(app, [str(record), "--smoothed-record", str(smoothed)])
+		result = CliRunner().invoke(
+			app, [str(record), "--smoothed-record", str(smoothed), "--scale", str(scale_path)]
+		)
 		assert result.exit_code == 0, result.output
 
 		recovered = read_smoothed_tracks(smoothed)
@@ -406,15 +451,26 @@ class TestPostprocessReidMerge:
 		record = tmp_path / "tracks.parquet"
 		out = tmp_path / "merged.trj"
 		merge = tmp_path / "merge.json"
-		with ParquetTrackSink(record, _META, scale=1.0) as sink:
+		with ParquetTrackSink(record, _META) as sink:
 			for frame in range(3):
 				sink.record(frame, [_tracked(x=10.0 * frame + 20.0, y=50.0, track_id=1)])
 			for frame in range(5, 8):
 				sink.record(frame, [_tracked(x=10.0 * frame + 20.0, y=50.0, track_id=2)])
+		scale_path = record.with_name(record.name + ".scale.jsonl")
+		write_scale(scale_path, 1.0)
 		merge.write_text(json.dumps({"merges": {"2": 1}}))
 
 		result = CliRunner().invoke(
-			app, [str(record), "--out", str(out), "--reid-merge", str(merge)]
+			app,
+			[
+				str(record),
+				"--out",
+				str(out),
+				"--reid-merge",
+				str(merge),
+				"--scale",
+				str(scale_path),
+			],
 		)
 		assert result.exit_code == 0, result.output
 		assert "merged 1 ReID track ids" in result.output
@@ -425,13 +481,17 @@ class TestPostprocessReidMerge:
 	def test_without_reid_merge_fragments_stay_separate(self, tmp_path: Path) -> None:
 		record = tmp_path / "tracks.parquet"
 		out = tmp_path / "unmerged.trj"
-		with ParquetTrackSink(record, _META, scale=1.0) as sink:
+		with ParquetTrackSink(record, _META) as sink:
 			for frame in range(3):
 				sink.record(frame, [_tracked(x=10.0 * frame + 20.0, y=50.0, track_id=1)])
 			for frame in range(5, 8):
 				sink.record(frame, [_tracked(x=10.0 * frame + 20.0, y=50.0, track_id=2)])
+		scale_path = record.with_name(record.name + ".scale.jsonl")
+		write_scale(scale_path, 1.0)
 
-		result = CliRunner().invoke(app, [str(record), "--out", str(out)])
+		result = CliRunner().invoke(
+			app, [str(record), "--out", str(out), "--scale", str(scale_path)]
+		)
 		assert result.exit_code == 0, result.output
 
 		vehicle_ids = {state.vehicle_id for frame in read_trj(out).frames for state in frame.states}
@@ -443,10 +503,12 @@ class TestPostprocessFootprint:
 		record = tmp_path / "tracks.parquet"
 		out = tmp_path / "footprint.trj"
 		footprint = tmp_path / "footprint.parquet"
-		with ParquetTrackSink(record, _META, scale=1.0) as sink:
+		with ParquetTrackSink(record, _META) as sink:
 			for frame in range(5):
 				# bbox 4x2 -> dims would be 4.0 x 2.0 without a footprint.
 				sink.record(frame, [_tracked(x=10.0 * frame + 20.0, y=50.0, track_id=1)])
+		scale_path = record.with_name(record.name + ".scale.jsonl")
+		write_scale(scale_path, 1.0)
 		# An axis-aligned footprint polygon spanning 8x4 -> larger than the bbox.
 		with FootprintParquetSink(footprint) as sink:
 			for frame in range(5):
@@ -462,7 +524,16 @@ class TestPostprocessFootprint:
 				sink.record(frame, 1, polygon)
 
 		result = CliRunner().invoke(
-			app, [str(record), "--out", str(out), "--footprint", str(footprint)]
+			app,
+			[
+				str(record),
+				"--out",
+				str(out),
+				"--footprint",
+				str(footprint),
+				"--scale",
+				str(scale_path),
+			],
 		)
 		assert result.exit_code == 0, result.output
 		assert "replaced dimensions for 5 observations from footprints" in result.output
@@ -475,12 +546,21 @@ class TestPostprocessFootprint:
 		record = tmp_path / "tracks.parquet"
 		out = tmp_path / "footprint.trj"
 		footprint = tmp_path / "footprint.parquet"
-		_write_record(record, scale=1.0)
+		scale_path = _write_record(record, scale=1.0)
 		with FootprintParquetSink(footprint):
 			pass  # no footprint rows at all -> nothing covered
 
 		result = CliRunner().invoke(
-			app, [str(record), "--out", str(out), "--footprint", str(footprint)]
+			app,
+			[
+				str(record),
+				"--out",
+				str(out),
+				"--footprint",
+				str(footprint),
+				"--scale",
+				str(scale_path),
+			],
 		)
 		assert result.exit_code == 0, result.output
 

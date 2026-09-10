@@ -61,8 +61,12 @@ det_thresh = 0.1                  # BoT-SORT detection threshold (kept below det
 [export]
 out = "out/highway_run3.parquet"  # the track record (run's primary output, Parquet).
                                   # Feed it to tratrac-postprocess to get a .trj (src/tratrac/application/SMOOTHING.md).
-transform_csv = ""                # "" = off; else a per-frame ego-motion transform CSV. Requires ego_motion.enabled
-                                  # (feeds `tratrac-render --transforms` to map global-frame coords back onto the raw video)
+scale_out = "out/highway_run3.scale.jsonl"  # the GSD scale sidecar (a CoordinateTransform,
+                                  # infrastructure/transform/records.py), always written -- not toggleable, since
+                                  # [calibration] always yields a scale. Feed it to tratrac-postprocess --scale.
+transform_file = ""               # "" = off; else a per-frame ego-motion transform sidecar (JSONL). Requires
+                                  # ego_motion.enabled (feeds `tratrac-render --transforms` to map global-frame
+                                  # coords back onto the raw video)
 anchors_dir = ""                  # "" = off; else a directory for keyframe-anchor PNGs + manifest. Requires
                                   # ego_motion.enabled. Draw exclusion ROIs on these PNGs; pass the manifest to
                                   # tratrac-postprocess --anchors to filter tracks in those zones. See src/tratrac/application/EXCLUSION_ZONES.md.

@@ -48,6 +48,7 @@ from tratrac.domain.ports import (
 )
 from tratrac.infrastructure.anchors.recording import AnchorRecordingEgoMotionEstimator
 from tratrac.infrastructure.anchors.sink import AnchorManifestSink
+from tratrac.infrastructure.calibration.scale_sidecar import write_scale
 from tratrac.infrastructure.config.toml import load_toml
 from tratrac.infrastructure.detection.rt_detr import RtDetrDetector
 from tratrac.infrastructure.detection.yolo_obb import YoloObbDetector
@@ -64,8 +65,8 @@ from tratrac.infrastructure.timing.decorators import (
 )
 from tratrac.infrastructure.tracking.boxmot_bot_sort import BoxmotBotSortTracker
 from tratrac.infrastructure.tracks.parquet import ParquetTrackSink
-from tratrac.infrastructure.transform.csv import CsvTransformSink
 from tratrac.infrastructure.transform.recording import RecordingEgoMotionEstimator
+from tratrac.infrastructure.transform.sink import CoordinateTransformSink
 from tratrac.infrastructure.video.ego_motion_orb import OrbEgoMotionEstimator
 from tratrac.infrastructure.video.opencv import OpenCvVideoSource
 
@@ -145,10 +146,11 @@ def process(
 		_emit_check_report(static_problems, as_json=False)
 		raise typer.Exit(code=2)
 	_prepare_output_path(run.export.out, force=force)
+	_prepare_output_path(run.export.scale_out, force=force)
 	if run.options.timing_csv is not None:
 		_prepare_output_path(run.options.timing_csv, force=force)
-	if run.export.transform_csv is not None:
-		_prepare_output_path(run.export.transform_csv, force=force)
+	if run.export.transform_file is not None:
+		_prepare_output_path(run.export.transform_file, force=force)
 
 	with _open_video(
 		run.input.video,
@@ -162,6 +164,9 @@ def process(
 			# A non-positive altitude (e.g. an SRT with no usable values) surfaces from
 			# the calibration chain; report it cleanly rather than as a traceback.
 			raise typer.BadParameter(str(exc)) from exc
+		# The scale sidecar is fully known before the frame loop starts, so it's written
+		# once here rather than threaded into the track record (src/tratrac/infrastructure/calibration/scale_sidecar.py).
+		write_scale(run.export.scale_out, scale)
 		# Coordinate stabilization (MVP1.9, src/tratrac/infrastructure/video/EGO_MOTION.md): the detector and
 		# tracker run on the raw frame; the live ORB ego-motion transform is applied to
 		# the detections (not the pixels) inside the pipeline. None when stabilization
@@ -204,7 +209,7 @@ def process(
 		)
 		with (
 			_timing_sink(run.options.timing_csv) as sink,
-			_transform_sink(run.export.transform_csv) as transform_sink,
+			_transform_sink(run.export.transform_file) as transform_sink,
 			_anchor_sink(run.export.anchors_dir, video_label=str(run.input.video)) as anchor_sink,
 		):
 			# Per-step timing wraps each port once per frame (src/tratrac/infrastructure/timing/STEP_TIMING.md). detect/track/record
@@ -231,8 +236,9 @@ def process(
 					pipeline_ego_motion, anchor_poses, anchor_sink
 				)
 			# The track record is the run's output. The pipeline owns its lifecycle
-			# (open on enter, close on exit), so it is passed unopened.
-			track_sink: TrackSink = ParquetTrackSink(run.export.out, source.metadata, scale=scale)
+			# (open on enter, close on exit), so it is passed unopened. The GSD scale
+			# lives in its own sidecar (written above), not here.
+			track_sink: TrackSink = ParquetTrackSink(run.export.out, source.metadata)
 			if sink is not None:
 				track_sink = TimedTrackSink(track_sink, sink)
 			pipeline = TrajectoryPipeline(
@@ -270,7 +276,8 @@ def static_run_problems(run: RunConfig) -> list[str]:
 	# file — caught here cleanly rather than as an opaque writer error later.
 	for label, path in (
 		("export.out", run.export.out),
-		("export.transform_csv", run.export.transform_csv),
+		("export.scale_out", run.export.scale_out),
+		("export.transform_file", run.export.transform_file),
 		("run.timing_csv", run.options.timing_csv),
 	):
 		if path is not None and path.is_dir():
@@ -284,11 +291,16 @@ def static_run_problems(run: RunConfig) -> list[str]:
 		and run.export.out.resolve() == run.options.timing_csv.resolve()
 	):
 		problems.append("run.timing_csv must differ from export.out.")
-	if run.export.transform_csv is not None and run.export.transform_csv.resolve() in {
+	if run.export.scale_out.resolve() == run.export.out.resolve():
+		problems.append("export.scale_out must differ from export.out.")
+	if run.export.transform_file is not None and run.export.transform_file.resolve() in {
 		run.export.out.resolve(),
+		run.export.scale_out.resolve(),
 		run.options.timing_csv.resolve() if run.options.timing_csv is not None else None,
 	}:
-		problems.append("export.transform_csv must differ from export.out and run.timing_csv.")
+		problems.append(
+			"export.transform_file must differ from export.out, export.scale_out, and run.timing_csv."
+		)
 	return problems
 
 
@@ -424,11 +436,11 @@ def _timing_sink(path: Path | None) -> Iterator[TimingSink | None]:
 
 @contextmanager
 def _transform_sink(path: Path | None) -> Iterator[TransformSink | None]:
-	"""Yield a CSV transform sink when a path is given, else ``None`` (off)."""
+	"""Yield a JSONL transform sink when a path is given, else ``None`` (off)."""
 	if path is None:
 		yield None
 		return
-	with CsvTransformSink(path) as sink:
+	with CoordinateTransformSink(path) as sink:
 		yield sink
 
 

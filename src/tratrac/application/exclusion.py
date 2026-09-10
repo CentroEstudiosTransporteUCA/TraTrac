@@ -9,23 +9,31 @@ polygons equal the authored raw polygons. See src/tratrac/application/EXCLUSION_
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 
 from tratrac.domain.exclusion import ExclusionZones
-from tratrac.domain.geometry import Point2D, Transform2D, point_in_polygon
+from tratrac.domain.geometry import Point2D, point_in_polygon
+from tratrac.domain.ports import CoordinateTransform
 
 
 def to_global_polygons(
-	zones: ExclusionZones, pose_for: Callable[[int], Transform2D]
+	zones: ExclusionZones, pose: CoordinateTransform
 ) -> tuple[tuple[Point2D, ...], ...]:
 	"""Map each zone's polygon from its reference frame into the global frame.
 
-	``pose_for(reference_frame)`` returns that frame's pose (raw -> global).
+	``pose.apply(vertex, reference_frame)`` maps a vertex authored on that frame
+	(raw -> global). Raises ``ValueError`` if a zone's ``reference_frame`` isn't an
+	anchor ``pose`` knows about (re-wrapping the ``PerFrameTransform`` ``KeyError``).
 	"""
-	return tuple(
-		tuple(pose_for(zone.reference_frame).apply(v) for v in zone.polygon.vertices)
-		for zone in zones.zones
-	)
+	try:
+		return tuple(
+			tuple(pose.apply(v, zone.reference_frame) for v in zone.polygon.vertices)
+			for zone in zones.zones
+		)
+	except KeyError as exc:
+		raise ValueError(
+			f"exclusion zone reference_frame is not an anchor in the manifest: {exc}"
+		) from exc
 
 
 def excluded_track_ids(

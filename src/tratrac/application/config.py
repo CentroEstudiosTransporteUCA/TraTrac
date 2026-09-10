@@ -153,11 +153,16 @@ class ExportConfig:
 	# The run's primary output: the track record (raw tracked measurements). The
 	# offline ``tratrac-postprocess`` pass reads it to produce the SSAM ``.trj`` (src/tratrac/application/SMOOTHING.md).
 	out: Path
-	# Optional per-frame ego-motion transform CSV (current frame -> global). ``None``
+	# The GSD metric scale sidecar (a CoordinateTransform, see
+	# infrastructure/transform/records.py), always written -- [calibration] is itself
+	# mandatory and always yields a scale, so unlike transform_file/anchors_dir this is
+	# not toggleable. See src/tratrac/calibration/GSD_CALIBRATION.md.
+	scale_out: Path
+	# Optional per-frame ego-motion transform sidecar (current frame -> global). ``None``
 	# = off. Only meaningful when ego-motion is enabled (``resolve`` enforces this):
 	# with stabilization off every transform is the identity, so there is nothing to
 	# record. See src/tratrac/infrastructure/video/EGO_MOTION.md.
-	transform_csv: Path | None
+	transform_file: Path | None
 	# Optional directory for the run's keyframe-anchor PNGs + manifest (the frames an
 	# operator draws exclusion zones on). ``None`` = off. Only meaningful when ego-motion
 	# is enabled (no anchors without live ORB). See src/tratrac/application/EXCLUSION_ZONES.md.
@@ -228,10 +233,11 @@ class RunConfig:
 		_check_range(det_thresh, 0.0, 1.0, "tracker.det_thresh", resolver)
 
 		out = resolver.required_path("export.out")
-		transform_csv = resolver.toggleable_path("export.transform_csv")
-		if transform_csv is not None and not ego_motion.enabled:
+		scale_out = resolver.required_path("export.scale_out")
+		transform_file = resolver.toggleable_path("export.transform_file")
+		if transform_file is not None and not ego_motion.enabled:
 			resolver.problems.append(
-				"export.transform_csv requires ego_motion.enabled = true; with stabilization "
+				"export.transform_file requires ego_motion.enabled = true; with stabilization "
 				'off every transform is the identity, so there is nothing to record (use "").'
 			)
 		anchors_dir = resolver.toggleable_path("export.anchors_dir")
@@ -263,7 +269,8 @@ class RunConfig:
 			tracker=TrackerConfig(det_thresh=det_thresh),
 			export=ExportConfig(
 				out=out,
-				transform_csv=transform_csv,
+				scale_out=scale_out,
+				transform_file=transform_file,
 				anchors_dir=anchors_dir,
 			),
 			window=window,

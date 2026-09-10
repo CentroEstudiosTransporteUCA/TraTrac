@@ -16,7 +16,7 @@ violations CSV (in red, in the same pass) — so one render gives "frame + traje
 violations" without a second encode.
 
 For an ego-motion run the ``.trj`` (and violation) positions are in the global
-stabilization frame; pass ``--transforms`` (the run's ``export.transform_csv``) so each
+stabilization frame; pass ``--transforms`` (the run's ``export.transform_file``) so each
 frame's inverse transform maps everything back onto the raw video.
 """
 
@@ -38,7 +38,7 @@ from tratrac.domain.geometry import Point2D, Transform2D
 from tratrac.domain.vehicle import VehicleState
 from tratrac.infrastructure.export.overlay_video import OverlayVideoExporter
 from tratrac.infrastructure.export.ssam_trj import read_trj
-from tratrac.infrastructure.transform.csv import read_transforms
+from tratrac.infrastructure.transform.sink import read_transforms
 from tratrac.infrastructure.video.opencv import OpenCvVideoSource
 
 app = typer.Typer(
@@ -91,8 +91,8 @@ def render(
 		typer.Option(
 			"--transforms",
 			dir_okay=False,
-			help="The run's transform CSV (export.transform_csv); maps global-frame coords back "
-			"onto the raw video for an ego-motion run. Omit for a non-stabilized run.",
+			help="The run's transform sidecar (export.transform_file); maps global-frame coords "
+			"back onto the raw video for an ego-motion run. Omit for a non-stabilized run.",
 		),
 	] = None,
 	violations: Annotated[
@@ -123,7 +123,7 @@ def render(
 		raise typer.BadParameter(f"{out} already exists; pass --force to overwrite.")
 	try:
 		recording = read_trj(trj)
-		transforms_map = read_transforms(transforms) if transforms is not None else {}
+		transforms_table = read_transforms(transforms) if transforms is not None else None
 	except (ValueError, OSError) as exc:
 		raise typer.BadParameter(str(exc)) from exc
 
@@ -172,7 +172,8 @@ def render(
 		with exporter:
 			total = source.metadata.total_frames if source.metadata.total_frames > 0 else None
 			for frame in tqdm(source.frames(), total=total, desc="Rendering", unit="frame"):
-				current.value = transforms_map.get(frame.index, Transform2D.identity())
+				found = transforms_table.at(frame.index) if transforms_table is not None else None
+				current.value = found if found is not None else Transform2D.identity()
 				exporter.emit_frame(frame.index / fps, states_by_frame.get(frame.index, []), frame)
 
 	mark_total = sum(len(v) for v in violations_by_frame.values())

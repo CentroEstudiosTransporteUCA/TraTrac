@@ -4,8 +4,8 @@ Pure application logic for ``tratrac-smooth`` (src/tratrac/application/SMOOTHING
 forward+RTS Kalman smoother (``application.kalman.smooth_track``) on a track's measured
 centroids, then reads position/velocity/acceleration out of the smoothed state — never
 finite-differencing noisy position. Measurements are in pixels; outputs are scaled to
-metric (by ``meters_per_pixel``) exactly as the EMA estimator does, so the result feeds
-``SsamTrjExporter`` unchanged.
+metric via a ``ScaleTransform`` (the GSD calibration, ``application/coordinate_transforms.py``)
+exactly as the EMA estimator does, so the result feeds ``SsamTrjExporter`` unchanged.
 """
 
 from __future__ import annotations
@@ -13,9 +13,10 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
+from tratrac.application.coordinate_transforms import ScaleTransform
 from tratrac.application.kalman import SmoothedSample, smooth_track
 from tratrac.domain.geometry import Dimensions, Heading, Point2D, Vector2D
-from tratrac.domain.ports import InvertibleWorldProjector
+from tratrac.domain.ports import InvertibleCoordinateTransform
 from tratrac.domain.vehicle import VehicleState
 
 # Below this speed the velocity direction is pure jitter; fall back to the last good
@@ -42,15 +43,15 @@ class TrackSample:
 def smooth_to_states(
 	track_id: int,
 	samples: list[TrackSample],
-	scale: float,
+	scale: ScaleTransform,
 	*,
 	pos_noise: float,
 	jerk: float,
 ) -> list[VehicleState]:
 	"""Smooth one track's observations into per-frame ``VehicleState``s (aligned to ``samples``).
 
-	``samples`` must be in frame order. ``scale`` is metres-per-pixel. Returns one state
-	per sample; an empty input yields an empty list.
+	``samples`` must be in frame order. ``scale`` is the GSD metres-per-pixel calibration.
+	Returns one state per sample; an empty input yields an empty list.
 	"""
 	if not samples:
 		return []
@@ -86,7 +87,7 @@ def build_state(
 	kinematics: SmoothedSample,
 	width: float,
 	height: float,
-	scale: float,
+	scale: ScaleTransform,
 	last_heading: Heading | None,
 	angle: float | None = None,
 	oriented_size: tuple[float, float] | None = None,
@@ -104,7 +105,7 @@ def build_state(
 	exists to remove. ``oriented_size``, when present, replaces the bbox as the source of
 	``Dimensions`` — the real accuracy payoff OBB buys for vehicle sizing.
 	"""
-	velocity = Vector2D(kinematics.vx * scale, kinematics.vy * scale)
+	velocity = Vector2D(kinematics.vx * scale.factor, kinematics.vy * scale.factor)
 	speed = velocity.magnitude
 	if speed >= _VELOCITY_EPSILON:
 		heading: Heading = velocity.normalized()
@@ -121,7 +122,7 @@ def build_state(
 		heading = last_heading or _major_axis_heading(width, height)
 		remembered = last_heading
 	# Longitudinal acceleration = d|v|/dt = (v·a)/|v| (the SSAM Acceleration field).
-	accel_x, accel_y = kinematics.ax * scale, kinematics.ay * scale
+	accel_x, accel_y = kinematics.ax * scale.factor, kinematics.ay * scale.factor
 	acceleration = (
 		(velocity.dx * accel_x + velocity.dy * accel_y) / speed
 		if speed >= _VELOCITY_EPSILON
@@ -131,11 +132,11 @@ def build_state(
 	state = VehicleState(
 		vehicle_id=track_id,
 		timestamp_seconds=timestamp_seconds,
-		centroid=Point2D(kinematics.px * scale, kinematics.py * scale),
+		centroid=Point2D(kinematics.px * scale.factor, kinematics.py * scale.factor),
 		heading=heading,
 		dimensions=Dimensions(
-			length=max(size_length, size_width) * scale,
-			width=min(size_length, size_width) * scale,
+			length=max(size_length, size_width) * scale.factor,
+			width=min(size_length, size_width) * scale.factor,
 		),
 		velocity=velocity,
 		acceleration=acceleration,
@@ -149,7 +150,7 @@ def _major_axis_heading(width: float, height: float) -> Heading:
 
 
 def invert_state_to_image(
-	state: VehicleState, projector: InvertibleWorldProjector, frame_index: int
+	state: VehicleState, projector: InvertibleCoordinateTransform, frame_index: int
 ) -> tuple[Point2D, float, Dimensions]:
 	"""Map a world-smoothed ``VehicleState`` back to image-space pixels via ``projector``.
 
@@ -168,17 +169,16 @@ def invert_state_to_image(
 	problem: perspective-varying jitter looks different in each space, so smoothing twice risks
 	damping real motion in whichever space wasn't the one physically justified).
 	"""
-	inverse = projector.inverse()
 	half_width = state.dimensions.width / 2.0
 	perpendicular = Heading(-state.heading.dy, state.heading.dx)
 
-	front_img = inverse.to_world(state.front_bumper, frame_index)
-	rear_img = inverse.to_world(state.rear_bumper, frame_index)
-	left_img = inverse.to_world(
+	front_img = projector.reverse(state.front_bumper, frame_index)
+	rear_img = projector.reverse(state.rear_bumper, frame_index)
+	left_img = projector.reverse(
 		state.centroid.translate_by(perpendicular.as_vector_with_magnitude(half_width)),
 		frame_index,
 	)
-	right_img = inverse.to_world(
+	right_img = projector.reverse(
 		state.centroid.translate_by(perpendicular.reversed().as_vector_with_magnitude(half_width)),
 		frame_index,
 	)
@@ -192,22 +192,21 @@ def invert_state_to_image(
 	return centroid, angle, Dimensions(length=length, width=width)
 
 
-def unscale_state_to_image(state: VehicleState, scale: float) -> tuple[Point2D, float, Dimensions]:
+def unscale_state_to_image(
+	state: VehicleState, scale: ScaleTransform
+) -> tuple[Point2D, float, Dimensions]:
 	"""Undo ``build_state``'s metric scaling (no homography involved) to recover pixels.
 
-	Used when ``--calibration`` was **not** given: ``recording.scale`` still reflects the GSD
-	metric scale a real ``tratrac`` run always carries (``src/tratrac/calibration/GSD_CALIBRATION.md`` —
-	config-only, zero-defaults means it's essentially never exactly ``1.0``), so ``state``'s
-	position/dimensions are metric, not raw pixels, even without a homography. Dividing back
-	out is exact — a pure uniform scale, unlike ``invert_state_to_image``'s general homography
-	inverse — so this stays a plain arithmetic helper rather than routing through
-	``InvertibleWorldProjector``.
+	Used when ``--calibration`` was **not** given: the run's ``ScaleTransform`` (the GSD
+	metric scale, ``src/tratrac/calibration/GSD_CALIBRATION.md`` — config-only, zero-defaults
+	means it's essentially never exactly ``1.0``) still applied, so ``state``'s
+	position/dimensions are metric, not raw pixels, even without a homography.
 	"""
 	return (
-		Point2D(state.centroid.x / scale, state.centroid.y / scale),
+		Point2D(state.centroid.x / scale.factor, state.centroid.y / scale.factor),
 		math.atan2(state.heading.dy, state.heading.dx),
 		Dimensions(
-			length=state.dimensions.length / scale,
-			width=state.dimensions.width / scale,
+			length=state.dimensions.length / scale.factor,
+			width=state.dimensions.width / scale.factor,
 		),
 	)

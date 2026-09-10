@@ -23,7 +23,6 @@ class TestRecordFrameDetections:
 	def test_normalizes_box_by_frame_dimensions(self) -> None:
 		recording = TrackRecording(
 			metadata=_META,
-			scale=1.0,
 			observations=[
 				TrackObservation(
 					frame_index=0,
@@ -51,7 +50,6 @@ class TestRecordFrameDetections:
 	def test_groups_multiple_observations_by_frame(self) -> None:
 		recording = TrackRecording(
 			metadata=_META,
-			scale=1.0,
 			observations=[
 				TrackObservation(0, 1, 10.0, 10.0, 4.0, 4.0, VehicleClass.CAR, 0.5),
 				TrackObservation(0, 2, 20.0, 20.0, 4.0, 4.0, VehicleClass.TRUCK, 0.5),

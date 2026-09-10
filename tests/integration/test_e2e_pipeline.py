@@ -19,6 +19,7 @@ from typer.testing import CliRunner
 
 from tratrac.application.pipeline import TrajectoryPipeline
 from tratrac.cli_postprocess import app as postprocess_app
+from tratrac.infrastructure.calibration.scale_sidecar import write_scale
 from tratrac.infrastructure.detection.rt_detr import RtDetrDetector
 from tratrac.infrastructure.tracking.boxmot_bot_sort import BoxmotBotSortTracker
 from tratrac.infrastructure.tracks.parquet import ParquetTrackSink, read_tracks
@@ -64,7 +65,7 @@ def test_perception_record_then_smooth_to_trj(synthetic_video: Path, tmp_path: P
 			video=source,
 			detector=detector,
 			tracker=tracker,
-			sink=ParquetTrackSink(record, source.metadata, scale=1.0),
+			sink=ParquetTrackSink(record, source.metadata),
 		)
 		n_frames = pipeline.run()
 
@@ -72,9 +73,14 @@ def test_perception_record_then_smooth_to_trj(synthetic_video: Path, tmp_path: P
 	recording = read_tracks(record)  # the record is a valid, self-contained track file
 	assert (recording.metadata.width, recording.metadata.height) == (_WIDTH, _HEIGHT)
 
+	scale_path = tmp_path / "record.scale.jsonl"
+	write_scale(scale_path, 1.0)
+
 	# Step 2: smooth the record into a .trj via the real entry point.
 	out = tmp_path / "out.trj"
-	result = CliRunner().invoke(postprocess_app, [str(record), "--out", str(out)])
+	result = CliRunner().invoke(
+		postprocess_app, [str(record), "--out", str(out), "--scale", str(scale_path)]
+	)
 	assert result.exit_code == 0, result.output
 	data = out.read_bytes()
 

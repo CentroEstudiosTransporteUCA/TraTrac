@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 from typer.testing import CliRunner
 
+from tratrac.application.coordinate_transforms import PerAnchorTransform, ScaleTransform
 from tratrac.application.kalman import SmoothedSample
 from tratrac.application.track_smoothing import (
 	TrackSample,
@@ -19,12 +20,12 @@ from tratrac.application.track_smoothing import (
 	smooth_to_states,
 	unscale_state_to_image,
 )
-from tratrac.application.world_projection import PerAnchorWorldProjector
 from tratrac.cli_postprocess import app
 from tratrac.domain.detection import Detection, TrackedDetection, VehicleClass
 from tratrac.domain.frame import VideoMetadata
 from tratrac.domain.geometry import BoundingBox, Dimensions, Heading, Point2D, Vector2D
 from tratrac.domain.vehicle import VehicleState
+from tratrac.infrastructure.calibration.scale_sidecar import write_scale
 from tratrac.infrastructure.tracks.parquet import ParquetTrackSink
 
 
@@ -44,11 +45,11 @@ def _samples(n: int, *, vx: float, fps: float = 10.0) -> list[TrackSample]:
 
 class TestSmoothToStates:
 	def test_empty_track(self) -> None:
-		assert smooth_to_states(1, [], 1.0, pos_noise=2.0, jerk=20.0) == []
+		assert smooth_to_states(1, [], ScaleTransform(1.0), pos_noise=2.0, jerk=20.0) == []
 
 	def test_produces_state_per_sample_with_metric_scaling(self) -> None:
 		samples = _samples(30, vx=10.0)
-		states = smooth_to_states(7, samples, 0.5, pos_noise=1.0, jerk=10.0)
+		states = smooth_to_states(7, samples, ScaleTransform(0.5), pos_noise=1.0, jerk=10.0)
 		assert len(states) == len(samples)
 		assert all(s.vehicle_id == 7 for s in states)
 		mid = states[15]
@@ -64,7 +65,7 @@ class TestSmoothToStates:
 		samples = [
 			TrackSample(i, i / 10.0, Point2D(20.0, 20.0), width=4.0, height=2.0) for i in range(10)
 		]
-		states = smooth_to_states(1, samples, 1.0, pos_noise=2.0, jerk=20.0)
+		states = smooth_to_states(1, samples, ScaleTransform(1.0), pos_noise=2.0, jerk=20.0)
 		# No motion -> heading falls back to bbox major axis (width >= height -> east).
 		assert states[-1].heading.dx == 1.0
 
@@ -74,7 +75,7 @@ class TestSmoothToStates:
 			TrackSample(i, i / 10.0, Point2D(20.0, 20.0), width=4.0, height=2.0, angle=math.pi / 2)
 			for i in range(10)
 		]
-		states = smooth_to_states(1, samples, 1.0, pos_noise=2.0, jerk=20.0)
+		states = smooth_to_states(1, samples, ScaleTransform(1.0), pos_noise=2.0, jerk=20.0)
 		assert states[-1].heading.dy == pytest.approx(1.0, abs=1e-6)
 
 	def test_obb_angle_never_overrides_a_moving_headings_velocity(self) -> None:
@@ -90,7 +91,7 @@ class TestSmoothToStates:
 			)
 			for i in range(30)
 		]
-		states = smooth_to_states(1, samples, 1.0, pos_noise=1.0, jerk=10.0)
+		states = smooth_to_states(1, samples, ScaleTransform(1.0), pos_noise=1.0, jerk=10.0)
 		assert states[15].heading.dx > 0.9
 
 	def test_obb_angle_is_disambiguated_against_last_heading(self) -> None:
@@ -103,7 +104,7 @@ class TestSmoothToStates:
 			kinematics=SmoothedSample(px=0.0, py=0.0, vx=0.0, vy=0.0, ax=0.0, ay=0.0),
 			width=4.0,
 			height=2.0,
-			scale=1.0,
+			scale=ScaleTransform(1.0),
 			last_heading=Heading(1.0, 0.0),
 			angle=math.pi,
 		)
@@ -117,7 +118,7 @@ class TestSmoothToStates:
 			)
 			for i in range(5)
 		]
-		states = smooth_to_states(1, samples, 2.0, pos_noise=2.0, jerk=20.0)
+		states = smooth_to_states(1, samples, ScaleTransform(2.0), pos_noise=2.0, jerk=20.0)
 		# Scaled by 2.0 m/px: length 9*2=18, width 3*2=6 — not the bbox's 4*2=8 / 2*2=4.
 		assert states[-1].dimensions.length == pytest.approx(18.0)
 		assert states[-1].dimensions.width == pytest.approx(6.0)
@@ -130,7 +131,7 @@ def _scale_homography(s: float) -> np.ndarray:
 class TestInvertStateToImage:
 	def test_undoes_a_pure_scale_projection(self) -> None:
 		# world = 0.5 * image -> image = 2 * world, the inverse this test checks.
-		projector = PerAnchorWorldProjector({0: _scale_homography(0.5)})
+		projector = PerAnchorTransform({0: _scale_homography(0.5)})
 		world_state = VehicleState(
 			vehicle_id=1,
 			timestamp_seconds=0.0,
@@ -151,7 +152,7 @@ class TestInvertStateToImage:
 		# A real (non-axis-aligned-preserving) homography plus the 0-origin shift
 		# _project_to_world composes in — the combination cli_postprocess.py actually uses.
 		matrix = np.array([[2.0, 0.3, 5.0], [0.1, 1.5, -2.0], [0.001, 0.0005, 1.0]])
-		projector = PerAnchorWorldProjector({0: matrix}).shifted(37.0, -11.0)
+		projector = PerAnchorTransform({0: matrix}).shifted(37.0, -11.0)
 
 		pixel_centroid = Point2D(50.0, 80.0)
 		pixel_heading = Heading.from_angle(0.7)
@@ -159,8 +160,8 @@ class TestInvertStateToImage:
 		front = pixel_centroid.translate_by(pixel_heading.as_vector_with_magnitude(3.0))
 		rear = pixel_centroid.translate_by(pixel_heading.reversed().as_vector_with_magnitude(3.0))
 
-		world_front = projector.to_world(front, frame_index=5)
-		world_rear = projector.to_world(rear, frame_index=5)
+		world_front = projector.apply(front, frame_index=5)
+		world_rear = projector.apply(rear, frame_index=5)
 		world_centroid = Point2D(
 			(world_front.x + world_rear.x) / 2.0, (world_front.y + world_rear.y) / 2.0
 		)
@@ -192,7 +193,7 @@ class TestUnscaleStateToImage:
 			velocity=Vector2D(0.0, 0.0),
 			acceleration=0.0,
 		)
-		centroid, angle, dimensions = unscale_state_to_image(state, scale=0.5)
+		centroid, angle, dimensions = unscale_state_to_image(state, scale=ScaleTransform(0.5))
 		assert centroid.x == pytest.approx(20.0)
 		assert centroid.y == pytest.approx(40.0)
 		assert angle == pytest.approx(math.pi / 2)
@@ -200,9 +201,10 @@ class TestUnscaleStateToImage:
 		assert dimensions.width == pytest.approx(4.0)
 
 
-def _write_tracks(path: Path, samples: list[TrackSample]) -> None:
+def _write_tracks(path: Path, samples: list[TrackSample]) -> Path:
+	"""Returns the scale sidecar's path (for ``--scale``)."""
 	meta = VideoMetadata(width=1920, height=1080, fps=10.0, total_frames=len(samples))
-	with ParquetTrackSink(path, meta, scale=1.0) as sink:
+	with ParquetTrackSink(path, meta) as sink:
 		for s in samples:
 			det = TrackedDetection(
 				track_id=1,
@@ -218,15 +220,20 @@ def _write_tracks(path: Path, samples: list[TrackSample]) -> None:
 				),
 			)
 			sink.record(s.frame_index, [det])
+	scale_path = path.with_name(path.name + ".scale.jsonl")
+	write_scale(scale_path, 1.0)
+	return scale_path
 
 
 class TestSmoothCli:
 	def test_smooths_tracks_into_parseable_trj(self, tmp_path: Path) -> None:
 		tracks = tmp_path / "tracks.parquet"
 		out = tmp_path / "smooth.trj"
-		_write_tracks(tracks, _samples(20, vx=8.0))
+		scale_path = _write_tracks(tracks, _samples(20, vx=8.0))
 
-		result = CliRunner().invoke(app, [str(tracks), "--out", str(out)])
+		result = CliRunner().invoke(
+			app, [str(tracks), "--out", str(out), "--scale", str(scale_path)]
+		)
 		assert result.exit_code == 0, result.output
 		assert out.exists()
 		# FORMAT record: first byte is the record type; the file is non-empty binary.
@@ -238,9 +245,11 @@ class TestSmoothCli:
 	def test_refuses_to_overwrite_without_force(self, tmp_path: Path) -> None:
 		tracks = tmp_path / "tracks.parquet"
 		out = tmp_path / "smooth.trj"
-		_write_tracks(tracks, _samples(5, vx=8.0))
+		scale_path = _write_tracks(tracks, _samples(5, vx=8.0))
 		out.write_text("existing")
-		result = CliRunner().invoke(app, [str(tracks), "--out", str(out)])
+		result = CliRunner().invoke(
+			app, [str(tracks), "--out", str(out), "--scale", str(scale_path)]
+		)
 		assert result.exit_code != 0
 		assert "force" in result.output.lower()
 
@@ -261,10 +270,12 @@ class TestExclusion:
 	def test_drops_a_track_mostly_inside_a_zone(self, tmp_path: Path) -> None:
 		record = tmp_path / "record.parquet"
 		meta = VideoMetadata(width=400, height=400, fps=10.0, total_frames=5)
-		with ParquetTrackSink(record, meta, scale=1.0) as sink:
+		with ParquetTrackSink(record, meta) as sink:
 			for i in range(5):
 				# track 1 sits inside the zone [0,50]^2; track 2 is far outside.
 				sink.record(i, [_track(1, 10.0, 10.0), _track(2, 300.0, 300.0)])
+		scale_path = record.with_name(record.name + ".scale.jsonl")
+		write_scale(scale_path, 1.0)
 
 		zones = tmp_path / "zones.json"
 		zones.write_text(
@@ -278,7 +289,16 @@ class TestExclusion:
 		)
 		out = tmp_path / "out.trj"
 		result = CliRunner().invoke(
-			app, [str(record), "--out", str(out), "--exclusion-zones", str(zones)]
+			app,
+			[
+				str(record),
+				"--out",
+				str(out),
+				"--exclusion-zones",
+				str(zones),
+				"--scale",
+				str(scale_path),
+			],
 		)
 		assert result.exit_code == 0, result.output
 		assert "dropped 1 excluded tracks" in result.output
