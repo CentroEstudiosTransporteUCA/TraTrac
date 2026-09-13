@@ -41,7 +41,7 @@ after. Two different reasons force this, worth telling apart:
 
 | Stage | Config | Why it's forced live | Detail |
 | --- | --- | --- | --- |
-| Ego-motion stabilization | `ego_motion.enabled` | Tracking associates on stabilized coordinates — stabilization has to precede it in the same pass | `src/tratrac/infrastructure/video/EGO_MOTION.md` |
+| Ego-motion stabilization | `input.transforms_in` (whether the file has any similarity rows — no separate enable toggle) | Tracking associates on stabilized coordinates — stabilization has to precede it in the same pass | `src/tratrac/infrastructure/video/EGO_MOTION.md` |
 | Decode-time decimation | `input.process_fps` | Frames are skipped *before decode* (`cv2.grab()` with no decode) — a skipped frame's data never exists to defer | `src/tratrac/infrastructure/TIMESTEP_PRECISION.md` |
 
 **Forced by a measurement dependency** — the thing being captured only exists at the moment it happens, nothing to reconstruct:
@@ -49,8 +49,20 @@ after. Two different reasons force this, worth telling apart:
 | Stage | Config | Why it's forced live | Detail |
 | --- | --- | --- | --- |
 | Step timing profiling | `run.timing_csv` | Per-frame wall-clock latency can't be retroactively known — it's observability, not correctness, but still only capturable live | `src/tratrac/infrastructure/timing/STEP_TIMING.md` |
-| Transform sidecar recording | `export.transform_file` | Captures the ego-motion transform at the instant it's computed; reconstructing it after the fact means re-running the estimator, not post-processing a record | `src/tratrac/infrastructure/transform/TRANSFORM_SINK.md` |
-| Anchor export | `export.anchors_dir` | The ORB keyframe anchors are chosen live during stabilization | `src/tratrac/application/EXCLUSION_ZONES.md` (consumes the anchors this produces) |
+
+Transform sidecar recording and anchor export used to be optional stages here, but they no
+longer exist inside `tratrac` at all: `tratrac` never estimates ego-motion (or scale, or a
+world-projection homography) itself, only reads an already-built transforms file
+(`input.transforms_in`, an always-required config key — there is no `[ego_motion]` section or
+`enabled` toggle for it to gate on). The estimation, transform recording, and anchor export
+instead run *mandatorily* (not a toggle) inside the separate `tratrac-preprocess estimate`
+subcommand's own live single pass, before `tratrac` runs at all — same "measurement dependency"
+reasoning (the transform and the anchor frame's pixels only exist at the instant
+`tratrac-preprocess` walks that frame), just relocated to a different tool's mandatory spine.
+`tratrac-preprocess` itself is now mandatory for every run, even a fully static camera, since
+it's the only place the GSD scale row gets resolved. See
+`src/tratrac/infrastructure/video/EGO_MOTION.md` and
+`src/tratrac/infrastructure/transform/TRANSFORM_SINK.md`.
 
 ---
 
@@ -63,7 +75,7 @@ Nothing here runs unless `tratrac-postprocess` or `tratrac-render` is separately
 | Stage | Why it's safely post-hoc | Detail |
 | --- | --- | --- |
 | Exclusion zone filtering | Pure point-in-polygon over recorded centroids | `src/tratrac/application/EXCLUSION_ZONES.md` |
-| World projection (single-homography today; multi-homography is a drop-in extension of the same seam) | A pure coordinate map over already-recorded measurements, needs no pixels | `src/tratrac/application/WORLD_PROJECTION.md`, `docs/roadmap/mvp3.md` |
+| World projection (single- and multi-homography both land as the same `homography` row kind, fitted by `tratrac-preprocess project`, applied by `tratrac-postprocess`) | A pure coordinate map over already-recorded measurements, needs no pixels | `src/tratrac/application/WORLD_PROJECTION.md`, `docs/roadmap/mvp3.md` |
 | Export-time (TIMESTEP) decimation | Thins an otherwise-complete `.trj` | `src/tratrac/infrastructure/TIMESTEP_PRECISION.md` |
 | Rendering (+ `--violations`, `--transforms`) | Fully derivable from an already-finished `.trj` and a re-opened video file | `src/tratrac/infrastructure/export/VIDEO_EXPORT.md` |
 | Link ID / Lane ID assignment (not yet built) | Point-in-polygon over recorded centroids, same pattern as exclusion zones; a `.trj` without them just carries `0` | `docs/roadmap/road_topology.md`, `docs/roadmap/mvp3.md`, `docs/roadmap/mvp6.md` |

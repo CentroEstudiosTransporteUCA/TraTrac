@@ -3,23 +3,23 @@
 > **Status — 🟡 Partially shipped (world projection + multi-anchor + multi-homography/plane
 > landed; stabilization upgrade deferred).** The MVP number is a capability ID, not execution
 > order — see the roadmap reconciliation in `docs/ROADMAP.md`. **World projection** is
-> implemented as a **post-hoc homography** in `tratrac-postprocess` — see "Implementation
-> (Approach A — shipped)" below. **Multi-anchor projection** (`docs/IMPLEMENTATION_PLAN.md`
-> Group C3) has also landed: `PerAnchorTransform` (`application/coordinate_transforms.py`) fits
-> one homography per anchor and picks the nearest one by frame-index distance (not interpolated
-> between neighbors — see its docstring for why); `cli_postprocess.py`'s `_fit_projector`
-> dispatches to it automatically when a calibration's correspondences span more than one
-> `reference_frame`, falling back to the original single-homography path unchanged for one
-> anchor. **Multi-homography plane projection** (MVP3, Group C5) has landed too:
-> `MultiPlaneTransform` selects a homography by classifying the point itself against
-> elevation-plane zones (`--plane-zones`, `application/ROAD_GRAPH.md`) — spatial selection,
-> orthogonal to `PerAnchorTransform`'s temporal (`frame_index`) selection; the two are not
-> composed (a calibration spanning both multiple anchors and multiple planes pools an anchor's
-> correspondences per plane regardless of anchor, a known, documented limitation).
-> **Automatic-calibration correspondence proposal** (Group C4) has landed too, scoped to
-> proposal-only per its resolved repo-boundary question — see "Automatic calibration from road
-> geometry" below and `src/tratrac/application/AUTO_CALIBRATION.md`. The one piece still **not**
-> done: the SuperPoint + LightGlue stabilization upgrade (MVP1.9's ORB still does ego-motion;
+> implemented as a **post-hoc homography**, fitted by `tratrac-preprocess project` — see
+> "Implementation (Approach A — shipped)" below. **Multi-anchor projection**
+> (`docs/IMPLEMENTATION_PLAN.md` Group C3) has also landed: fitting groups correspondences by
+> `reference_frame` and fits one homography per anchor, materializing a row (with the nearest
+> anchor's matrix baked in) for every frame — one homography *kind*, not a dedicated class;
+> a single-anchor (or static) calibration is simply the one-row-value case, not a separate code
+> path. **Multi-homography plane projection** (MVP3, Group C5) has landed too: fitting instead
+> classifies each correspondence against elevation-plane zones (`--plane-zones`,
+> `application/ROAD_GRAPH.md`) and materializes one homography row per plane per frame, each
+> carrying that plane's own polygon as its `zone` — spatial selection, orthogonal to the
+> per-anchor path's temporal (`frame_index`) selection; the two are not composed (a calibration
+> spanning both multiple anchors and multiple planes pools an anchor's correspondences per plane
+> regardless of anchor, a known, documented limitation). **Automatic-calibration correspondence
+> proposal** (Group C4) has landed too, scoped to proposal-only per its resolved repo-boundary
+> question — see "Automatic calibration from road geometry" below and
+> `src/tratrac/application/AUTO_CALIBRATION.md`. The one piece still **not** done: the
+> SuperPoint + LightGlue stabilization upgrade (MVP1.9's ORB still does ego-motion;
 > `docs/BACKLOG.md` item 1). With all landed, SSAM positions can be metric world
 > coordinates for wide-swept, many-anchor, grade-separated scenes, not just bounded flat ones.
 
@@ -91,7 +91,7 @@ Meaning:
 ### Multi-Homography Geometry — landed (Group C5, MVP3)
 
 > See "Multi-homography plane projection — landed (Group C5)" further below for the shipped
-> `MultiPlaneTransform` design. The rationale below (why single-homography breaks for
+> per-plane `homography` row design. The rationale below (why single-homography breaks for
 > grade separation, why not full 3D) is unchanged by that landing.
 
 #### Why
@@ -308,20 +308,27 @@ Conflict TTC / PET become physically valid in this MVP; conflict
 
 ### Decision: projection is **post-hoc**, not in the pipeline
 
-World projection runs in `tratrac-postprocess` (pass 2), **not** in the perception
-run (pass 1). Rationale, consistent with the project's B-first / post-hoc bias
-(src/tratrac/infrastructure/export/VIDEO_EXPORT.md, src/tratrac/application/SMOOTHING.md, and the `post-hoc-rendering-principle` memory):
+World projection is **fitted** by `tratrac-preprocess project`, a step that runs against
+the anchors/transforms `tratrac-preprocess estimate` already produced — before the
+perception run, but outside it, not as part of it. `tratrac-postprocess` (pass 2)
+only ever **applies** the already-fitted homography rows it finds in the shared
+transforms file; it never fits anything itself. Rationale, consistent with the
+project's B-first / post-hoc bias (src/tratrac/infrastructure/export/VIDEO_EXPORT.md,
+src/tratrac/application/SMOOTHING.md, and the `post-hoc-rendering-principle` memory):
 
-- Projection is a pure coordinate map over already-recorded measurements — it needs
-  no pixels, only the track record. Anything derivable from the record post-hoc
-  stays out of the live loop.
-- It is **re-tunable offline**: fix a bad correspondence, re-run pass 2, no
-  re-detection. Same property the smoother and exclusion filter already have.
-- It composes with the existing post-hoc stages: read record → *(filter exclusion)*
-  → **project to world** → smooth → export. The projection slots in **before**
-  smoothing so the Kalman/RTS de-jitter runs in world metres.
+- Projection is a pure coordinate map over already-recorded measurements — fitting it
+  needs no pixels beyond the anchor PNGs already exported, and applying it needs only
+  the track record. Anything derivable post-hoc stays out of the live perception loop.
+- Fitting is **re-tunable cheaply**: fix a bad correspondence, re-run `project`
+  (file-in/file-out, no video, no re-detection) — it replaces the homography rows in
+  place rather than appending, so the same command is safe to re-run as many times as
+  the operator tweaks `calibration.json`.
+- `tratrac-postprocess` still composes with the existing post-hoc stages: read record
+  → *(filter exclusion)* → **apply projection** → smooth → export. The projection
+  slots in **before** smoothing so the Kalman/RTS de-jitter runs in world metres.
 
-This keeps the perception run byte-identical to MVP1.75 when no calibration is given.
+This keeps the perception run byte-identical to MVP1.75 when the transforms file carries
+no homography rows (a scale-only, image-space run).
 
 ### The transform-coordinates-not-pixels invariant (again)
 
@@ -354,9 +361,11 @@ coordinates.
 | --- | --- | --- |
 | `domain/world.py` | `Correspondence`, `Calibration` | pure value objects (an `image`/`world` pair + its `reference_frame`) |
 | `domain/ports.py` | `CoordinateTransform` Protocol | `apply(point, frame_index) -> Point2D`, `reverse(point, frame_index) -> Point2D` |
-| `application/coordinate_transforms.py` | `IdentityTransform`, `PerAnchorTransform`, `local_scale_at` | pure projection math (numpy only — the projective multiply + perspective divide) |
+| `infrastructure/transform/records.py` | `HomographyFunction`, `HomographyCodec` | the row's `function` payload: pure projection math (numpy only — the projective multiply + perspective divide) + its JSON encode/decode |
+| `application/coordinate_transforms.py` | `TransformTable`, `local_scale_at` | the one generic reader: group rows by `frame_index`, filter by which `zone` contains the query point, delegate to that row's `function` |
 | `infrastructure/world/calibration.py` | `load_calibration`, `compute_homography` | sidecar-JSON reader + the cv2 homography **fit** (the only cv2 in the MVP2 path) |
-| `cli_postprocess.py` | `--calibration`, `_project_to_world`, `_project_observation` | composition root: load → lift correspondences to global → fit → rewrite the recording |
+| `cli_preprocess.py` | `project` subcommand, `_fit_whole_scene`, `_fit_per_plane` | composition root for *fitting*: load calibration → lift correspondences to global → fit → replace the homography rows in the shared transforms file |
+| `cli_postprocess.py` | `_project_to_world`, `_project_observation` | composition root for *applying* an already-fitted `TransformTable` to the recording — no fitting happens here |
 
 ### Minimal-blast integration: project, then reuse the existing path
 
@@ -383,72 +392,84 @@ the filter de-jitters identically, just in metres.
 ### Multi-anchor projection — landed (Group C3)
 
 The seams described below (written when only Approach A existed) let the multi-anchor
-projector drop in **behind the same port**, with no caller changes — and that's exactly
-what happened:
+projector drop in **behind the same row model**, with no caller changes — and that's exactly
+what happened, though it has since been folded into the unified transforms file (see
+`src/tratrac/infrastructure/transform/TRANSFORM_SINK.md`) rather than staying a dedicated class:
 
-- `CoordinateTransform.apply` already took `frame_index`; `PerAnchorTransform`
-  (`application/coordinate_transforms.py`) uses it to pick the nearest anchor's homography
-  (nearest by frame-index distance — a deliberate hard switch, not an interpolated blend
-  between neighboring anchors' homographies; see the class's docstring for why interpolation
-  isn't the simple choice it sounds like for projective transforms).
+- `TransformTable.apply` already took `frame_index`; fitting (`cli_preprocess._fit_whole_scene`)
+  picks the nearest anchor's homography (nearest by frame-index distance — a deliberate hard
+  switch, not an interpolated blend between neighboring anchors' homographies — see the
+  function's docstring for why interpolation isn't the simple choice it sounds like for
+  projective transforms) and materializes it as one `homography` row per frame, `zone = whole
+  canvas`.
 - `Calibration`/`Correspondence` already carried `reference_frame` per correspondence, so a
   calibration spanning many anchors parsed before this landed — only the *fitter* changed:
-  `cli_postprocess._fit_projector` groups correspondences by `reference_frame` and fits one
-  `H` per group. **Update (Group F's dual-space export work):** a single-anchor (or static)
-  calibration originally kept its own separate code path here, fitting a dedicated
-  `SingleHomographyProjector` — that class was later removed as redundant (a one-entry
-  `PerAnchorTransform` map is behaviorally identical: with only one anchor, selection by
-  `frame_index` always resolves to it) and `_fit_projector` now always returns a
-  `PerAnchorTransform`, one code path regardless of anchor count.
+  `_fit_whole_scene` groups correspondences by `reference_frame` and fits one `H` per group,
+  then assigns each real frame's row the nearest group's matrix. A single-anchor (or static)
+  calibration is simply the one-group case — there is no separate code path for it, and no
+  separate "per-anchor" homography *kind*: the wire format has exactly one `homography` type,
+  differentiated only by what `zone` a row carries (see "One file, one row model" in
+  `TRANSFORM_SINK.md`).
 - The anchor-manifest lift (`pose(reference_frame)`) was already in place and needed no
   changes.
 
-**Not done by this landing:** each anchor's `pos_noise`/`jerk` scale conversion is
-approximated as the *average* of every anchor's local scale, not tracked per-observation —
-the smoother still takes one global `(pos_noise, jerk)` pair for a track, so a track crossing
-an anchor boundary mid-life gets a slightly-off noise model near the switch. Revisit if
-`scripts/validate_trj.py` shows this mattering in practice. Full pose-interpolated control
-regions (the "Approach D" end of the original comparison) remain unimplemented — the nearest-
-anchor hard switch was judged sufficient unless real footage shows a visible seam.
+**Not done by this landing:** each anchor's `pos_noise`/`jerk` scale conversion is computed
+**per observation** (`cli_postprocess._representative_local_scale` averages each observation's
+own local scale, not a pre-averaged point — see the fix note in `application/SMOOTHING.md` if
+present), so a track crossing an anchor boundary mid-life still gets one averaged
+`(pos_noise, jerk)` pair for its whole life rather than a value that itself varies mid-track.
+Full pose-interpolated control regions (the "Approach D" end of the original comparison) remain
+unimplemented — the nearest-anchor hard switch was judged sufficient unless real footage shows
+a visible seam.
 
 ### Multi-homography plane projection — landed (Group C5, MVP3)
 
-`MultiPlaneTransform` (`application/coordinate_transforms.py`) selects a homography by
-**spatially classifying the point itself** against elevation-plane zones (ground, bridge,
-overpass, ...; `--plane-zones`, `application/ROAD_GRAPH.md`), rather than by `frame_index` —
-plane membership is *where* a point is, not *when* it was observed, which is why this is a
-genuinely different selection axis from `PerAnchorTransform`, not a variant of it:
+Fitting (`cli_preprocess._fit_per_plane`) selects a homography by **spatially classifying the
+point itself** against elevation-plane zones (ground, bridge, overpass, ...; `--plane-zones`,
+`application/ROAD_GRAPH.md`), rather than by `frame_index` — plane membership is *where* a
+point is, not *when* it was observed, which is why this is a genuinely different selection axis
+from the per-anchor path above, not a variant of it. It is still the same `homography` row
+*kind* either way; what differs is only which `zone` polygon each fitted row carries (the
+plane's own global polygon, materialized once per frame, instead of the whole-canvas rectangle):
 
-- Fitting (`cli_postprocess._fit_multi_homography_projector`) classifies each calibration
-  correspondence's global-mapped image point against the same plane zones the projector will
-  later use, groups correspondences by the resulting plane id, and fits one `H` per group —
-  the same "classify with the exact rule the consumer will use" principle
-  `application/ROAD_GRAPH.md` uses for Link/Lane, just feeding a homography selector instead of
-  a `VehicleState` field.
+- `_fit_per_plane` classifies each calibration correspondence's global-mapped image point
+  against the same plane zones the projector will later use, groups correspondences by the
+  resulting plane id, and fits one `H` per group — the same "classify with the exact rule the
+  consumer will use" principle `application/ROAD_GRAPH.md` uses for Link/Lane, just feeding a
+  homography selector instead of a `VehicleState` field. `plane_zones.json` is needed only here,
+  at fit time — the fitted row embeds the resulting polygon directly, so nothing downstream
+  (`TransformTable`, `tratrac-postprocess`) ever needs `plane_zones.json` again.
 - `0` is **not** a reserved "unknown" sentinel for plane ids the way it is for Link/Lane — it's
   a legitimate label (e.g. the ground plane), since plane assignment is purely internal
   (never written into `VehicleState`) and a projector must resolve *some* homography for every
   point, so there's no safe place to default to "unclassified." A point that falls outside
   every explicit plane zone still needs a `plane_id: 0` calibration group to be projectable;
-  `MultiPlaneTransform.apply` raises clearly, naming the plane id, rather than
-  guessing a "closest" plane — there's no principled distance metric between elevation
-  surfaces the way there is between anchors in time.
-- `--plane-zones` requires `--calibration` and **supersedes** the anchor-based dispatch in
-  `_fit_projector` entirely when given — a calibration spanning both multiple anchors and
-  multiple planes at once is not composed; an anchor's correspondences are pooled per plane
-  regardless of which anchor they came from. This is a real, documented limitation, not a
-  silently-swept edge case: a moving-drone shoot over a grade-separated site needs one or the
-  other landing (Group C3/C5 combined) to be fully served, which is unstarted.
-- Same `pos_noise`/`jerk` averaging caveat as the per-anchor path (see above) — a track
-  crossing a plane boundary mid-life gets a slightly-off noise model near the switch.
+  `_fit_per_plane` raises if a classified plane has no drawn zone polygon, and `TransformTable`
+  itself raises (naming the point and frame) if a query point matches no row's zone at all —
+  there's no principled distance metric between elevation surfaces the way there is between
+  anchors in time, so neither layer guesses a "closest" plane.
+- `--plane-zones` requires `--calibration` and **supersedes** the anchor-based fit entirely when
+  given — a calibration spanning both multiple anchors and multiple planes at once is not
+  composed; an anchor's correspondences are pooled per plane regardless of which anchor they
+  came from. This is a real, documented limitation, not a silently-swept edge case: a
+  moving-drone shoot over a grade-separated site needs one or the other landing (Group C3/C5
+  combined) to be fully served, which is unstarted.
+- Same per-observation `pos_noise`/`jerk` scale-averaging note as the per-anchor path above — a
+  track crossing a plane boundary mid-life still gets one averaged noise pair for its whole
+  life.
 
 ### Operator workflow
 
 ```text
-tratrac VIDEO --out run.parquet --stabilize --anchors-dir anchors/   # pass 1 (perception)
+tratrac-preprocess estimate VIDEO --background-zones bg.json \
+    --out transforms.jsonl --anchors-dir anchors/ \
+    --meters-per-pixel 0.05                                  # pass 0 (ego-motion + scale, no detector)
 # operator draws image↔world correspondences on an anchor PNG -> calibration.json
+tratrac-preprocess project --transforms transforms.jsonl \
+    --calibration calibration.json [--plane-zones plane_zones.json]   # pass 0.5 (fit + replace homography rows)
+tratrac --config run.toml   # input.transforms_in = transforms.jsonl  # pass 1 (perception)
 tratrac-postprocess run.parquet --out run.trj \
-    --calibration calibration.json --anchors anchors/manifest.json   # pass 2 (project + smooth)
+    --transforms transforms.jsonl                            # pass 2 (apply projection + smooth)
 ```
 
 `calibration.json` schema (≥ 4 correspondences; `reference_frame` defaults to `0`

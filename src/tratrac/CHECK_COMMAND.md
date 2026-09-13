@@ -32,7 +32,7 @@ tratrac --config run.toml --check [--json]
   "ok": false,
   "problems": [
     "detector.conf must be in [0.0, 1.0], got 1.4.",
-    "calibration: specify exactly one of meters_per_pixel or drone_model, not both.",
+    "input.transforms_in: file does not exist: out/highway_run3.transforms.jsonl.",
     "export.out must be a file path, not a directory: out/."
   ]
 }
@@ -50,19 +50,23 @@ Layered, cheapest first; each layer runs only if the previous parsed:
 - **L1 — TOML parse** (`load_toml`). A syntax error is a single fatal problem
   (`"config: <msg>"`); resolution can't proceed.
 - **L2 — `RunConfig.resolve`** (the bulk; already aggregated). Missing keys, type
-  errors, ranges, the calibration one-of, the `transform_file`/`anchors_dir` ⇒
-  `ego_motion.enabled` coherence guard. **This is exactly what a UI form needs.**
+  errors, ranges, and `input.transforms_in` existing as a file (a
+  `tratrac-preprocess estimate`/`project` run's output — always required, no
+  `enabled` toggle to gate it: `tratrac` never resolves scale, ego-motion, or a
+  world-projection homography itself, so this file's presence is unconditional).
+  **This is exactly what a UI form needs.**
 - **L3 — static run guards** (only if L1+L2 yield a `run`). The post-resolve checks
   already in `process`: video file exists, output path-types (file vs dir),
-  path collisions (`out` ≠ `timing_csv` ≠ `transform_file`). Cheap, no video decode.
+  path collisions (`out` ≠ `timing_csv`). Cheap, no video decode.
 
 **Out of scope (documented, not silently skipped):**
 
-- **L4 — anything that opens the video or the network**: `resolve_scale` for
-  `drone_model` calibration (needs `metadata.width`), `.SRT` altitude parsing, detector
-  checkpoint download/availability, device reachability. These are *run-time* concerns,
-  not config-shape concerns. A future `--check-deep` could add them; v1 stays fast and
-  offline so the UI can call it on every form edit.
+- **L4 — anything that opens the video or the network**: detector checkpoint
+  download/availability, device reachability. (Scale/ego-motion/homography resolution —
+  `drone_model` GSD lookup, `.SRT` altitude parsing — moved out of `tratrac` entirely and
+  into `tratrac-preprocess estimate`/`project`, which have no `--check` mode of their own
+  today.) These are *run-time* concerns, not config-shape concerns. A future `--check-deep`
+  could add them; v1 stays fast and offline so the UI can call it on every form edit.
 - **Warnings** (e.g. `tracker.det_thresh >= detector.conf` — legal but unusual). v1 is
   errors-only; a `"warnings": [...]` field is a forward-compatible extension point.
 

@@ -141,5 +141,6 @@ produced with `timestep_precision = 0`.
 | `tratrac-render` | `tratrac-render VIDEO --trj RUN.trj --out OVERLAY.mp4 [--transforms TRANSFORMS.jsonl] [--trail N] [--force]` |
 
 `--out` must not pre-exist without `--force`. For an ego-motion run pass
-`--transforms` (the run's `export.transform_file`) so the global-frame trajectories
-map back onto the raw video; omit it for a non-stabilized run.
+`--transforms` (the `tratrac-preprocess estimate` run's transforms file that fed
+`input.transforms_in`) so the global-frame trajectories map back onto the
+raw video; omit it for a non-stabilized (no similarity rows) run.

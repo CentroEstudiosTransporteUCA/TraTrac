@@ -6,9 +6,12 @@ Link ID and Lane ID shipped (`docs/IMPLEMENTATION_PLAN.md` Groups C1/C2), Strate
 (hand-drawn polygons) of `docs/roadmap/road_topology.md`. Optional and off by default, applied
 **post-hoc** by `tratrac-postprocess` via `--link-zones`/`--lane-zones`. Plane ID's *zones and
 classification helper* also live here (Group C5), but its *consumer* is
-`application/coordinate_transforms.py`'s `MultiPlaneTransform` — see
-`src/tratrac/application/WORLD_PROJECTION.md` for that story; this doc covers the shared
-zone/classification infrastructure the three fields build on.
+`tratrac-preprocess project`'s `_fit_per_plane` (`cli_preprocess.py`) — plane classification runs
+once, at **fit** time, to group calibration correspondences per plane; the resulting homography
+row simply embeds that plane's polygon as its `zone` field, so nothing downstream ever
+re-classifies by plane again (see `src/tratrac/application/WORLD_PROJECTION.md` and
+`src/tratrac/infrastructure/transform/TRANSFORM_SINK.md`'s "One file, one row model" for that
+story); this doc covers the shared zone/classification infrastructure the three fields build on.
 
 ## What this adds
 
@@ -44,23 +47,24 @@ way Link/Lane do.
 ## Where classification runs relative to the other post-hoc stages
 
 Link/Lane classification runs on **image-space** coordinates, at the same stage exclusion
-filtering does — after exclusion drops whole tracks, before `--calibration` projects
-coordinates to world metres. This matches the composition order in
-`docs/IMPLEMENTATION_PLAN.md`'s "Composition-root integration order":
+filtering does — after exclusion drops whole tracks, before the already-fitted projection rows
+(read from `--transforms`) are applied to project coordinates to world metres. This matches the
+composition order in `docs/IMPLEMENTATION_PLAN.md`'s "Composition-root integration order":
 
 ```
 read record
   → filter --exclusion-zones
   → assign --link-zones / --lane-zones
-  → project --calibration
+  → apply projection (scale-or-homography rows from --transforms, fitted earlier by
+    `tratrac-preprocess project`)
   → smooth (Kalman/RTS)
   → export .trj
 ```
 
 Zones are authored the same way exclusion zones are (`src/tratrac/application/EXCLUSION_ZONES.md`):
-on a reference frame, `0` for a static camera, or one of the run's exported ORB keyframe anchors
-for a moving drone (`--anchors manifest.json` maps each zone's `reference_frame` into the global
-frame by that anchor's pose).
+on a reference frame, `0` for a static camera, or any frame of a `tratrac-preprocess` run for a
+moving drone (`--transforms transforms.jsonl` maps each zone's `reference_frame` into the global
+frame by that frame's pose).
 
 ## Components (onion layers)
 
@@ -69,7 +73,8 @@ frame by that anchor's pose).
 | Domain | `domain/road_graph.py` | `LinkZone`/`LinkZones`, `LaneZone`/`LaneZones`, `PlaneZone`/`PlaneZones` — pure value objects, validated label ranges |
 | Application | `application/road_graph.py` | `to_global_{link,lane,plane}_polygons` (reference-frame → global, mirrors `application/exclusion.py`), `{link,lane,plane}_id_for_point` (point-in-polygon classification) |
 | Infrastructure | `infrastructure/road_graph/json.py` | Sidecar JSON readers (`load_{link,lane,plane}_zones`), mirrors `infrastructure/exclusion/json.py` |
-| CLI | `cli_postprocess.py` | `--link-zones`/`--lane-zones` options + `_assign_labels` (shared fitter/classifier plumbing, generic over `LinkZones`/`LaneZones`) and `_apply_link_ids`/`_apply_lane_ids` (stamp the smoothed states); `--plane-zones` + `_fit_multi_homography_projector` (fits `MultiPlaneTransform` instead of stamping a field — see `WORLD_PROJECTION.md`) |
+| CLI | `cli_postprocess.py` | `--link-zones`/`--lane-zones` options + `_assign_labels` (shared fitter/classifier plumbing, generic over `LinkZones`/`LaneZones`) and `_apply_link_ids`/`_apply_lane_ids` (stamp the smoothed states) |
+| CLI | `cli_preprocess.py` (`project` subcommand) | `--plane-zones` + `_fit_per_plane` (fits one homography row per plane, embedding that plane's polygon as the row's `zone`, instead of stamping a field — see `WORLD_PROJECTION.md`) |
 
 ## Sidecar schema
 

@@ -29,19 +29,23 @@ pass 2 (offline):            record → forward KF + RTS per track → smoothed 
   pipeline's primary product, not an opt-in sidecar. It is an **Apache Parquet** file: the
   **raw measurements** (centroid + bbox + class per track per frame) as columns, with the run's
   video metadata (`fps,width,height,total_frames`) in the Parquet **schema metadata** so the
-  record is self-contained. The GSD metric scale is **not** here — it's its own sidecar file
-  (`export.scale_out`, `infrastructure/calibration/scale_sidecar.py`), like every other
-  `CoordinateTransform`, fed to pass 2 via `tratrac-postprocess --scale`. The pipeline records
-  to a `TrackSink` (`ParquetTrackSink`) it owns directly. (Parquet is the MVP7 storage choice,
-  pulled forward for the canonical record.)
-- **Pass 2** is `tratrac-postprocess RECORD.parquet [--out final.trj] [--smoothed-record final.parquet]
-  [--exclusion-zones … --anchors …] [--pos-noise PX] [--jerk Q] [--timestep-precision S]`:
+  record is self-contained. The GSD metric scale is **not** here — it's resolved once by
+  `tratrac-preprocess estimate` and lives only as `scale` rows in the shared transforms file
+  (`infrastructure/transform/records.py`), fed to pass 2 via `tratrac-postprocess --transforms`
+  (the same file that already carries the ego-motion rows). The pipeline records to a
+  `TrackSink` (`ParquetTrackSink`) it owns directly. (Parquet is the MVP7 storage choice, pulled
+  forward for the canonical record.)
+- **Pass 2** is `tratrac-postprocess RECORD.parquet --transforms TRANSFORMS.jsonl
+  [--out final.trj] [--smoothed-record final.parquet]
+  [--exclusion-zones … ] [--pos-noise PX] [--jerk Q] [--timestep-precision S]`:
   (optionally **filter** out tracks inside exclusion zones, src/tratrac/application/EXCLUSION_ZONES.md) → group by track →
   forward+RTS smooth (**once**) → reconstruct `VehicleState` (kinematics via `build_state`) →
   write **either or both** of two independent, optional outputs from that one smoothing pass —
-  see "Dual-space export" below. At least one of `--out`/`--smoothed-record` is required. To
-  visualize the `.trj`, render with `tratrac-render` (src/tratrac/infrastructure/export/VIDEO_EXPORT.md); to visualize
-  directly over raw video frames (e.g. in FiftyOne), use `--smoothed-record` instead.
+  see "Dual-space export" below. At least one of `--out`/`--smoothed-record` is required;
+  `--transforms` is always required (it carries the mandatory scale-or-homography rows —
+  a run is never un-calibrated in this sense). To visualize the `.trj`, render with
+  `tratrac-render` (src/tratrac/infrastructure/export/VIDEO_EXPORT.md); to visualize directly
+  over raw video frames (e.g. in FiftyOne), use `--smoothed-record` instead.
 
 **Why raw measurements, not filter state:** pass 2 re-runs the forward pass (cheap) so the
 sidecar stays small and inspectable, and the smoother can be **re-tuned offline with no
@@ -51,10 +55,11 @@ always starts from the measurements, never from already-smoothed kinematics.
 
 ## Dual-space export: one smoothing pass, two optional outputs
 
-**The problem this solves.** `--calibration` (MVP2) projects a track onto the metric world
-plane *before* smoothing (deliberately — see "Why smoothing runs after projection, not
-before" below), so a calibrated `.trj`'s positions are real-world metres from a homography the
-`.trj` file itself doesn't store. A tool that wants to overlay trajectories on the *raw video*
+**The problem this solves.** A `--transforms` file carrying homography rows (MVP2, fitted
+ahead of time by `tratrac-preprocess project`) projects a track onto the metric world plane
+*before* smoothing (deliberately — see "Why smoothing runs after projection, not before"
+below), so a projected `.trj`'s positions are real-world metres from a homography the `.trj`
+file itself doesn't store. A tool that wants to overlay trajectories on the *raw video*
 (pixel canvas) — `tratrac-fiftyone` is the motivating case — can't use a calibrated `.trj` for
 that: dividing metres by the video's pixel width/height produces boxes clustered near the
 origin, disconnected from where the vehicle actually is. This was a real bug, not a
@@ -74,16 +79,16 @@ physically justified — world space, when there's a homography involved — exa
 (Parquet, `infrastructure/tracks/smoothed_parquet.py`) are both optional, independent outputs
 built from the **same** `states_by_frame` the one smoothing pass produces (`_smooth_recording`
 in `cli_postprocess.py`, unchanged) — `--out` is not required if `--smoothed-record` is given,
-and vice versa. `--smoothed-record` is always raw image-space pixels, regardless of whether
-`--calibration` was used:
+and vice versa. `--smoothed-record` is always raw image-space pixels, regardless of whether the
+`--transforms` file carries homography rows:
 
-- **No `--calibration`:** the smoothed `VehicleState`s are already image-space *up to* the
-  metric GSD scale every real `tratrac` run carries (MVP1.75, `calibration/GSD_CALIBRATION.md`
-  — the zero-defaults config means a run is essentially never un-calibrated in this sense).
+- **Scale rows only (no homography):** the smoothed `VehicleState`s are already image-space *up
+  to* the metric GSD scale every real run carries (MVP1.75, `calibration/GSD_CALIBRATION.md` —
+  the zero-defaults config means a run is essentially never un-calibrated in this sense).
   `unscale_state_to_image` (`application/track_smoothing.py`) undoes that scale by plain
   division — exact, since it's a pure uniform scale, not a homography.
-- **With `--calibration`:** `invert_state_to_image` (same module) inverts the *same* projector
-  `_project_to_world` fitted for the forward pass — not a fresh fit, the literal object,
+- **With homography rows:** `invert_state_to_image` (same module) inverts the *same* projector
+  `_project_to_world` returns for the forward pass — not a fresh fit, the literal object,
   via `InvertibleCoordinateTransform.reverse(point, frame_index)` (`domain/ports.py`). It inverts **four points**
   independently (front/rear bumpers → centroid, heading, length; left/right side points →
   width) rather than transforming `centroid`+`heading`+`dimensions` directly — the same reason
@@ -100,23 +105,26 @@ and vice versa. `--smoothed-record` is always raw image-space pixels, regardless
 **The 0-origin shift is part of what gets inverted, not just the homography.**
 `_project_to_world` also translates every projected point to a non-negative origin
 (`_normalize_world_recording`) — a real detail the naive "just call `projector.reverse(point, frame_index)`"
-version of this design missed at first. `PerAnchorTransform` gained a `.shifted(dx, dy)`
-method (`application/coordinate_transforms.py`) that composes the translation into every anchor's
-homography matrix itself (`T @ M`), so `_project_to_world` returns the **shifted** projector —
-the one whose `.reverse()` undoes the translation *and* the homography together, not just the
-homography.
+version of this design missed at first. `TranslationTransform` (`application/coordinate_transforms.py`,
+a small standalone `CoordinateTransform` for a constant pixel/metre shift) composes with the
+already-built `TransformTable` via `compose_invertible` (`shift = TranslationTransform(shift_x,
+shift_y)`; `shifted_projector = compose_invertible(projection, shift)`), so `_project_to_world`
+returns the **shifted** projector — the one whose `.reverse()` undoes the translation *and*
+the homography together, not just the homography.
 
-**Scope: `PerAnchorTransform` only** (its single-anchor case covers what used to be a
-separate `SingleHomographyProjector` class — see its docstring for why that class was removed;
-this dual-space export design is what surfaced the redundancy, while writing near-identical
-`.reverse()`/`.shifted()` methods for both).
-`MultiPlaneTransform` (`--plane-zones`, MVP3) selects its homography by classifying
-the *input* image point's position — exactly what's unknown when starting from a world point.
-Combining `--smoothed-record` with `--plane-zones` is rejected upfront with a clear error
-(`postprocess` in `cli_postprocess.py`) rather than silently guessing or producing a
-misleading partial result. A future version could carry each observation's plane id forward
-through smoothing so the reverse pass knows which homography to invert — not built yet; no
-real footage has needed multi-plane `--smoothed-record` output so far.
+**Scope: an invertible `TransformTable` only** — a single fitted homography (`zone = whole
+canvas`) or a per-anchor materialization (one homography row per frame, still one row per
+frame index) are both invertible, since exactly one row matches any given `(point, frame_index)`
+query. A per-plane homography table (`--plane-zones`, MVP3, fitted by `tratrac-preprocess
+project`) selects its homography by classifying the *input image* point's position — exactly
+what's unknown when starting from a world point — so `TransformTable.is_invertible` is `False`
+whenever more than one distinct `zone` is in play for a frame. Combining `--smoothed-record`
+with a non-invertible (multi-zone) projection is rejected upfront with a clear error
+(`postprocess` in `cli_postprocess.py`, see the `kinds_present`/`is_invertible` check near the
+top of the command) rather than silently guessing or producing a misleading partial result. A
+future version could carry each observation's plane id forward through smoothing so the reverse
+pass knows which homography to invert — not built yet; no real footage has needed multi-plane
+`--smoothed-record` output so far.
 
 ### Why smoothing runs after projection, not before
 
@@ -178,8 +186,9 @@ to fine-tune here, and no code has been written yet.
 - `application/track_smoothing.py` — observations → smoothed `VehicleState`s (`build_state`,
   `smooth_to_states`); `invert_state_to_image`/`unscale_state_to_image` — the dual-space export
   inverse (see above).
-- `application/coordinate_transforms.py` — `CoordinateTransform` impls; `.reverse()`/`.shifted()` on
-  `PerAnchorTransform` back the dual-space export.
+- `application/coordinate_transforms.py` — `TransformTable`, `TranslationTransform`,
+  `compose`/`compose_invertible`; `TransformTable.reverse()` composed with
+  `TranslationTransform` via `compose_invertible` backs the dual-space export.
 - `domain/ports.py` — `TrackSink` (the pipeline's primary output port); `CoordinateTransform` +
   `InvertibleCoordinateTransform`; `infrastructure/tracks/parquet.py` — `ParquetTrackSink` +
   `read_tracks` (Parquet, `pyarrow`). The pipeline records to the sink directly (it owns its

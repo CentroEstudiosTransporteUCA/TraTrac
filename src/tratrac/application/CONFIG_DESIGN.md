@@ -4,8 +4,8 @@
 
 ## What This Is
 
-A TraTrac run is fully described by a **`RunConfig`** — input video, detector,
-calibration, tracker, orientation, export, analysis window, and run options.
+A TraTrac run is fully described by a **`RunConfig`** — input video + transforms file,
+detector, runtime, tracker, export, analysis window, and run options.
 There are **no built-in defaults anywhere in the package**: every value must be
 supplied by the TOML config file (`--config PATH`). A missing value fails the run,
 listing every absent/invalid key at once.
@@ -64,7 +64,6 @@ every run. The rule that resolves this, while keeping "no hidden default":
 > operator writes.
 
 - `timing_csv = ""` — profiling off; a path turns it on.
-- `transform_file = ""` — no per-frame transform sidecar; a path turns it on.
 - `start = "" / end = ""` — the clip's natural bounds; else a timecode.
 
 (Overwrite policy is **not** in this list — it is not a config key at all; the
@@ -74,43 +73,33 @@ every run. The rule that resolves this, while keeping "no hidden default":
 Absence of a key is an error; an explicit "off" value is legal. The config is thus
 a complete, self-documenting declaration of the run with zero silent behaviour.
 
-A toggleable key can still be **conditionally incoherent**: `export.transform_file`
-(the per-frame ego-motion transform sidecar, `src/tratrac/infrastructure/video/EGO_MOTION.md`) only makes sense
-when `ego_motion.enabled` is true — with stabilization off every transform is the
-identity. Setting it while stabilization is off is therefore an aggregated
-`ConfigError`, mirroring the "specify exactly one calibration method" guard: a
-present-but-contradictory value is rejected, not silently ignored.
+`input.transforms_in` (a `tratrac-preprocess estimate`/`project` run's output,
+`src/tratrac/infrastructure/video/EGO_MOTION.md`) is a plain, unconditionally required path —
+not conditionally required behind an `enabled` toggle. `tratrac` never resolves any geometric
+transform itself (no GSD scale, no ego-motion, no world-projection homography), so there is no
+"live" fallback for `""` to mean, and no coherence guard to write: the file's *content* decides
+whether a similarity (ego-motion) stage exists at all — an ego-motion-free file (a static
+camera) just means every query falls through to the identity. `tratrac`'s own `RunConfig` has no
+`[calibration]`/`[ego_motion]` section at all anymore; the one-of GSD-scale resolution
+(`meters_per_pixel` **or** `drone_model` + an altitude source) still exists, but moved wholesale
+into `tratrac-preprocess estimate`'s own CLI flags — it validates that one-of itself, at its own
+composition root, not via `RunConfig.resolve`.
 
-`export.scale_out` (the GSD metric-scale sidecar, `infrastructure/calibration/scale_sidecar.py`) is
-**not** a toggle — `[calibration]` is itself mandatory and always resolves to a
-scale, so there is no "off" state; it is a plain required path, like `export.out`.
-
----
-
-## Calibration Is a One-Of (Not "Both Mandatory")
-
-Calibration cannot make every key mandatory because the methods are mutually
-exclusive. Exactly one must be fully specified:
-
-- `meters_per_pixel` (direct GSD), **or**
-- `drone_model` + one altitude source (`altitude_m > 0` *or* an `srt` path).
-
-Specifying **both** `meters_per_pixel` and `drone_model` is now an **error** — MVP1.75
-silently prioritised `meters_per_pixel`; explicitness replaces silent priority.
-There is **no `.SRT` sidecar auto-discovery** (it was a hidden default): the SRT
-path must be given explicitly.
+`export.scale_out` no longer exists: `tratrac` never resolves or writes a scale value: it is
+resolved once, by `tratrac-preprocess estimate`, and lives only as rows in the shared
+transforms file.
 
 ---
 
 ## Where It Lives (layering)
 
 - **`application/config.py`** (pure, no I/O): the `RunConfig` value object and its
-  section dataclasses (`InputConfig`, `DetectorConfig`, `CalibrationConfig`, …),
-  the `_Resolver` (merge + type-check + collect problems), `ConfigError`, and the
-  moved validators (device format, timecode parse, drone-model-known, window
-  ordering). `DetectorChoice` moved here (single source of truth). `CalibrationConfig`
-  keeps `resolve_scale(metadata)` — behaviour with its data — reusing
-  `calibration/gsd.py`, `srt_parser.py`, `drone_specs.py`.
+  section dataclasses (`InputConfig`, `DetectorConfig`, …), the `_Resolver` (merge +
+  type-check + collect problems), `ConfigError`, and the moved validators (device
+  format, timecode parse, window ordering). `DetectorChoice` moved here (single source
+  of truth). There is no `CalibrationConfig`/`EgoMotionConfig` here anymore — GSD-scale
+  resolution (`calibration/gsd.py`, `srt_parser.py`, `drone_specs.py`) lives entirely in
+  `cli_preprocess.py`'s `estimate` subcommand now.
 - **`infrastructure/config/toml.py`**: `load_toml(path)` via stdlib `tomllib`
   (Python 3.12, no new dependency) — the lone seam where the dynamically-typed TOML
   document enters; the resolver does the type checking.

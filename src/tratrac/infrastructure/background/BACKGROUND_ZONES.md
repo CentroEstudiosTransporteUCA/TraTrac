@@ -3,26 +3,24 @@
 ## What this adds
 
 A set of **pixel polygons** marking the regions of a frame safe to use for ORB
-feature extraction — the operator-authored alternative to `DetectionMaskSource`
-(masking from live pipeline detections, see `src/tratrac/infrastructure/video/EGO_MOTION.md`). Used
-by `tratrac-stabilize`, a detector-free pre-pass that builds the ego-motion
-transforms file before the main `tratrac` run, so that run's single detector pass
-never also has to run ORB for masking. Mirrors `src/tratrac/application/EXCLUSION_ZONES.md`'s shape
-and workflow closely; this doc only covers what's different.
+feature extraction. Used by `tratrac-preprocess`, the detector-free pre-pass that
+builds the ego-motion transforms file before the main `tratrac` run — `tratrac`
+itself never estimates ego-motion or runs ORB. Mirrors
+`src/tratrac/application/EXCLUSION_ZONES.md`'s shape and workflow closely; this
+doc only covers what's different.
 
 ## Why this exists
 
-`DetectionMaskSource` couples ORB's masking to the live detector — reusing its
-detections is what makes today's single-pass `tratrac` run possible at all (no
-scout pass recomputing ORB, see `EXCLUSION_ZONES.md`'s "Why post-hoc, and why
-track-aware"). But that coupling is exactly why ego-motion/anchor discovery can't
-become a *separate* pass without either losing mask quality (an unmasked pass on
-bare asphalt with dense traffic is a known, literature-confirmed failure mode —
-coherently-moving vehicles can dominate RANSAC's inlier consensus) or running the
-detector twice. Background zones remove the detector from ego-motion estimation
-entirely: the mask is fully known ahead of time, from a human, so `tratrac-stabilize`
-needs no detector at all, and the real run's single detector pass can consume an
-already-complete transforms file.
+Masking vehicles out of ORB's feature extraction is necessary (an unmasked pass
+on bare asphalt with dense traffic is a known, literature-confirmed failure mode
+— coherently-moving vehicles can dominate RANSAC's inlier consensus), but doing
+it from the live detector's own detections would mean either running the
+detector twice (once to estimate ego-motion, once for the real perception run)
+or entangling ego-motion estimation with detection in a single pass. Background
+zones remove the detector from ego-motion estimation entirely: the mask is fully
+known ahead of time, from a human, so `tratrac-preprocess` needs no detector at
+all, and `tratrac`'s own single detector pass can consume an already-complete
+transforms file instead of estimating ego-motion itself.
 
 ## The workflow
 
@@ -30,13 +28,14 @@ already-complete transforms file.
 [external tool, out of scope here] operator watches VIDEO, draws the region(s)
   safe for ORB features -> background_zones.json
 
-tratrac-stabilize VIDEO --background-zones background_zones.json \
-    --out transforms.jsonl --anchors-dir anchors/
-   → transforms.jsonl        (the complete per-frame ego-motion table)
-   → anchors/frame_<i>.png   (one per ORB keyframe anchor)
-   → anchors/manifest.json   (each anchor's frame_index + global pose + image)
+tratrac-preprocess estimate VIDEO --background-zones background_zones.json \
+    --out transforms.jsonl --anchors-dir anchors/ --meters-per-pixel 0.05
+   → transforms.jsonl        (the complete per-frame ego-motion + scale table)
+   → anchors/frame_<i>.png   (one per ORB keyframe anchor — no separate manifest;
+                               an anchor's pose is already transforms.jsonl's row
+                               at that frame index)
 
-tratrac --config run.toml   # ego_motion.transforms_in = "transforms.jsonl"
+tratrac --config run.toml   # input.transforms_in = "transforms.jsonl"
    → the detector runs exactly once, against already-known ego-motion
 ```
 
@@ -84,14 +83,14 @@ one shape reused by casting.
   `infrastructure/exclusion/json.py`.
 - `infrastructure/background/json.py` — `load_background_zones`.
 - `infrastructure/video/ego_motion_orb.py` — `MaskSource` Protocol,
-  `BackgroundZoneMaskSource` (this doc's consumer), `DetectionMaskSource` (the
-  live-detector alternative, extracted from what used to be
-  `OrbEgoMotionEstimator._vehicle_mask`).
-- `cli_stabilize.py` — `tratrac-stabilize`: `--background-zones`, `--out`
-  (transforms sidecar), `--anchors-dir`.
-- `application/config.py` / `cli.py` — `ego_motion.transforms_in`,
+  `BackgroundZoneMaskSource` (this doc's consumer, and the only `MaskSource`
+  implementation left now that detector-fed masking is gone).
+- `cli_preprocess.py` — `tratrac-preprocess estimate`: `--background-zones`, `--out`
+  (transforms file), `--anchors-dir`.
+- `application/config.py` / `cli.py` — `input.transforms_in`,
   `PrecomputedEgoMotionEstimator` (`infrastructure/transform/sink.py`): the
-  `tratrac`-side consumer of a `tratrac-stabilize` run's output.
+  `tratrac`-side consumer of a `tratrac-preprocess` run's output; `tratrac`
+  never constructs `OrbEgoMotionEstimator` itself.
 
 See `src/tratrac/infrastructure/video/EGO_MOTION.md`'s "Detector-free ego-motion"
 section for the full picture (why this exists, what was tried and rejected first).
