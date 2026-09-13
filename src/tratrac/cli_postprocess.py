@@ -16,21 +16,21 @@ transforms file via ``--transforms`` so each zone's ``reference_frame`` is
 mapped into the global frame by that frame's pose. This tool never fits a
 homography or resolves scale itself — both come from ``--transforms``'
 projection-stage rows, written by ``tratrac-preprocess estimate``/``project``
-(MVP2, src/tratrac/application/WORLD_PROJECTION.md). The dividing line for how
-they're applied is never the row *kind* (``scale`` vs ``homography``), only
-whether the file's ``TransformTable`` reduces to one constant value
-(``TransformTable.is_uniform`` — today's only real case, a single
-``--meters-per-pixel``/``--drone-model`` run): that one case is applied after
-smoothing, keeping the ``.trj`` in image-space pixels (what ``tratrac-render``
-and a scale-only ``DIMENSIONS.Scale`` already assume). Anything the table
-can't collapse to one value — any homography, or several scale zones (e.g. a
-fisheye lens' radially-varying GSD) — is instead projected into final output
-units **per observation**, before smoothing, via the same
-``TransformTable.apply(point, frame_index)`` lookup regardless of what kind of
-row answers it; the ``.trj`` then carries ``DIMENSIONS.Scale = 1.0``.
-``--smoothed-record`` stays image-space either way — not yet supported when
-the projection isn't invertible (more than one zone matches a given frame —
-see "Dual-space export" above for why).
+(MVP2, src/tratrac/application/WORLD_PROJECTION.md). Every observation is
+projected through the file's ``TransformTable``, per its own
+``(point, frame_index)``, **before** smoothing — one code path regardless of
+whether the rows are ``scale`` (one zone, or several for something like a
+fisheye lens' radially-varying GSD) or ``homography``: the table always
+resolves the right row for that point, so there is nothing left here to branch
+on. The ``.trj`` always carries ``DIMENSIONS.Scale = 1.0``. Whether a track's
+oriented (OBB) size/heading survives the projection is likewise never decided
+by row kind here — it's ``TransformFunction.preserves_shape``, a capability
+each function declares about itself (true for identity/scale, false for a
+general homography perspective distortion), queried on whichever function
+actually answered that observation's lookup. ``--smoothed-record`` stays
+image-space either way — not yet supported when the projection isn't
+invertible (more than one zone matches a given frame — see "Dual-space
+export" above for why).
 
 With ``--reid-merge`` (Group D2, ``docs/IMPLEMENTATION_PLAN.md``) a pre-computed ReID merge
 decision (``application/reid_merge.py``) remaps ``track_id`` on the record **first**, before
@@ -66,12 +66,7 @@ from tratrac.application.road_graph import (
 	to_global_lane_polygons,
 	to_global_link_polygons,
 )
-from tratrac.application.track_smoothing import (
-	TrackSample,
-	invert_state_to_image,
-	smooth_to_states,
-	unscale_state_to_image,
-)
+from tratrac.application.track_smoothing import TrackSample, invert_state_to_image, smooth_to_states
 from tratrac.domain.frame import VideoMetadata
 from tratrac.domain.geometry import Point2D, Polygon, oriented_extent
 from tratrac.domain.ports import (
@@ -290,26 +285,16 @@ def postprocess(
 			label_for_point=lane_id_for_point,
 		)
 
-	# A table that reduces to one constant scale value (today's only real case: a single
-	# `--meters-per-pixel`/`--drone-model` run) is safe to apply *after* smoothing --
-	# smoothing pixels then multiplying by one constant is the same result linear
-	# filtering would give scaling first, and it keeps the .trj in image-space pixels
-	# (what tratrac-render / DIMENSIONS.Scale already assume for a non-projected run).
-	# Anything the table can't collapse to one value -- a homography (perspective
-	# distortion doesn't commute with linear smoothing regardless of uniformity), or
-	# several scale zones (e.g. a fisheye lens' radially-varying GSD) -- must be
-	# projected into its target units *before* smoothing, per observation via the same
-	# TransformTable.apply(point, frame_index) lookup homography already used: never
-	# summarize the table into one representative value when it genuinely isn't one.
-	projector: CoordinateTransform | None = None
-	uniform_scale = projection.any_function() if projection.is_uniform else None
-	if isinstance(uniform_scale, ScaleFunction):
-		scale_transform = uniform_scale
-	else:
-		recording, pos_noise, jerk, projector = _project_to_world(
-			recording, projection, pos_noise, jerk
-		)
-		scale_transform = ScaleFunction(1.0)
+	# Every observation is projected through the file's own TransformTable, per its own
+	# (point, frame_index) -- never summarized into one representative value first. This
+	# is the same call regardless of whether the table holds scale rows (one zone or
+	# several, e.g. a fisheye lens' radially-varying GSD) or homography rows: the table
+	# itself already resolves the right row for each point, so there is nothing left for
+	# this function to branch on.
+	recording, pos_noise, jerk, projector = _project_to_world(
+		recording, projection, pos_noise, jerk
+	)
+	scale_transform = ScaleFunction(1.0)
 
 	states_by_frame = _smooth_recording(recording, scale_transform, pos_noise=pos_noise, jerk=jerk)
 	if link_ids:
@@ -320,18 +305,12 @@ def postprocess(
 	if smoothed_record is not None:
 		smoothed_record.parent.mkdir(parents=True, exist_ok=True)
 		_emit_smoothed_record(
-			smoothed_record,
-			recording.metadata,
-			states_by_frame,
-			projector=projector,
-			scale=scale_transform,
+			smoothed_record, recording.metadata, states_by_frame, projector=projector
 		)
 
 	if out is not None:
 		out.parent.mkdir(parents=True, exist_ok=True)
-		_emit_trj(
-			out, recording, states_by_frame, scale_transform, timestep_precision=timestep_precision
-		)
+		_emit_trj(out, recording, states_by_frame, timestep_precision=timestep_precision)
 
 	notes = []
 	if footprint is not None:
@@ -344,7 +323,7 @@ def postprocess(
 		notes.append(f"assigned link ids to {len(link_ids)} observations")
 	if lane_zones is not None:
 		notes.append(f"assigned lane ids to {len(lane_ids)} observations")
-	if projector is not None:
+	if HomographyFunction in kinds_present:
 		notes.append("projected to world coordinates")
 	note = f", {', '.join(notes)}" if notes else ""
 	outputs = ", ".join(str(p) for p in (out, smoothed_record) if p is not None)
@@ -628,12 +607,17 @@ def _project_observation(o: TrackObservation, projector: TransformTable) -> Trac
 	"matches no zone" for a box that only pokes past the canvas edge, even though the
 	observation itself is squarely inside it.
 
-	Drops ``angle``/``obb_w``/``obb_h`` (Group A7/A8 OBB fields): they're image-space
-	quantities, and a general homography's rotation need not match the image axes, so
-	carrying a raw image-space angle into world-space heading selection would be wrong
-	rather than merely imprecise. Re-deriving a world-space OBB angle is out of scope
-	here (see `src/tratrac/application/WORLD_PROJECTION.md`); the smoother's low-speed
-	fallback drops back to the bbox-major-axis heuristic for a projected run instead.
+	``angle``/``obb_w``/``obb_h`` (Group A7/A8 OBB fields) survive only when the
+	*function itself* declares it preserves shape (``TransformFunction.preserves_shape``
+	— true for identity/scale, false for a general homography): a homography's
+	perspective distortion can shear/rotate differently across the image, so carrying a
+	raw image-space angle into world-space heading selection would be wrong rather than
+	merely imprecise, and re-deriving a world-space OBB angle is out of scope here (see
+	`src/tratrac/application/WORLD_PROJECTION.md`) — the smoother's low-speed fallback
+	drops back to the bbox-major-axis heuristic for a projected run instead. A
+	shape-preserving function is locally isotropic, so its own scale factor (the ratio
+	between the projected and original bbox width) rescales the OBB dimensions exactly;
+	the angle itself is unchanged.
 	"""
 	function = projector.function_at_point(Point2D(o.cx, o.cy), o.frame_index)
 	center = function.apply(Point2D(o.cx, o.cy))
@@ -641,15 +625,27 @@ def _project_observation(o: TrackObservation, projector: TransformTable) -> Trac
 	right = function.apply(Point2D(o.cx + o.width / 2.0, o.cy))
 	top = function.apply(Point2D(o.cx, o.cy - o.height / 2.0))
 	bottom = function.apply(Point2D(o.cx, o.cy + o.height / 2.0))
+	width = math.hypot(right.x - left.x, right.y - left.y)
+	height = math.hypot(bottom.x - top.x, bottom.y - top.y)
+	angle, obb_w, obb_h = None, None, None
+	if function.preserves_shape:
+		# Angle and OBB dimensions are independent fields (a footprint-derived size can
+		# arrive with no angle at all) -- carry each through on its own terms rather than
+		# requiring both to be present.
+		angle = o.angle
+		if o.obb_w is not None or o.obb_h is not None:
+			local_scale = width / o.width if o.width > 0.0 else height / o.height
+			obb_w = o.obb_w * local_scale if o.obb_w is not None else None
+			obb_h = o.obb_h * local_scale if o.obb_h is not None else None
 	return replace(
 		o,
 		cx=center.x,
 		cy=center.y,
-		width=math.hypot(right.x - left.x, right.y - left.y),
-		height=math.hypot(bottom.x - top.x, bottom.y - top.y),
-		angle=None,
-		obb_w=None,
-		obb_h=None,
+		width=width,
+		height=height,
+		angle=angle,
+		obb_w=obb_w,
+		obb_h=obb_h,
 	)
 
 
@@ -691,18 +687,17 @@ def _emit_trj(
 	out: Path,
 	recording: TrackRecording,
 	states_by_frame: dict[int, list[VehicleState]],
-	scale: ScaleFunction,
 	*,
 	timestep_precision: float,
 ) -> None:
 	"""Write the smoothed .trj from the per-frame states, optionally decimating TIMESTEPs.
 
-	``scale`` is the uniform-scale fast path's constant factor, or ``1.0`` when the
-	observations were already projected into final output units by ``_project_to_world``
-	before smoothing (any homography, or several scale zones).
+	``scale=1.0`` always: every observation was already projected into final output
+	units by ``_project_to_world`` before smoothing, regardless of whether the
+	transforms file held scale or homography rows.
 	"""
 	fps = recording.metadata.fps
-	exporter: TrajectoryExporter = SsamTrjExporter(out, recording.metadata, scale=scale.factor)
+	exporter: TrajectoryExporter = SsamTrjExporter(out, recording.metadata, scale=1.0)
 	if timestep_precision > 0.0:
 		# Thin the exported TIMESTEP stream; the smoothing still uses every observation.
 		exporter = DecimatingTrajectoryExporter(
@@ -718,27 +713,20 @@ def _emit_smoothed_record(
 	metadata: VideoMetadata,
 	states_by_frame: dict[int, list[VehicleState]],
 	*,
-	projector: CoordinateTransform | None,
-	scale: ScaleFunction,
+	projector: CoordinateTransform,
 ) -> None:
 	"""Write the smoothed record always in image-space pixels (see ``smoothed_parquet.py``).
 
-	``projector`` is ``None`` (the uniform-scale fast path: ``scale`` alone undoes it) or
-	the shifted, invertible projector ``_project_to_world`` returns — never a
-	non-invertible multi-zone one (rejected earlier, in ``postprocess``, when combined
-	with ``--smoothed-record``, so the cast below is a validated internal invariant, not
-	a user-facing error).
+	``projector`` is the shifted, invertible projector ``_project_to_world`` returns —
+	never a non-invertible multi-zone one (rejected earlier, in ``postprocess``, when
+	combined with ``--smoothed-record``, so the cast below is a validated internal
+	invariant, not a user-facing error).
 	"""
 	with SmoothedTrackParquetSink(path, metadata) as sink:
 		for frame_index in sorted(states_by_frame):
 			for state in states_by_frame[frame_index]:
-				if projector is None:
-					centroid, angle, dimensions = unscale_state_to_image(state, scale)
-				else:
-					invertible = cast(InvertibleCoordinateTransform, projector)
-					centroid, angle, dimensions = invert_state_to_image(
-						state, invertible, frame_index
-					)
+				invertible = cast(InvertibleCoordinateTransform, projector)
+				centroid, angle, dimensions = invert_state_to_image(state, invertible, frame_index)
 				sink.record(
 					SmoothedObservation(
 						frame_index=frame_index,

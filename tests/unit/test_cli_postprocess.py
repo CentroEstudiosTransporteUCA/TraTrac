@@ -138,7 +138,13 @@ def _centroid_for(trj_path: Path, frame_index: int, vehicle_id: int) -> tuple[fl
 
 
 class TestPostprocessWorldProjection:
-	def test_scale_only_transforms_stay_image_space(self, tmp_path: Path) -> None:
+	def test_scale_only_transforms_keep_pixel_scale(self, tmp_path: Path) -> None:
+		"""A scale-only table goes through the same per-observation projection any other
+		table does (see `cli_postprocess.py`'s module docstring) -- with `scale=1.0` it
+		maps pixels to identical pixels, so the *displacement* between frames is still
+		exactly the raw per-frame pixel motion. Absolute position isn't asserted: like any
+		other projected run, the recording is shifted to a 0-origin extent, so it's no
+		longer literally the source video's own pixel coordinates."""
 		record = tmp_path / "tracks.parquet"
 		out = tmp_path / "image.trj"
 		transforms_path = _write_record(record, scale=1.0)
@@ -149,10 +155,10 @@ class TestPostprocessWorldProjection:
 		assert result.exit_code == 0, result.output
 
 		assert read_trj(out).scale == pytest.approx(1.0)
-		cx, cy = _centroid_at(out, 3)
-		# frame 3 image centre: (10*3 + 20 + 2, 51) = (52, 51)
-		assert cx == pytest.approx(52.0, abs=0.5)
-		assert cy == pytest.approx(51.0, abs=0.5)
+		(x2, y2), (x3, y3) = _centroid_at(out, 2), _centroid_at(out, 3)
+		# 10 px/frame at scale=1.0 -> 10 units/frame; y is constant.
+		assert x3 - x2 == pytest.approx(10.0, abs=0.2)
+		assert y3 - y2 == pytest.approx(0.0, abs=0.2)
 
 	def test_homography_projects_to_world_and_sets_unit_scale(self, tmp_path: Path) -> None:
 		record = tmp_path / "tracks.parquet"
@@ -476,9 +482,9 @@ class TestPostprocessSmoothedRecord:
 
 		recovered = read_smoothed_tracks(smoothed)
 		state = next(o for o in recovered.observations if o.frame_index == 3)
-		# frame 3 image centre: (10*3 + 20 + 2, 51) = (52, 51) -- same as the scale-only
-		# .trj-based test above, confirming the unprojected path (unscale_state_to_image with
-		# scale=1.0) is a no-op as expected.
+		# frame 3 image centre: (10*3 + 20 + 2, 51) = (52, 51) -- inverting the forward
+		# scale=1.0 projection (+ its 0-origin shift) recovers the exact original pixel
+		# position, the same way a homography's inverse does below.
 		assert state.cx == pytest.approx(52.0, abs=0.5)
 		assert state.cy == pytest.approx(51.0, abs=0.5)
 

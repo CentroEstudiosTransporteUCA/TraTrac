@@ -22,7 +22,6 @@ from tratrac.application.track_smoothing import (
 	build_state,
 	invert_state_to_image,
 	smooth_to_states,
-	unscale_state_to_image,
 )
 from tratrac.cli_postprocess import app
 from tratrac.domain.detection import Detection, TrackedDetection, VehicleClass
@@ -199,25 +198,6 @@ class TestInvertStateToImage:
 		assert centroid.y == pytest.approx(pixel_centroid.y, abs=1e-4)
 		assert angle == pytest.approx(0.7, abs=1e-4)
 		assert dimensions.length == pytest.approx(pixel_dimensions.length, abs=1e-3)
-
-
-class TestUnscaleStateToImage:
-	def test_divides_position_and_dimensions_by_scale(self) -> None:
-		state = VehicleState(
-			vehicle_id=1,
-			timestamp_seconds=0.0,
-			centroid=Point2D(10.0, 20.0),
-			heading=Heading(0.0, 1.0),
-			dimensions=Dimensions(length=4.0, width=2.0),
-			velocity=Vector2D(0.0, 0.0),
-			acceleration=0.0,
-		)
-		centroid, angle, dimensions = unscale_state_to_image(state, scale=ScaleFunction(0.5))
-		assert centroid.x == pytest.approx(20.0)
-		assert centroid.y == pytest.approx(40.0)
-		assert angle == pytest.approx(math.pi / 2)
-		assert dimensions.length == pytest.approx(8.0)
-		assert dimensions.width == pytest.approx(4.0)
 
 
 def _write_transforms_with_scale(

@@ -72,6 +72,19 @@ coordinates and mapped through the *current* inverse each frame, showing the wor
 path from the current camera pose. Validator violation marks (`--violations`) ride the
 same transform, so they land in the same raw-frame space as the trajectories.
 
+**This "divide by `scale`" recovery is now stale for every `.trj`, not just a
+homography-projected one.** `cli_postprocess.py`'s `postprocess` always projects every
+observation through the transforms file's `TransformTable` before smoothing, and always
+shifts the result to a 0-origin extent (`_normalize_world_recording`) — even a plain
+GSD-scale run's `.trj` positions are no longer the source video's own pixel coordinates
+times one constant, they're shifted by an amount this exporter has no way to recover
+(it isn't stored in the `.trj`, and can't be — see `application/SMOOTHING.md`'s
+"Dual-space export" section for why the shift is only ever undone by inverting the
+*exact* projector object a postprocess run built, which `tratrac-render` never has).
+`tratrac-render` reading `--smoothed-record` instead of `--trj` (always raw image-space
+pixels, purpose-built for exactly this kind of consumer) would fix this for every case,
+scale or homography alike — not done yet.
+
 ## Output codec: PyAV (libx264), not cv2's `mp4v` fallback
 
 `OverlayVideoExporter`'s writer originally opened a `cv2.VideoWriter` with the

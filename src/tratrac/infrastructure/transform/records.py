@@ -43,6 +43,20 @@ class TransformFunction(Protocol):
 
 	def apply(self, point: Point2D) -> Point2D: ...
 
+	@property
+	def preserves_shape(self) -> bool:
+		"""Whether this function preserves angles and length ratios (any similarity
+		transform: identity, uniform scale, translate+rotate+scale) as opposed to a
+		general homography, whose perspective distortion can shear/rotate differently
+		across the image.
+
+		A capability the function declares about *itself* — the same pattern
+		``InvertibleTransformFunction`` already uses — so a caller deciding whether an
+		oriented (OBB) size/heading survives being carried through the transform never
+		needs to know or check which concrete kind it's holding.
+		"""
+		...
+
 
 @runtime_checkable
 class InvertibleTransformFunction(TransformFunction, Protocol):
@@ -61,6 +75,10 @@ class IdentityFunction:
 	def reverse(self, point: Point2D) -> Point2D:
 		return point
 
+	@property
+	def preserves_shape(self) -> bool:
+		return True
+
 
 @dataclass(frozen=True, slots=True)
 class ScaleFunction:
@@ -78,6 +96,10 @@ class ScaleFunction:
 	def reverse(self, point: Point2D) -> Point2D:
 		return Point2D(point.x / self.factor, point.y / self.factor)
 
+	@property
+	def preserves_shape(self) -> bool:
+		return True
+
 
 @dataclass(frozen=True, slots=True)
 class SimilarityFunction:
@@ -90,6 +112,10 @@ class SimilarityFunction:
 
 	def reverse(self, point: Point2D) -> Point2D:
 		return self.transform.inverse().apply(point)
+
+	@property
+	def preserves_shape(self) -> bool:
+		return True
 
 
 def _homography_apply(matrix: NDArray[np.float64], point: Point2D) -> Point2D:
@@ -124,6 +150,10 @@ class HomographyFunction:
 	def reverse(self, point: Point2D) -> Point2D:
 		inverse = np.linalg.inv(self._as_array()).astype(np.float64)
 		return _homography_apply(inverse, point)
+
+	@property
+	def preserves_shape(self) -> bool:
+		return False
 
 
 class TransformCodec(Protocol):

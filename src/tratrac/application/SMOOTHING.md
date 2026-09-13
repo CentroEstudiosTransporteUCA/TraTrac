@@ -79,28 +79,20 @@ physically justified — world space, when there's a homography involved — exa
 (Parquet, `infrastructure/tracks/smoothed_parquet.py`) are both optional, independent outputs
 built from the **same** `states_by_frame` the one smoothing pass produces (`_smooth_recording`
 in `cli_postprocess.py`, unchanged) — `--out` is not required if `--smoothed-record` is given,
-and vice versa. `--smoothed-record` is always raw image-space pixels, regardless of which of
-`postprocess`'s two paths produced `states_by_frame` (see `cli_postprocess.py`'s module
-docstring for the full uniform-vs-projected split):
-
-- **The uniform-scale fast path** (`TransformTable.is_uniform` — today's only real case, a
-  single `--meters-per-pixel`/`--drone-model` run): the smoothed `VehicleState`s are already
-  image-space *up to* the metric GSD scale every real run carries (MVP1.75,
-  `calibration/GSD_CALIBRATION.md` — the zero-defaults config means a run is essentially never
-  un-calibrated in this sense). `unscale_state_to_image` (`application/track_smoothing.py`)
-  undoes that scale by plain division — exact, since it's a pure uniform scale, not a
-  homography.
-- **The projected path** (any homography, or several scale zones — anything
-  `is_uniform` is `False` for): `invert_state_to_image` (same module) inverts the *same*
-  projector `_project_to_world` returns for the forward pass — not a fresh fit, the literal
-  object,
-  via `InvertibleCoordinateTransform.reverse(point, frame_index)` (`domain/ports.py`). It inverts **four points**
-  independently (front/rear bumpers → centroid, heading, length; left/right side points →
-  width) rather than transforming `centroid`+`heading`+`dimensions` directly — the same reason
-  the SSAM `.trj` format itself stores front/rear bumper points instead of centroid+heading+
-  length: a point transforms correctly under an arbitrary coordinate change (a homography,
-  here), a direction+magnitude pair does not. This is a genuine geometric inverse of the one
-  smoothing pass that already ran, not a second filter.
+and vice versa. `--smoothed-record` is always raw image-space pixels: every run projects every
+observation through the transforms file's `TransformTable` before smoothing (see
+`cli_postprocess.py`'s module docstring — there is no separate "unprojected" path to fall back
+to, not even for a plain GSD scale), so recovering pixels is always the same operation:
+`invert_state_to_image` (`application/track_smoothing.py`) inverts the *same* projector
+`_project_to_world` returns for the forward pass — not a fresh fit, the literal object — via
+`InvertibleCoordinateTransform.reverse(point, frame_index)` (`domain/ports.py`). It inverts
+**four points** independently (front/rear bumpers → centroid, heading, length; left/right side
+points → width) rather than transforming `centroid`+`heading`+`dimensions` directly — the same
+reason the SSAM `.trj` format itself stores front/rear bumper points instead of
+centroid+heading+length: a point transforms correctly under an arbitrary coordinate change (a
+homography, here), a direction+magnitude pair does not. This is a genuine geometric inverse of
+the one smoothing pass that already ran, not a second filter. For a plain GSD scale this is
+mathematically just a division, computed the general way instead of as a special case.
 - Velocity/acceleration are **not** carried into `--smoothed-record` — there's no general,
   honest way to convert a world-space smoothed velocity into an image-space one without
   differentiating the (possibly per-frame) inverse homography, and nothing consumes it yet.
@@ -189,8 +181,7 @@ to fine-tune here, and no code has been written yet.
 ## Files
 - `application/kalman.py` — CA filter + RTS core.
 - `application/track_smoothing.py` — observations → smoothed `VehicleState`s (`build_state`,
-  `smooth_to_states`); `invert_state_to_image`/`unscale_state_to_image` — the dual-space export
-  inverse (see above).
+  `smooth_to_states`); `invert_state_to_image` — the dual-space export inverse (see above).
 - `application/coordinate_transforms.py` — `TransformTable`, `TranslationTransform`,
   `compose`/`compose_invertible`; `TransformTable.reverse()` composed with
   `TranslationTransform` via `compose_invertible` backs the dual-space export.

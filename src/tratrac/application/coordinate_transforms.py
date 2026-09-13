@@ -80,27 +80,6 @@ class TransformTable:
 			for rows in self._by_frame.values()
 		)
 
-	@property
-	def is_uniform(self) -> bool:
-		"""Whether this table reduces to one frame-independent function value: exactly one
-		row per frame, and every frame's function equal to every other's.
-
-		A caller safe to treat ``any_function()`` as *representative*, not an arbitrary
-		pick, is exactly a caller that has confirmed this first. It is ``False`` as soon
-		as more than one zone is in play at any frame (several scale zones, a per-plane
-		homography) or the value itself changes across frames (a multi-anchor
-		homography) -- either way a per-``(point, frame_index)`` lookup is required, a
-		single sampled value is not enough.
-		"""
-		if not self._by_frame:
-			return True
-		rows_by_frame = iter(self._by_frame.values())
-		first_rows = next(rows_by_frame)
-		if len(first_rows) != 1:
-			return False
-		representative = first_rows[0].function
-		return all(len(rows) == 1 and rows[0].function == representative for rows in rows_by_frame)
-
 	def apply(self, point: Point2D, frame_index: int) -> Point2D:
 		if not self._by_frame:
 			return point

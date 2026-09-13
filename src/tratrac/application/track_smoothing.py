@@ -190,24 +190,3 @@ def invert_state_to_image(
 	centroid = Point2D((front_img.x + rear_img.x) / 2.0, (front_img.y + rear_img.y) / 2.0)
 	angle = math.atan2(heading.dy, heading.dx)
 	return centroid, angle, Dimensions(length=length, width=width)
-
-
-def unscale_state_to_image(
-	state: VehicleState, scale: ScaleFunction
-) -> tuple[Point2D, float, Dimensions]:
-	"""Undo ``build_state``'s metric scaling (no homography involved) to recover pixels.
-
-	Used for the uniform-scale fast path (``cli_postprocess.py``'s ``postprocess``): the
-	run's single ``ScaleFunction`` (the GSD metric scale,
-	``src/tratrac/calibration/GSD_CALIBRATION.md`` — config-only, zero-defaults means
-	it's essentially never exactly ``1.0``) still applied, so ``state``'s
-	position/dimensions are metric, not raw pixels, even without a homography.
-	"""
-	return (
-		Point2D(state.centroid.x / scale.factor, state.centroid.y / scale.factor),
-		math.atan2(state.heading.dy, state.heading.dx),
-		Dimensions(
-			length=state.dimensions.length / scale.factor,
-			width=state.dimensions.width / scale.factor,
-		),
-	)
