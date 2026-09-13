@@ -1,270 +1,181 @@
-"""``CoordinateTransform`` implementations: every "map applied to pixel coordinates" in
-the system, behind one shared interface.
+"""``TransformTable``: the one lookup-and-apply class every ``CoordinateTransform``
+in the system is built from.
 
-Unifies what used to be three unrelated mechanisms — the GSD metric scale (ad hoc
-``* scale`` / ``/ scale`` arithmetic), the ego-motion/anchor-pose table (a bare
-``dict[int, Transform2D]``), and world-projection homographies (``WorldProjector``) —
-as implementations of one ``CoordinateTransform``/``InvertibleCoordinateTransform``
-Protocol (``domain/ports.py``): ``apply(point, frame_index)`` /
-``reverse(point, frame_index)``. Renamed from ``world_projection.py`` since its scope
-broadened from "world projection only" to every coordinate transform in the system.
+Replaces what used to be five separate impls (`IdentityTransform`,
+`ScaleTransform`, `PerFrameTransform`, `PerAnchorTransform`,
+`MultiPlaneTransform`) with one generic row-selection algorithm: group a
+table's rows by `frame_index` (the primary key), filter to the row(s) whose
+`zone` contains the query point, and delegate to that row's `function`
+(`infrastructure/transform/records.py`'s `TransformFunction` objects, which do
+the actual math). See `src/tratrac/infrastructure/video/EGO_MOTION.md`.
 
-Six impls today:
-
-* ``IdentityTransform`` — the Null Object: returns the point unchanged.
-* ``ScaleTransform`` — a constant isotropic scale (GSD calibration); ``reverse``
-  divides back out.
-* ``PerFrameTransform`` — exact ``frame_index`` lookup into a
-  ``dict[int, Transform2D]``. Serves both the dense ego-motion table (every frame
-  present) and a sparse anchor-pose lookup (only anchor frames present, queried
-  only at a zone's/correspondence's own ``reference_frame`` — always an exact hit
-  by construction).
-* ``PerAnchorTransform`` (Group C3, ``docs/IMPLEMENTATION_PLAN.md``) — one
-  homography per keyframe anchor, selected by ``frame_index``, for a wide-swept
-  scene where no single homography covers the whole clip. **The single-homography
-  case (a bounded / static scene) is just this with one anchor.**
-* ``MultiPlaneTransform`` (Group C5 / MVP3, ``docs/roadmap/mvp3.md``) — one
-  homography per **elevation plane** (ground, bridge, overpass, ...), selected by
-  classifying the point itself against the plane zones — orthogonal to
-  ``PerAnchorTransform``'s selection by *when* (``frame_index``): this one selects
-  by *where* (spatial, independent of time). Apply-only; see its docstring for why
-  it isn't invertible.
-* ``ComposedTransform`` (via ``compose``/``compose_invertible``) — folds several
-  stages into one. Not load-bearing for any current call site (every consumer
-  today only ever needs one stage at a time — the ego-motion table, world
-  projection, and scale never chain on the same call), provided for a uniform
-  vocabulary and a future case that does chain (e.g. ego-motion-lift-then-project).
-
-Every fitter (grouping correspondences by anchor or by plane, one ``cv2`` fit per
-group) lives in ``cli_postprocess.py`` — this module only applies an
-already-fitted matrix, plus the pure scale/per-frame/identity math.
+A run's full transform composes **two** `TransformTable`s in sequence, never
+one flat table: ego-motion (raw pixel -> global pixel) and scale-or-homography
+(global pixel -> final metric/world unit) operate in different coordinate
+spaces, so they're stages, not competing alternatives for one query.
+`compose`/`compose_invertible` fold them (and, for a static/non-projected run,
+an empty table standing in for "no stage") into the one object every caller
+(`tratrac`'s pipeline, `tratrac-postprocess`) ever touches.
 """
 
 from __future__ import annotations
 
-import bisect
 import math
+from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass
 
-import numpy as np
-from numpy.typing import NDArray
-
-from tratrac.application.road_graph import GlobalLabeledPolygon, plane_id_for_point
-from tratrac.domain.geometry import Point2D, Transform2D
+from tratrac.domain.geometry import Point2D, point_in_polygon
 from tratrac.domain.ports import CoordinateTransform, InvertibleCoordinateTransform
+from tratrac.infrastructure.transform.records import (
+	InvertibleTransformFunction,
+	TransformFunction,
+	TransformRow,
+)
 
 
-class IdentityTransform:
-	"""``CoordinateTransform`` Null Object: pass the point through unchanged."""
+class TransformTable:
+	"""Groups rows by `frame_index`, selects by `zone`, applies the row's `function`.
 
-	def apply(self, point: Point2D, frame_index: int) -> Point2D:
-		del frame_index
-		return point
-
-	def reverse(self, point: Point2D, frame_index: int) -> Point2D:
-		del frame_index
-		return point
-
-
-class ScaleTransform:
-	"""A constant isotropic scale (GSD calibration) — ignores ``frame_index``.
-
-	Replaces the ad hoc ``* scale`` / ``/ scale`` arithmetic ``track_smoothing.py``
-	used to do inline: the GSD metric scale already behaved like a coordinate
-	transform (``build_state`` multiplies the centroid by it, not just derived
-	Length/Width/Speed/Acceleration) without being represented as one.
+	An entirely empty table (no rows at all -- e.g. the ego-motion stage of a
+	static-camera run) behaves as the identity for every query: there is no
+	stage to apply, so the point passes through unchanged. A non-empty table
+	queried at a `frame_index` it has no rows for is a data-integrity error
+	(the file is expected to be complete for the whole clip) and raises, same
+	contract every prior impl had.
 	"""
 
-	def __init__(self, scale: float) -> None:
-		if scale <= 0.0:
-			raise ValueError(f"ScaleTransform scale must be positive, got {scale}.")
-		self._scale = scale
+	def __init__(self, rows: Iterable[TransformRow]) -> None:
+		by_frame: dict[int, list[TransformRow]] = defaultdict(list)
+		for row in rows:
+			by_frame[row.frame_index].append(row)
+		self._by_frame: dict[int, list[TransformRow]] = dict(by_frame)
 
 	@property
-	def factor(self) -> float:
-		"""The raw metres-per-pixel scalar, for scaling a magnitude that isn't a
-		position (a velocity, an acceleration, a length/width) — the same "resize a
-		non-point quantity" case ``Transform2D.scale`` exists for."""
-		return self._scale
+	def is_empty(self) -> bool:
+		"""Whether this table has no rows at all (the identity-fallback case) --
+		distinct from a specific frame being absent from a *non-empty* table, which
+		is a data-integrity error (see ``function_at``)."""
+		return not self._by_frame
 
-	def apply(self, point: Point2D, frame_index: int) -> Point2D:
-		del frame_index
-		return Point2D(point.x * self._scale, point.y * self._scale)
+	@property
+	def is_invertible(self) -> bool:
+		"""Whether ``reverse`` is safe for every frame this table covers.
 
-	def reverse(self, point: Point2D, frame_index: int) -> Point2D:
-		del frame_index
-		return Point2D(point.x / self._scale, point.y / self._scale)
-
-
-class PerFrameTransform:
-	"""Exact ``frame_index`` lookup into a ``{frame_index: Transform2D}`` table.
-
-	Raises ``KeyError`` (via ``__getitem__``, wrapped for a clear message) on a
-	frame not present in the table — same contract the CSV-era ``read_transforms``
-	had. Inverts don't require a runtime check across calls: ``Transform2D.inverse()``
-	is cheap (a 2x2 matrix invert), so ``reverse`` just inverts the looked-up
-	transform each time rather than pre-computing an inverse table.
-	"""
-
-	def __init__(self, transforms: dict[int, Transform2D]) -> None:
-		self._transforms = dict(transforms)
-
-	def apply(self, point: Point2D, frame_index: int) -> Point2D:
-		return self._lookup(frame_index).apply(point)
-
-	def reverse(self, point: Point2D, frame_index: int) -> Point2D:
-		return self._lookup(frame_index).inverse().apply(point)
-
-	def at(self, frame_index: int) -> Transform2D | None:
-		"""The raw ``Transform2D`` recorded for ``frame_index``, or ``None`` if absent.
-
-		For a consumer that needs the transform object itself (e.g. ``tratrac-render``,
-		which composes it into an infrastructure-level drawing seam) rather than just
-		mapping one point through it, and that tolerates a frame the table doesn't
-		cover — unlike ``apply``/``reverse``, which raise on a missing frame.
+		An empty table (identity fallback) is trivially invertible. Otherwise every
+		frame's row-set must be unambiguous (exactly one row -- no zone
+		disambiguation needed to reverse) and that row's function itself
+		invertible. A per-plane homography spanning more than one zone at any
+		frame fails this, exactly mirroring `MultiPlaneTransform`'s prior
+		reasoning: reversing needs to know which zone a *forward* point came
+		from, which a world-space point can't tell you.
 		"""
-		return self._transforms.get(frame_index)
-
-	def _lookup(self, frame_index: int) -> Transform2D:
-		transform = self._transforms.get(frame_index)
-		if transform is None:
-			raise KeyError(f"no transform recorded for frame {frame_index}.")
-		return transform
-
-
-def _apply_homography(matrix: NDArray[np.float64], point: Point2D) -> Point2D:
-	"""Project one point through a 3x3 homography, including the perspective divide."""
-	projected = matrix @ np.array([point.x, point.y, 1.0])
-	w = float(projected[2])
-	if w == 0.0:
-		raise ValueError("homography mapped a point to infinity (w = 0).")
-	return Point2D(float(projected[0]) / w, float(projected[1]) / w)
-
-
-def _translation_matrix(dx: float, dy: float) -> NDArray[np.float64]:
-	"""A 3x3 homogeneous matrix translating by ``(dx, dy)``, for composing onto a homography."""
-	return np.array([[1.0, 0.0, dx], [0.0, 1.0, dy], [0.0, 0.0, 1.0]], dtype=np.float64)
-
-
-class PerAnchorTransform:
-	"""Picks the nearest keyframe anchor's homography by ``frame_index``.
-
-	``homographies_by_anchor`` maps each anchor's frame index to the homography fitted from
-	correspondences authored on it. A point's anchor is the one whose frame index is closest
-	to ``frame_index`` — the same "nearest keyframe" principle the ORB stabilizer itself uses
-	to decide when a scene region is still well-represented by an anchor
-	(``src/tratrac/infrastructure/video/EGO_MOTION.md``): a homography fit on a nearby anchor is more likely to
-	still describe the local ground geometry than one fit far away in time/space.
-
-	**A single-entry map is the single-homography (bounded/static scene) case** — with exactly
-	one anchor, ``_nearest_anchor`` always resolves to it regardless of ``frame_index``, which
-	is exactly "one homography for the whole scene." This is why there's no separate
-	single-homography class: it would be structurally identical code fitting the same shape.
-
-	**Not interpolated** between neighboring anchors' homographies (when there's more than
-	one) — a deliberate simplicity choice (``docs/IMPLEMENTATION_PLAN.md`` Group C3 open
-	question): interpolating projective transforms is not a simple linear blend (it would need
-	to be done in a shared parameter space, e.g. decomposed rotation/translation, to avoid
-	producing an invalid, non-projective intermediate matrix), and a hard switch is enough as
-	long as anchors are reasonably dense relative to scene changes. Revisit if
-	``scripts/validate_trj.py`` shows a discontinuity at anchor boundaries.
-
-	Each anchor's inverse is computed once at construction (mirroring the eager
-	``.inverse()`` the old ``WorldProjector``-era class returned as a whole new
-	object), not per ``reverse`` call — anchor selection is by ``frame_index``,
-	unchanged by direction, so a fixed inverse table is always valid.
-	"""
-
-	def __init__(self, homographies_by_anchor: dict[int, NDArray[np.float64]]) -> None:
-		if not homographies_by_anchor:
-			raise ValueError("PerAnchorTransform needs at least one anchor homography.")
-		self._by_anchor = dict(homographies_by_anchor)
-		self._inverse_by_anchor = {
-			anchor: np.linalg.inv(matrix).astype(np.float64)
-			for anchor, matrix in self._by_anchor.items()
-		}
-		self._anchor_frames = sorted(self._by_anchor)
-
-	def apply(self, point: Point2D, frame_index: int) -> Point2D:
-		anchor = self._nearest_anchor(frame_index)
-		return _apply_homography(self._by_anchor[anchor], point)
-
-	def reverse(self, point: Point2D, frame_index: int) -> Point2D:
-		anchor = self._nearest_anchor(frame_index)
-		return _apply_homography(self._inverse_by_anchor[anchor], point)
-
-	def shifted(self, dx: float, dy: float) -> PerAnchorTransform:
-		"""An equivalent transform whose output is additionally translated by ``(dx, dy)``,
-		applied uniformly to every anchor's homography (one, for the single-homography case).
-
-		Used to fold ``_normalize_world_recording``'s post-hoc 0-origin shift into the
-		transform itself, so ``.reverse()`` on the result undoes the *whole* forward
-		transform (homography + shift), not just the homography — see
-		``cli_postprocess.py``'s ``_project_to_world``.
-		"""
-		t = _translation_matrix(dx, dy)
-		return PerAnchorTransform(
-			{anchor: t @ matrix for anchor, matrix in self._by_anchor.items()}
+		if not self._by_frame:
+			return True
+		return all(
+			len(rows) == 1 and isinstance(rows[0].function, InvertibleTransformFunction)
+			for rows in self._by_frame.values()
 		)
 
-	def _nearest_anchor(self, frame_index: int) -> int:
-		frames = self._anchor_frames
-		i = bisect.bisect_left(frames, frame_index)
-		if i == 0:
-			return frames[0]
-		if i == len(frames):
-			return frames[-1]
-		before, after = frames[i - 1], frames[i]
-		return before if frame_index - before <= after - frame_index else after
+	def apply(self, point: Point2D, frame_index: int) -> Point2D:
+		if not self._by_frame:
+			return point
+		row = self._select(point, frame_index)
+		return row.function.apply(point)
+
+	def reverse(self, point: Point2D, frame_index: int) -> Point2D:
+		if not self._by_frame:
+			return point
+		rows = self._rows_for(frame_index)
+		if len(rows) > 1:
+			raise ValueError(
+				f"cannot reverse frame {frame_index}: {len(rows)} zoned rows are ambiguous "
+				"without a forward point to select by."
+			)
+		function = rows[0].function
+		if not isinstance(function, InvertibleTransformFunction):
+			raise ValueError(f"{type(function).__name__} at frame {frame_index} is not invertible.")
+		return function.reverse(point)
+
+	def kinds(self) -> frozenset[type]:
+		"""The distinct ``TransformFunction`` classes present in this table.
+
+		For a caller that needs to know *which* transformation kind a table holds
+		before picking how to use it (e.g. ``tratrac-postprocess`` telling a
+		plain-scale projection stage apart from a world-projection homography
+		one) without inspecting individual rows.
+		"""
+		return frozenset(type(row.function) for rows in self._by_frame.values() for row in rows)
+
+	def any_function(self) -> TransformFunction | None:
+		"""Any one row's function, or ``None`` if the table is empty.
+
+		For a caller that knows the table is homogeneous (e.g. every row a
+		constant-factor ``ScaleFunction``) and just needs a representative
+		instance, not a lookup by point/frame.
+		"""
+		for rows in self._by_frame.values():
+			return rows[0].function
+		return None
+
+	def function_at(self, frame_index: int) -> TransformFunction | None:
+		"""The raw ``TransformFunction`` recorded for ``frame_index``, or ``None`` if
+		this table has nothing for it at all.
+
+		For a consumer that needs the function object itself (e.g.
+		``PrecomputedEgoMotionEstimator``, which needs the concrete
+		``Transform2D`` a live pipeline step applies to a detection, not just a
+		mapped point) rather than mapping one point through it. Raises
+		``ValueError`` if more than one row shares this frame_index (ambiguous
+		without a point to select a zone by).
+		"""
+		rows = self._by_frame.get(frame_index)
+		if not rows:
+			return None
+		if len(rows) > 1:
+			raise ValueError(
+				f"frame {frame_index} has {len(rows)} rows; ambiguous without a point to select by."
+			)
+		return rows[0].function
+
+	def _rows_for(self, frame_index: int) -> list[TransformRow]:
+		rows = self._by_frame.get(frame_index)
+		if not rows:
+			raise KeyError(f"no transform recorded for frame {frame_index}.")
+		return rows
+
+	def _select(self, point: Point2D, frame_index: int) -> TransformRow:
+		rows = self._rows_for(frame_index)
+		matches = [row for row in rows if point_in_polygon(point, row.zone)]
+		if not matches:
+			raise ValueError(f"point {point} at frame {frame_index} matches no zone.")
+		if len(matches) > 1:
+			raise ValueError(
+				f"point {point} at frame {frame_index} matches {len(matches)} zones ambiguously."
+			)
+		return matches[0]
 
 
-class MultiPlaneTransform:
-	"""Picks a homography by classifying the point against elevation-plane zones.
+@dataclass(frozen=True, slots=True)
+class TranslationTransform:
+	"""A constant 2D shift, ignoring ``frame_index``.
 
-	``homographies_by_plane`` maps each plane id to the homography fitted from correspondences
-	classified into it; ``global_plane_polygons`` are the same plane zones (already mapped into
-	the global frame, see ``application/road_graph.to_global_plane_polygons``) used to fit them,
-	so a point and the correspondences that determined its plane's homography are classified by
-	the exact same rule. ``frame_index`` is ignored — plane membership is spatial, not temporal
-	(contrast ``PerAnchorTransform``, which selects by *when*; this selects by *where*).
-
-	Raises ``ValueError`` from ``apply`` if a point classifies into a plane with no fitted
-	homography — e.g. the plane zones don't fully cover the scene and a point falls into the
-	``0`` (unassigned) default with no ``plane_id: 0`` calibration group. Failing loudly here
-	is deliberate: silently guessing a "closest" plane would produce a plausible-looking but
-	physically wrong projection, and there's no principled way to decide "closest" for an
-	elevation surface which vehicles can't otherwise be evaluated against.
-
-	**Deliberately has no ``reverse``** (contrast ``PerAnchorTransform``, which has one,
-	single-homography included as its one-anchor case): plane selection here classifies the
-	*input* image point's position, which is exactly what's unknown when starting from a world
-	point — see ``domain/ports.py``'s ``InvertibleCoordinateTransform`` and
-	``application/SMOOTHING.md``'s "Dual-space export" section. A future version could carry
-	each observation's plane id forward through smoothing so the reverse pass knows which
-	homography to invert, but that isn't built yet.
+	Used to fold a post-hoc origin normalization (e.g. shifting a world
+	projection to a non-negative origin) onto a ``TransformTable`` via
+	``compose``/``compose_invertible``, replacing what used to be a
+	transform-specific ``.shifted()`` method.
 	"""
 
-	def __init__(
-		self,
-		homographies_by_plane: dict[int, NDArray[np.float64]],
-		global_plane_polygons: tuple[GlobalLabeledPolygon, ...],
-	) -> None:
-		if not homographies_by_plane:
-			raise ValueError("MultiPlaneTransform needs at least one plane homography.")
-		self._by_plane = dict(homographies_by_plane)
-		self._global_plane_polygons = global_plane_polygons
+	dx: float
+	dy: float
 
 	def apply(self, point: Point2D, frame_index: int) -> Point2D:
-		del frame_index  # plane membership is spatial, not temporal
-		plane_id = plane_id_for_point(point, self._global_plane_polygons)
-		matrix = self._by_plane.get(plane_id)
-		if matrix is None:
-			raise ValueError(
-				f"point {point} classified into plane {plane_id}, which has no fitted "
-				"homography; check the plane zones cover the whole scene and the "
-				"calibration has correspondences for every plane."
-			)
-		return _apply_homography(matrix, point)
+		del frame_index
+		return Point2D(point.x + self.dx, point.y + self.dy)
+
+	def reverse(self, point: Point2D, frame_index: int) -> Point2D:
+		del frame_index
+		return Point2D(point.x - self.dx, point.y - self.dy)
 
 
 @dataclass(frozen=True, slots=True)

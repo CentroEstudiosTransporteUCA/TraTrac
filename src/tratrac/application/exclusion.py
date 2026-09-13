@@ -22,8 +22,8 @@ def to_global_polygons(
 	"""Map each zone's polygon from its reference frame into the global frame.
 
 	``pose.apply(vertex, reference_frame)`` maps a vertex authored on that frame
-	(raw -> global). Raises ``ValueError`` if a zone's ``reference_frame`` isn't an
-	anchor ``pose`` knows about (re-wrapping the ``PerFrameTransform`` ``KeyError``).
+	(raw -> global). Raises ``ValueError`` if a zone's ``reference_frame`` isn't a
+	frame ``pose`` knows about (re-wrapping the ``PerFrameTransform`` ``KeyError``).
 	"""
 	try:
 		return tuple(
@@ -32,7 +32,7 @@ def to_global_polygons(
 		)
 	except KeyError as exc:
 		raise ValueError(
-			f"exclusion zone reference_frame is not an anchor in the manifest: {exc}"
+			f"exclusion zone reference_frame is not a frame in the transforms file: {exc}"
 		) from exc
 
 

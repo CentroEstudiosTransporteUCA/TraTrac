@@ -93,11 +93,15 @@ def _full_config(
 ) -> Path:
 	"""Write a complete, valid persisted run config to ``tmp_path``."""
 	out = out if out is not None else tmp_path / "out.trj"
+	transforms_in = tmp_path / "transforms.jsonl"
+	if not transforms_in.exists():
+		transforms_in.write_text("")  # content is never validated by resolve()/static checks
 	config = tmp_path / "run.toml"
 	config.write_text(
 		"[input]\n"
 		f'video = "{video}"\n'
 		"process_fps = 0.0\n"
+		f'transforms_in = "{transforms_in}"\n'
 		"[detector]\n"
 		'name = "yolov8_visdrone"\n'
 		'checkpoint = "repo/model"\n'
@@ -105,17 +109,10 @@ def _full_config(
 		'filename = "model.pt"\n'
 		"[runtime]\n"
 		'device = "cpu"\n'
-		"[calibration]\n"
-		"meters_per_pixel = 0.1\n"
-		"[ego_motion]\n"
-		"enabled = false\n"
 		"[tracker]\n"
 		"det_thresh = 0.1\n"
 		"[export]\n"
 		f'out = "{out}"\n'
-		f'scale_out = "{tmp_path / "scale.jsonl"}"\n'
-		'transform_file = ""\n'
-		'anchors_dir = ""\n'
 		"[window]\n"
 		'start = ""\n'
 		'end = ""\n'

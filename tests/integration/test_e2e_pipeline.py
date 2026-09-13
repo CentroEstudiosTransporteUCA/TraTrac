@@ -19,10 +19,11 @@ from typer.testing import CliRunner
 
 from tratrac.application.pipeline import TrajectoryPipeline
 from tratrac.cli_postprocess import app as postprocess_app
-from tratrac.infrastructure.calibration.scale_sidecar import write_scale
 from tratrac.infrastructure.detection.rt_detr import RtDetrDetector
 from tratrac.infrastructure.tracking.boxmot_bot_sort import BoxmotBotSortTracker
 from tratrac.infrastructure.tracks.parquet import ParquetTrackSink, read_tracks
+from tratrac.infrastructure.transform.records import ScaleFunction, TransformRow
+from tratrac.infrastructure.transform.sink import CoordinateTransformSink, whole_canvas
 from tratrac.infrastructure.video.opencv import OpenCvVideoSource
 
 _WIDTH = 128
@@ -73,13 +74,16 @@ def test_perception_record_then_smooth_to_trj(synthetic_video: Path, tmp_path: P
 	recording = read_tracks(record)  # the record is a valid, self-contained track file
 	assert (recording.metadata.width, recording.metadata.height) == (_WIDTH, _HEIGHT)
 
-	scale_path = tmp_path / "record.scale.jsonl"
-	write_scale(scale_path, 1.0)
+	transforms_path = tmp_path / "record.transforms.jsonl"
+	zone = whole_canvas(_WIDTH, _HEIGHT)
+	with CoordinateTransformSink(transforms_path, width=_WIDTH, height=_HEIGHT) as sink:
+		for frame_index in range(n_frames):
+			sink.record_row(TransformRow(frame_index, zone, ScaleFunction(1.0)))
 
 	# Step 2: smooth the record into a .trj via the real entry point.
 	out = tmp_path / "out.trj"
 	result = CliRunner().invoke(
-		postprocess_app, [str(record), "--out", str(out), "--scale", str(scale_path)]
+		postprocess_app, [str(record), "--transforms", str(transforms_path), "--out", str(out)]
 	)
 	assert result.exit_code == 0, result.output
 	data = out.read_bytes()

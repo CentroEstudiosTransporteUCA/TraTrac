@@ -8,15 +8,21 @@ from pathlib import Path
 
 import pytest
 
-from tratrac.application.coordinate_transforms import IdentityTransform, PerFrameTransform
+from tratrac.application.coordinate_transforms import TransformTable
 from tratrac.application.exclusion import excluded_track_ids, to_global_polygons
 from tratrac.domain.exclusion import ExclusionZone, ExclusionZones
 from tratrac.domain.geometry import Point2D, Polygon, Transform2D
 from tratrac.infrastructure.exclusion.json import load_exclusion_zones
+from tratrac.infrastructure.transform.records import SimilarityFunction, TransformRow
 
 
 def _square(x0: float, y0: float, x1: float, y1: float) -> tuple[Point2D, ...]:
 	return (Point2D(x0, y0), Point2D(x1, y0), Point2D(x1, y1), Point2D(x0, y1))
+
+
+# Strictly contains every test point below (point_in_polygon excludes the boundary,
+# so this can't start flush at 0,0 the way a real whole-canvas zone would).
+_WIDE_ZONE = _square(-1000.0, -1000.0, 1000.0, 1000.0)
 
 
 class TestToGlobalPolygons:
@@ -24,7 +30,7 @@ class TestToGlobalPolygons:
 		zones = ExclusionZones(
 			zones=(ExclusionZone(reference_frame=0, polygon=Polygon(_square(1, 2, 3, 4))),)
 		)
-		out = to_global_polygons(zones, IdentityTransform())
+		out = to_global_polygons(zones, TransformTable([]))
 		assert out == (_square(1, 2, 3, 4),)
 
 	def test_pose_lookup_is_keyed_by_reference_frame(self) -> None:
@@ -32,7 +38,8 @@ class TestToGlobalPolygons:
 			zones=(ExclusionZone(reference_frame=7, polygon=Polygon(_square(0, 0, 10, 10))),)
 		)
 		shift = Transform2D(a=1.0, b=0.0, tx=5.0, c=0.0, d=1.0, ty=0.0)
-		out = to_global_polygons(zones, PerFrameTransform({7: shift}))
+		table = TransformTable([TransformRow(7, _WIDE_ZONE, SimilarityFunction(shift))])
+		out = to_global_polygons(zones, table)
 		assert out[0][0] == Point2D(5.0, 0.0)  # (0,0) shifted by +5 in x
 
 

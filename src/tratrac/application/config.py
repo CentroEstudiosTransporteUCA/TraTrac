@@ -1,8 +1,11 @@
 """Run configuration: the persisted, replayable specification of one analysis.
 
-A TraTrac run is fully described by a ``RunConfig`` — input video, detector,
-calibration, tracker, orientation, export, analysis window, and run options.
-Every value is mandatory: there are **no built-in defaults anywhere in the
+A TraTrac run is fully described by a ``RunConfig`` — input video and
+transforms file, detector, tracker, export, analysis window, and run options.
+Every geometric transform (GSD scale, ego-motion, world projection) is
+resolved upstream by ``tratrac-preprocess``, not here — ``input.transforms_in``
+just names that file. Every value is mandatory: there are **no built-in
+defaults anywhere in the
 package**. Each parameter must be supplied by a TOML config file or a CLI flag;
 if neither supplies it, ``RunConfig.resolve`` fails listing exactly what is
 missing. This trades typing convenience for scientific reproducibility — a
@@ -22,11 +25,6 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
-
-from tratrac.calibration.drone_specs import known_models, lookup
-from tratrac.calibration.gsd import ground_sample_distance
-from tratrac.calibration.srt_parser import mean_altitude
-from tratrac.domain.frame import VideoMetadata
 
 
 class DetectorChoice(StrEnum):
@@ -66,13 +64,21 @@ class ConfigError(Exception):
 
 @dataclass(frozen=True, slots=True)
 class InputConfig:
-	"""The processed video. Per-run, but part of the persisted config so a saved
+	"""The processed video and the transforms file that resolves every geometric
+	transform for this run. Per-run, but part of the persisted config so a saved
 	config replays without any positional argument."""
 
 	video: Path
 	# Cap the processing cadence to this many frames per second (decode-time
 	# decimation, see src/tratrac/infrastructure/TIMESTEP_PRECISION.md). ``0.0`` = process every frame.
 	process_fps: float
+	# A `tratrac-preprocess` run's transforms file (`infrastructure/transform/records.py`).
+	# Always required: `tratrac` never estimates ego-motion or resolves the GSD scale
+	# itself -- it only ever reads the ego-motion stage's rows out of this file, using
+	# the identity when there are none (a static-camera run still needs the file for
+	# its per-frame scale rows, which `tratrac-postprocess` reads later). See
+	# src/tratrac/infrastructure/video/EGO_MOTION.md.
+	transforms_in: Path
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,67 +98,6 @@ class RuntimeConfig:
 
 
 @dataclass(frozen=True, slots=True)
-class CalibrationConfig:
-	"""GSD calibration, a one-of: either a direct ``meters_per_pixel`` or a
-	``drone_model`` plus an altitude source (``altitude_m`` or an ``srt`` path).
-	``resolve`` guarantees exactly one method is fully specified."""
-
-	meters_per_pixel: float | None
-	drone_model: str | None
-	altitude_m: float | None
-	srt: Path | None
-
-	def resolve_scale(self, metadata: VideoMetadata) -> float:
-		"""Resolve the GSD (metres per pixel). Requires video metadata for the
-		image width when computing from drone geometry. May raise ``ValueError``
-		from the calibration chain (e.g. an SRT with no usable altitudes)."""
-		if self.meters_per_pixel is not None:
-			return self.meters_per_pixel
-		if self.drone_model is None:
-			raise ConfigError(["calibration: no method resolved."])
-		spec = lookup(self.drone_model)
-		if self.altitude_m is not None:
-			altitude = self.altitude_m
-		elif self.srt is not None:
-			altitude = mean_altitude(self.srt)
-		else:
-			raise ConfigError(["calibration: drone_model needs altitude_m or an srt path."])
-		return ground_sample_distance(
-			sensor_width_mm=spec.sensor_width_mm,
-			focal_length_mm=spec.focal_length_mm,
-			altitude_m=altitude,
-			image_width_pixels=metadata.width,
-		)
-
-
-@dataclass(frozen=True, slots=True)
-class EgoMotionConfig:
-	"""ORB video-stabilization settings (MVP1.9, see ``src/tratrac/infrastructure/video/EGO_MOTION.md``).
-
-	``enabled`` is the explicit on/off toggle (per the "off is explicit" rule). The
-	ORB parameters are only meaningful — and only required by ``resolve`` — when
-	``enabled`` is true; when disabled they hold ignored placeholder zeros."""
-
-	enabled: bool
-	n_features: int
-	match_ratio: float
-	min_matches: int
-	ransac_threshold: float
-	# Minimum fraction of the keyframe anchor still visible before re-anchoring
-	# (see src/tratrac/infrastructure/video/EGO_MOTION.md). Only meaningful when ``enabled``.
-	min_anchor_overlap: float
-	# Optional pre-built transforms file (a `tratrac-stabilize` run's output). ``None``
-	# = off (live ORB, the default). When set, the run reads this table instead of
-	# estimating ego-motion live, so its own single detector pass never also runs
-	# ORB — see "Detector-free ego-motion", src/tratrac/infrastructure/video/EGO_MOTION.md.
-	# Only meaningful when ``enabled`` (same toggleable-key coherence guard as
-	# ``export.transform_file``). The ORB parameters above are still required
-	# whenever ``enabled`` is true, even though they go unused in this path — kept
-	# simple rather than adding a second conditional-requirement branch.
-	transforms_in: Path | None
-
-
-@dataclass(frozen=True, slots=True)
 class TrackerConfig:
 	det_thresh: float
 
@@ -161,21 +106,9 @@ class TrackerConfig:
 class ExportConfig:
 	# The run's primary output: the track record (raw tracked measurements). The
 	# offline ``tratrac-postprocess`` pass reads it to produce the SSAM ``.trj`` (src/tratrac/application/SMOOTHING.md).
+	# The GSD scale is no longer resolved or written here -- it's one of
+	# `input.transforms_in`'s rows, resolved by `tratrac-preprocess estimate`.
 	out: Path
-	# The GSD metric scale sidecar (a CoordinateTransform, see
-	# infrastructure/transform/records.py), always written -- [calibration] is itself
-	# mandatory and always yields a scale, so unlike transform_file/anchors_dir this is
-	# not toggleable. See src/tratrac/calibration/GSD_CALIBRATION.md.
-	scale_out: Path
-	# Optional per-frame ego-motion transform sidecar (current frame -> global). ``None``
-	# = off. Only meaningful when ego-motion is enabled (``resolve`` enforces this):
-	# with stabilization off every transform is the identity, so there is nothing to
-	# record. See src/tratrac/infrastructure/video/EGO_MOTION.md.
-	transform_file: Path | None
-	# Optional directory for the run's keyframe-anchor PNGs + manifest (the frames an
-	# operator draws exclusion zones on). ``None`` = off. Only meaningful when ego-motion
-	# is enabled (no anchors without live ORB). See src/tratrac/application/EXCLUSION_ZONES.md.
-	anchors_dir: Path | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -201,8 +134,6 @@ class RunConfig:
 	input: InputConfig
 	detector: DetectorConfig
 	runtime: RuntimeConfig
-	calibration: CalibrationConfig
-	ego_motion: EgoMotionConfig
 	tracker: TrackerConfig
 	export: ExportConfig
 	window: WindowConfig
@@ -225,6 +156,7 @@ class RunConfig:
 		process_fps = resolver.required_float("input.process_fps")
 		if resolver.present("input.process_fps") and process_fps < 0.0:
 			resolver.problems.append("input.process_fps must be >= 0 (0 = every frame).")
+		transforms_in = resolver.required_path("input.transforms_in")
 
 		detector_name = _resolve_detector_name(resolver)
 		checkpoint = resolver.required_str("detector.checkpoint")
@@ -235,32 +167,10 @@ class RunConfig:
 		device = resolver.required_str("runtime.device")
 		_validate_device(device, resolver)
 
-		calibration = _resolve_calibration(resolver)
-		ego_motion = _resolve_ego_motion(resolver)
-
 		det_thresh = resolver.required_float("tracker.det_thresh")
 		_check_range(det_thresh, 0.0, 1.0, "tracker.det_thresh", resolver)
 
 		out = resolver.required_path("export.out")
-		scale_out = resolver.required_path("export.scale_out")
-		transform_file = resolver.toggleable_path("export.transform_file")
-		if transform_file is not None and not ego_motion.enabled:
-			resolver.problems.append(
-				"export.transform_file requires ego_motion.enabled = true; with stabilization "
-				'off every transform is the identity, so there is nothing to record (use "").'
-			)
-		anchors_dir = resolver.toggleable_path("export.anchors_dir")
-		if anchors_dir is not None and not ego_motion.enabled:
-			resolver.problems.append(
-				"export.anchors_dir requires ego_motion.enabled = true; a static run has no "
-				'keyframe anchors (use "").'
-			)
-		if anchors_dir is not None and ego_motion.transforms_in is not None:
-			resolver.problems.append(
-				"export.anchors_dir is incompatible with ego_motion.transforms_in; a "
-				'precomputed-transforms run discovers no new anchors of its own (use "") -- '
-				"draw zones/correspondences on the tratrac-stabilize run's own anchors instead."
-			)
 
 		window = WindowConfig(
 			start_seconds=_resolve_window_bound(resolver, "window.start"),
@@ -274,20 +184,13 @@ class RunConfig:
 			raise ConfigError(resolver.problems)
 
 		return cls(
-			input=InputConfig(video=video, process_fps=process_fps),
+			input=InputConfig(video=video, process_fps=process_fps, transforms_in=transforms_in),
 			detector=DetectorConfig(
 				name=detector_name, checkpoint=checkpoint, conf=conf, filename=filename
 			),
 			runtime=RuntimeConfig(device=device),
-			calibration=calibration,
-			ego_motion=ego_motion,
 			tracker=TrackerConfig(det_thresh=det_thresh),
-			export=ExportConfig(
-				out=out,
-				scale_out=scale_out,
-				transform_file=transform_file,
-				anchors_dir=anchors_dir,
-			),
+			export=ExportConfig(out=out),
 			window=window,
 			options=RunOptionsConfig(timing_csv=timing_csv),
 		)
@@ -347,26 +250,6 @@ class _Resolver:
 			return 0.0
 		return float(raw)
 
-	def required_int(self, dotted: str) -> int:
-		raw = self._raw(dotted)
-		if raw is _MISSING:
-			self.problems.append(f"{dotted} is missing.")
-			return 0
-		if isinstance(raw, bool) or not isinstance(raw, int):
-			self.problems.append(f"{dotted} must be an integer, got {type(raw).__name__}.")
-			return 0
-		return raw
-
-	def required_bool(self, dotted: str) -> bool:
-		raw = self._raw(dotted)
-		if raw is _MISSING:
-			self.problems.append(f"{dotted} is missing.")
-			return False
-		if not isinstance(raw, bool):
-			self.problems.append(f"{dotted} must be true or false, got {type(raw).__name__}.")
-			return False
-		return raw
-
 	def required_path(self, dotted: str) -> Path:
 		raw = self._raw(dotted)
 		if raw is _MISSING:
@@ -397,35 +280,6 @@ class _Resolver:
 		self.problems.append(f'{dotted} must be a path string or "".')
 		return None
 
-	def optional_float(self, dotted: str) -> float | None:
-		raw = self._raw(dotted)
-		if raw is _MISSING:
-			return None
-		if isinstance(raw, bool) or not isinstance(raw, int | float):
-			self.problems.append(f"{dotted} must be a number, got {type(raw).__name__}.")
-			return None
-		return float(raw)
-
-	def optional_str(self, dotted: str) -> str | None:
-		raw = self._raw(dotted)
-		if raw is _MISSING:
-			return None
-		if not isinstance(raw, str):
-			self.problems.append(f"{dotted} must be a string, got {type(raw).__name__}.")
-			return None
-		return raw
-
-	def optional_path(self, dotted: str) -> Path | None:
-		raw = self._raw(dotted)
-		if raw is _MISSING:
-			return None
-		if isinstance(raw, Path):
-			return raw
-		if isinstance(raw, str):
-			return Path(raw) if raw else None
-		self.problems.append(f"{dotted} must be a path string, got {type(raw).__name__}.")
-		return None
-
 
 _DEVICE_RE = re.compile(r"cpu|mps|cuda(:\d+)?")
 
@@ -452,93 +306,6 @@ def _resolve_detector_name(resolver: _Resolver) -> DetectorChoice:
 			valid = ", ".join(choice.value for choice in DetectorChoice)
 			resolver.problems.append(f"detector.name {name!r} is unknown; valid: {valid}.")
 		return DetectorChoice.YOLOV8_VISDRONE
-
-
-def _resolve_calibration(resolver: _Resolver) -> CalibrationConfig:
-	meters_per_pixel = resolver.optional_float("calibration.meters_per_pixel")
-	drone_model = resolver.optional_str("calibration.drone_model")
-	altitude_m = resolver.optional_float("calibration.altitude_m")
-	srt = resolver.optional_path("calibration.srt")
-
-	if meters_per_pixel is not None and drone_model:
-		resolver.problems.append(
-			"calibration: specify exactly one of meters_per_pixel or drone_model, not both."
-		)
-		return CalibrationConfig(meters_per_pixel, None, None, None)
-
-	if meters_per_pixel is not None:
-		if meters_per_pixel <= 0.0:
-			resolver.problems.append("calibration.meters_per_pixel must be positive.")
-		return CalibrationConfig(meters_per_pixel, None, None, None)
-
-	if drone_model:
-		if drone_model.lower() not in known_models():
-			known = ", ".join(known_models())
-			resolver.problems.append(
-				f"calibration.drone_model {drone_model!r} is unknown; known: {known}."
-			)
-		altitude_ok = altitude_m is not None and altitude_m > 0.0
-		if altitude_m is not None and altitude_m <= 0.0:
-			resolver.problems.append("calibration.altitude_m must be positive.")
-		if not altitude_ok and srt is None:
-			resolver.problems.append(
-				"calibration: drone_model needs altitude_m (> 0) or an srt path."
-			)
-		return CalibrationConfig(
-			meters_per_pixel=None,
-			drone_model=drone_model,
-			altitude_m=altitude_m if altitude_ok else None,
-			srt=srt,
-		)
-
-	resolver.problems.append(
-		"calibration: set meters_per_pixel, or drone_model with altitude_m or an srt path."
-	)
-	return CalibrationConfig(None, None, None, None)
-
-
-def _resolve_ego_motion(resolver: _Resolver) -> EgoMotionConfig:
-	"""Resolve the ORB stabilization config. ``enabled`` is always required; the ORB
-	parameters are required (and range-checked) only when stabilization is on."""
-	enabled = resolver.required_bool("ego_motion.enabled")
-	if not enabled:
-		# Disabled (or the toggle itself was missing — already reported): the ORB
-		# parameters are irrelevant. Placeholder zeros.
-		return EgoMotionConfig(
-			enabled=False,
-			n_features=0,
-			match_ratio=0.0,
-			min_matches=0,
-			ransac_threshold=0.0,
-			min_anchor_overlap=0.0,
-			transforms_in=None,
-		)
-
-	n_features = resolver.required_int("ego_motion.n_features")
-	if resolver.present("ego_motion.n_features") and n_features <= 0:
-		resolver.problems.append("ego_motion.n_features must be positive.")
-	match_ratio = resolver.required_float("ego_motion.match_ratio")
-	if resolver.present("ego_motion.match_ratio") and not 0.0 < match_ratio < 1.0:
-		resolver.problems.append("ego_motion.match_ratio must be in (0, 1).")
-	min_matches = resolver.required_int("ego_motion.min_matches")
-	if resolver.present("ego_motion.min_matches") and min_matches < 2:
-		resolver.problems.append("ego_motion.min_matches must be >= 2.")
-	ransac_threshold = resolver.required_float("ego_motion.ransac_threshold")
-	if resolver.present("ego_motion.ransac_threshold") and ransac_threshold <= 0.0:
-		resolver.problems.append("ego_motion.ransac_threshold must be positive.")
-	min_anchor_overlap = resolver.required_float("ego_motion.min_anchor_overlap")
-	if resolver.present("ego_motion.min_anchor_overlap") and not 0.0 < min_anchor_overlap < 1.0:
-		resolver.problems.append("ego_motion.min_anchor_overlap must be in (0, 1).")
-	transforms_in = resolver.toggleable_path("ego_motion.transforms_in")
-	return EgoMotionConfig(
-		enabled=True,
-		n_features=n_features,
-		match_ratio=match_ratio,
-		min_matches=min_matches,
-		ransac_threshold=ransac_threshold,
-		min_anchor_overlap=min_anchor_overlap,
-		transforms_in=transforms_in,
-	)
 
 
 def _resolve_window_bound(resolver: _Resolver, dotted: str) -> float | None:

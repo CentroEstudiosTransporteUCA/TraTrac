@@ -21,17 +21,16 @@ raw, full-resolution frame and nothing is cropped — see src/tratrac/infrastruc
 Feature-based (not intensity ECC) because aerial traffic is dominated by moving
 foreground: explicit correspondences let RANSAC reject moving-vehicle matches. The
 estimator masks vehicles out of feature extraction; where the mask comes from is
-pluggable behind ``MaskSource`` (below) — live pipeline detections
-(``DetectionMaskSource``, the default in a `tratrac` run) or operator-authored
-background zones (``BackgroundZoneMaskSource``, no detector needed, used by
-`tratrac-stabilize` — see "Detector-free ego-motion" in
-src/tratrac/infrastructure/video/EGO_MOTION.md). SuperPoint+LightGlue is the
-eventual estimator upgrade (``docs/BACKLOG.md`` item 1).
+pluggable behind ``MaskSource`` (below) — today's only implementation is
+operator-authored background zones (``BackgroundZoneMaskSource``, no detector
+needed, used by `tratrac-preprocess` — see "Detector-free ego-motion" in
+src/tratrac/infrastructure/video/EGO_MOTION.md); `tratrac` itself never
+constructs this estimator live, only `tratrac-preprocess` does. SuperPoint+LightGlue
+is the eventual estimator upgrade (``docs/BACKLOG.md`` item 1).
 """
 
 from __future__ import annotations
 
-import math
 from collections.abc import Callable
 from typing import Any, Protocol
 
@@ -61,40 +60,9 @@ class MaskSource(Protocol):
 	def mask_for(self, frame_index: int, height: int, width: int) -> NDArray[np.uint8] | None: ...
 
 
-class DetectionMaskSource:
-	"""Masks vehicles out using the live pipeline's own detections (today's default).
-
-	Detections are in raw frame coordinates (the detector runs on the raw frame), so
-	the boxes mask the current frame directly — no transform, no ``frame_index``
-	lookup (``mask_for`` ignores it; the mask always reflects the most recent
-	``observe`` call).
-	"""
-
-	def __init__(self) -> None:
-		self._detections: list[Detection] = []
-
-	def observe(self, detections: list[Detection]) -> None:
-		self._detections = detections
-
-	def mask_for(self, frame_index: int, height: int, width: int) -> NDArray[np.uint8] | None:
-		del frame_index
-		if not self._detections:
-			return None
-		mask: NDArray[np.uint8] = np.full((height, width), 255, dtype=np.uint8)
-		for detection in self._detections:
-			box = detection.bbox
-			x0 = max(0, math.floor(box.x))
-			x1 = min(width, math.ceil(box.x + box.width))
-			y0 = max(0, math.floor(box.y))
-			y1 = min(height, math.ceil(box.y + box.height))
-			if x1 > x0 and y1 > y0:
-				mask[y0:y1, x0:x1] = 0
-		return mask
-
-
 class BackgroundZoneMaskSource:
 	"""Masks ORB feature extraction to operator-authored background zones — no
-	detector, no live detections needed (see `tratrac-stabilize`).
+	detector, no live detections needed (see `tratrac-preprocess`).
 
 	``zones`` is a `BackgroundZones` ordered by ``reference_frame``; each entry marks
 	"use this polygon as the keep-region from this frame until a later entry

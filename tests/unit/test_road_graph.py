@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from tratrac.application.coordinate_transforms import IdentityTransform, PerFrameTransform
+from tratrac.application.coordinate_transforms import TransformTable
 from tratrac.application.road_graph import (
 	lane_id_for_point,
 	link_id_for_point,
@@ -32,10 +32,16 @@ from tratrac.infrastructure.road_graph.json import (
 	load_link_zones,
 	load_plane_zones,
 )
+from tratrac.infrastructure.transform.records import SimilarityFunction, TransformRow
 
 
 def _square(x0: float, y0: float, x1: float, y1: float) -> tuple[Point2D, ...]:
 	return (Point2D(x0, y0), Point2D(x1, y0), Point2D(x1, y1), Point2D(x0, y1))
+
+
+# Strictly contains every test point below (point_in_polygon excludes the boundary,
+# so this can't start flush at 0,0 the way a real whole-canvas zone would).
+_WIDE_ZONE = _square(-1000.0, -1000.0, 1000.0, 1000.0)
 
 
 class TestLinkZone:
@@ -49,7 +55,7 @@ class TestToGlobalLinkPolygons:
 		zones = LinkZones(
 			zones=(LinkZone(link_id=1, reference_frame=0, polygon=Polygon(_square(1, 2, 3, 4))),)
 		)
-		out = to_global_link_polygons(zones, IdentityTransform())
+		out = to_global_link_polygons(zones, TransformTable([]))
 		assert out == ((1, _square(1, 2, 3, 4)),)
 
 	def test_pose_lookup_is_keyed_by_reference_frame(self) -> None:
@@ -57,7 +63,8 @@ class TestToGlobalLinkPolygons:
 			zones=(LinkZone(link_id=5, reference_frame=7, polygon=Polygon(_square(0, 0, 10, 10))),)
 		)
 		shift = Transform2D(a=1.0, b=0.0, tx=5.0, c=0.0, d=1.0, ty=0.0)
-		out = to_global_link_polygons(zones, PerFrameTransform({7: shift}))
+		table = TransformTable([TransformRow(7, _WIDE_ZONE, SimilarityFunction(shift))])
+		out = to_global_link_polygons(zones, table)
 		assert out[0][0] == 5
 		assert out[0][1][0] == Point2D(5.0, 0.0)
 
@@ -197,7 +204,7 @@ class TestToGlobalLanePolygons:
 				),
 			)
 		)
-		out = to_global_lane_polygons(zones, IdentityTransform())
+		out = to_global_lane_polygons(zones, TransformTable([]))
 		assert out == ((2, _square(1, 2, 3, 4)),)
 
 
@@ -281,7 +288,7 @@ class TestToGlobalPlanePolygons:
 		zones = PlaneZones(
 			zones=(PlaneZone(plane_id=1, reference_frame=0, polygon=Polygon(_square(1, 2, 3, 4))),)
 		)
-		out = to_global_plane_polygons(zones, IdentityTransform())
+		out = to_global_plane_polygons(zones, TransformTable([]))
 		assert out == ((1, _square(1, 2, 3, 4)),)
 
 

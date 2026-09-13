@@ -7,7 +7,7 @@ config as a dict — no temp files needed. The TOML loader is tested separately.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any
 
 import pytest
 
@@ -16,18 +16,17 @@ from tratrac.application.config import (
 	DetectorChoice,
 	RunConfig,
 )
-from tratrac.calibration.drone_specs import lookup
-from tratrac.calibration.gsd import ground_sample_distance
-from tratrac.domain.frame import VideoMetadata
 from tratrac.infrastructure.config.toml import load_toml
-
-_METADATA = VideoMetadata(width=1920, height=1080, fps=30.0, total_frames=100)
 
 
 def _complete(tmp_path: Path, **overrides: Any) -> dict[str, Any]:
 	"""A complete, valid file-values mapping; ``overrides`` patch whole sections."""
 	file_values: dict[str, Any] = {
-		"input": {"video": str(tmp_path / "v.mp4"), "process_fps": 0.0},
+		"input": {
+			"video": str(tmp_path / "v.mp4"),
+			"process_fps": 0.0,
+			"transforms_in": str(tmp_path / "transforms.jsonl"),
+		},
 		"detector": {
 			"name": "yolov8_visdrone",
 			"checkpoint": "repo/model",
@@ -35,15 +34,8 @@ def _complete(tmp_path: Path, **overrides: Any) -> dict[str, Any]:
 			"filename": "model.pt",
 		},
 		"runtime": {"device": "cpu"},
-		"calibration": {"meters_per_pixel": 0.05},
-		"ego_motion": {"enabled": False},
 		"tracker": {"det_thresh": 0.1},
-		"export": {
-			"out": str(tmp_path / "record.parquet"),
-			"scale_out": str(tmp_path / "record.scale.jsonl"),
-			"transform_file": "",
-			"anchors_dir": "",
-		},
+		"export": {"out": str(tmp_path / "record.parquet")},
 		"window": {"start": "", "end": ""},
 		"run": {"timing_csv": ""},
 	}
@@ -58,10 +50,9 @@ class TestResolveComplete:
 		assert run.detector.name is DetectorChoice.YOLOV8_VISDRONE
 		assert run.detector.conf == 0.25
 		assert run.runtime.device == "cpu"
-		assert run.calibration.meters_per_pixel == 0.05
+		assert run.input.transforms_in == tmp_path / "transforms.jsonl"
 		assert run.tracker.det_thresh == 0.1
 		assert run.export.out == tmp_path / "record.parquet"
-		assert run.export.scale_out == tmp_path / "record.scale.jsonl"
 		assert run.window.start_seconds is None
 		assert run.window.end_seconds is None
 		assert run.options.timing_csv is None  # "" disables
@@ -71,7 +62,6 @@ class TestResolveComplete:
 		# Empty strings / false are valid "disabled" values, not missing keys.
 		assert run.options.timing_csv is None
 		assert run.window.start_seconds is None
-		assert run.export.transform_file is None
 
 
 class TestProcessFps:
@@ -131,7 +121,7 @@ class TestMissingKeys:
 		assert "input.video is missing." in problems
 		assert "detector.name is missing." in problems
 		assert "runtime.device is missing." in problems
-		assert any("calibration" in p for p in problems)
+		assert any("transforms_in" in p for p in problems)
 		assert len(problems) >= 8  # aggregated, not one-at-a-time
 
 	def test_partial_config_reports_only_what_is_absent(self, tmp_path: Path) -> None:
@@ -142,128 +132,26 @@ class TestMissingKeys:
 		assert excinfo.value.problems == ["runtime.device is missing."]
 
 
-class TestCalibration:
-	def test_meters_per_pixel_method(self, tmp_path: Path) -> None:
-		run = RunConfig.resolve(_complete(tmp_path), {})
-		assert run.calibration.resolve_scale(_METADATA) == 0.05
+class TestTransformsIn:
+	"""``tratrac`` never resolves scale, ego-motion, or a homography itself -- it just
+	names the ``tratrac-preprocess`` file that already has (see ``test_cli_preprocess.py``
+	for that tool's own scale-resolution/one-of tests)."""
 
-	def test_drone_model_with_altitude_computes_gsd(self, tmp_path: Path) -> None:
-		run = RunConfig.resolve(
-			_complete(tmp_path, calibration={"drone_model": "mavic_3", "altitude_m": 80.0}),
-			{},
-		)
-		spec = lookup("mavic_3")
-		expected = ground_sample_distance(
-			sensor_width_mm=spec.sensor_width_mm,
-			focal_length_mm=spec.focal_length_mm,
-			altitude_m=80.0,
-			image_width_pixels=_METADATA.width,
-		)
-		assert run.calibration.resolve_scale(_METADATA) == pytest.approx(expected)
-
-	def test_both_methods_is_an_error(self, tmp_path: Path) -> None:
-		with pytest.raises(ConfigError, match="exactly one"):
-			RunConfig.resolve(
-				_complete(
-					tmp_path, calibration={"meters_per_pixel": 0.05, "drone_model": "mavic_3"}
-				),
-				{},
-			)
-
-	def test_drone_model_without_altitude_source_is_an_error(self, tmp_path: Path) -> None:
-		with pytest.raises(ConfigError, match="altitude_m"):
-			RunConfig.resolve(_complete(tmp_path, calibration={"drone_model": "mavic_3"}), {})
-
-	def test_unknown_drone_model_is_an_error(self, tmp_path: Path) -> None:
-		with pytest.raises(ConfigError, match="unknown"):
-			RunConfig.resolve(
-				_complete(tmp_path, calibration={"drone_model": "not_a_drone", "altitude_m": 80.0}),
-				{},
-			)
-
-	def test_non_positive_meters_per_pixel_is_an_error(self, tmp_path: Path) -> None:
-		with pytest.raises(ConfigError, match="positive"):
-			RunConfig.resolve(_complete(tmp_path, calibration={"meters_per_pixel": 0.0}), {})
-
-	def test_srt_path_as_altitude_source_resolves(self, tmp_path: Path) -> None:
-		srt = tmp_path / "clip.SRT"
-		srt.write_text("1\n00:00:00,000 --> 00:00:01,000\n[rel_alt: 80.000 abs_alt: 100.0]\n\n")
-		run = RunConfig.resolve(
-			_complete(tmp_path, calibration={"drone_model": "mavic_3", "srt": str(srt)}),
-			{},
-		)
-		assert run.calibration.resolve_scale(_METADATA) > 0.0
-
-
-class TestEgoMotion:
-	_ENABLED: ClassVar[dict[str, Any]] = {
-		"enabled": True,
-		"n_features": 2000,
-		"match_ratio": 0.75,
-		"min_matches": 10,
-		"ransac_threshold": 3.0,
-		"min_anchor_overlap": 0.6,
-		"transforms_in": "",
-	}
-
-	def test_disabled_needs_no_orb_params(self, tmp_path: Path) -> None:
-		run = RunConfig.resolve(_complete(tmp_path, ego_motion={"enabled": False}), {})
-		assert run.ego_motion.enabled is False
-
-	def test_enabled_resolves_orb_params(self, tmp_path: Path) -> None:
-		run = RunConfig.resolve(_complete(tmp_path, ego_motion=self._ENABLED), {})
-		assert run.ego_motion.enabled is True
-		assert run.ego_motion.n_features == 2000
-		assert run.ego_motion.match_ratio == 0.75
-		assert run.ego_motion.min_matches == 10
-		assert run.ego_motion.ransac_threshold == 3.0
-		assert run.ego_motion.min_anchor_overlap == 0.6
-
-	def test_missing_enabled_is_an_error(self, tmp_path: Path) -> None:
+	def test_missing_is_an_error(self, tmp_path: Path) -> None:
 		file_values = _complete(tmp_path)
-		del file_values["ego_motion"]
-		with pytest.raises(ConfigError, match=r"ego_motion\.enabled is missing"):
+		del file_values["input"]["transforms_in"]
+		with pytest.raises(ConfigError, match=r"input\.transforms_in is missing"):
 			RunConfig.resolve(file_values, {})
 
-	def test_enabled_without_orb_params_is_an_error(self, tmp_path: Path) -> None:
-		with pytest.raises(ConfigError) as excinfo:
-			RunConfig.resolve(_complete(tmp_path, ego_motion={"enabled": True}), {})
-		problems = excinfo.value.problems
-		assert "ego_motion.n_features is missing." in problems
-		assert "ego_motion.match_ratio is missing." in problems
-		assert "ego_motion.min_matches is missing." in problems
-		assert "ego_motion.ransac_threshold is missing." in problems
-		assert "ego_motion.min_anchor_overlap is missing." in problems
-		assert any("ego_motion.transforms_in is missing" in p for p in problems)
-
-	def test_transforms_in_off_resolves_to_none(self, tmp_path: Path) -> None:
-		run = RunConfig.resolve(_complete(tmp_path, ego_motion=self._ENABLED), {})
-		assert run.ego_motion.transforms_in is None  # "" disables (live ORB)
-
-	def test_transforms_in_path_resolves(self, tmp_path: Path) -> None:
-		enabled = {**self._ENABLED, "transforms_in": str(tmp_path / "transforms.jsonl")}
-		run = RunConfig.resolve(_complete(tmp_path, ego_motion=enabled), {})
-		assert run.ego_motion.transforms_in == tmp_path / "transforms.jsonl"
-
-	def test_transforms_in_with_anchors_dir_is_an_error(self, tmp_path: Path) -> None:
-		enabled = {**self._ENABLED, "transforms_in": str(tmp_path / "transforms.jsonl")}
-		file_values = _complete(tmp_path, ego_motion=enabled)
-		file_values["export"]["anchors_dir"] = str(tmp_path / "anchors")
-		with pytest.raises(ConfigError, match=r"incompatible with ego_motion\.transforms_in"):
+	def test_empty_is_an_error(self, tmp_path: Path) -> None:
+		file_values = _complete(tmp_path)
+		file_values["input"]["transforms_in"] = ""
+		with pytest.raises(ConfigError, match=r"input\.transforms_in must not be empty"):
 			RunConfig.resolve(file_values, {})
 
-	def test_out_of_range_anchor_overlap_is_an_error(self, tmp_path: Path) -> None:
-		bad = {**self._ENABLED, "min_anchor_overlap": 1.5}
-		with pytest.raises(ConfigError, match="min_anchor_overlap"):
-			RunConfig.resolve(_complete(tmp_path, ego_motion=bad), {})
-
-	def test_out_of_range_orb_params_are_errors(self, tmp_path: Path) -> None:
-		bad = {**self._ENABLED, "match_ratio": 1.5, "min_matches": 1}
-		with pytest.raises(ConfigError) as excinfo:
-			RunConfig.resolve(_complete(tmp_path, ego_motion=bad), {})
-		problems = excinfo.value.problems
-		assert any("match_ratio" in p for p in problems)
-		assert any("min_matches" in p for p in problems)
+	def test_resolves(self, tmp_path: Path) -> None:
+		run = RunConfig.resolve(_complete(tmp_path), {})
+		assert run.input.transforms_in == tmp_path / "transforms.jsonl"
 
 
 class TestWindow:
@@ -303,75 +191,6 @@ class TestValueValidation:
 		file_values["run"]["timing_csv"] = str(tmp_path / "timing.csv")
 		run = RunConfig.resolve(file_values, {})
 		assert run.options.timing_csv == tmp_path / "timing.csv"
-
-
-class TestTransformCsv:
-	_ENABLED: ClassVar[dict[str, Any]] = {
-		"enabled": True,
-		"n_features": 2000,
-		"match_ratio": 0.75,
-		"min_matches": 10,
-		"ransac_threshold": 3.0,
-		"min_anchor_overlap": 0.6,
-		"transforms_in": "",
-	}
-
-	def test_off_resolves_to_none(self, tmp_path: Path) -> None:
-		run = RunConfig.resolve(_complete(tmp_path), {})
-		assert run.export.transform_file is None  # "" disables
-
-	def test_missing_key_is_an_error(self, tmp_path: Path) -> None:
-		file_values = _complete(tmp_path)
-		del file_values["export"]["transform_file"]
-		with pytest.raises(ConfigError, match="transform_file is missing"):
-			RunConfig.resolve(file_values, {})
-
-	def test_path_resolves_when_ego_motion_enabled(self, tmp_path: Path) -> None:
-		file_values = _complete(tmp_path, ego_motion=self._ENABLED)
-		file_values["export"]["transform_file"] = str(tmp_path / "transforms.jsonl")
-		run = RunConfig.resolve(file_values, {})
-		assert run.export.transform_file == tmp_path / "transforms.jsonl"
-
-	def test_set_without_stabilization_is_an_error(self, tmp_path: Path) -> None:
-		# ego_motion disabled in the default fixture: a transform file would only ever
-		# hold identities, so requesting one is a contradictory run spec.
-		file_values = _complete(tmp_path)
-		file_values["export"]["transform_file"] = str(tmp_path / "transforms.jsonl")
-		with pytest.raises(ConfigError, match=r"transform_file requires ego_motion\.enabled"):
-			RunConfig.resolve(file_values, {})
-
-
-class TestAnchorsDir:
-	_ENABLED: ClassVar[dict[str, Any]] = {
-		"enabled": True,
-		"n_features": 2000,
-		"match_ratio": 0.75,
-		"min_matches": 10,
-		"ransac_threshold": 3.0,
-		"min_anchor_overlap": 0.6,
-		"transforms_in": "",
-	}
-
-	def test_off_resolves_to_none(self, tmp_path: Path) -> None:
-		assert RunConfig.resolve(_complete(tmp_path), {}).export.anchors_dir is None  # "" disables
-
-	def test_missing_key_is_an_error(self, tmp_path: Path) -> None:
-		file_values = _complete(tmp_path)
-		del file_values["export"]["anchors_dir"]
-		with pytest.raises(ConfigError, match="anchors_dir is missing"):
-			RunConfig.resolve(file_values, {})
-
-	def test_path_resolves_when_ego_motion_enabled(self, tmp_path: Path) -> None:
-		file_values = _complete(tmp_path, ego_motion=self._ENABLED)
-		file_values["export"]["anchors_dir"] = str(tmp_path / "anchors")
-		run = RunConfig.resolve(file_values, {})
-		assert run.export.anchors_dir == tmp_path / "anchors"
-
-	def test_set_without_stabilization_is_an_error(self, tmp_path: Path) -> None:
-		file_values = _complete(tmp_path)
-		file_values["export"]["anchors_dir"] = str(tmp_path / "anchors")
-		with pytest.raises(ConfigError, match=r"anchors_dir requires ego_motion\.enabled"):
-			RunConfig.resolve(file_values, {})
 
 
 class TestLoadToml:

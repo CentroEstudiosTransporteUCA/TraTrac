@@ -7,6 +7,8 @@ back into the reference frame). See src/tratrac/infrastructure/video/EGO_MOTION.
 
 from __future__ import annotations
 
+import math
+
 import cv2
 import numpy as np
 import pytest
@@ -18,9 +20,16 @@ from tratrac.domain.frame import Frame
 from tratrac.domain.geometry import BoundingBox, Point2D, Polygon, Transform2D
 from tratrac.infrastructure.video.ego_motion_orb import (
 	BackgroundZoneMaskSource,
-	DetectionMaskSource,
 	OrbEgoMotionEstimator,
 	_AnchorChain,
+)
+
+_FULL_FRAME_ZONE = BackgroundZones(
+	zones=(
+		BackgroundZone(
+			0, Polygon((Point2D(0, 0), Point2D(200, 0), Point2D(200, 200), Point2D(0, 200)))
+		),
+	)
 )
 
 
@@ -30,6 +39,33 @@ def _vehicle(x: float, y: float, width: float, height: float) -> Detection:
 		score=0.9,
 		vehicle_class=VehicleClass.CAR,
 	)
+
+
+class _FakeDetectionMaskSource:
+	"""Test-only stand-in for masking vehicles out via observed detections (the behavior
+	the removed ``DetectionMaskSource`` had) — exercises ``OrbEgoMotionEstimator.observe``'s
+	forwarding to a ``MaskSource`` without depending on any production detection-fed source."""
+
+	def __init__(self) -> None:
+		self._detections: list[Detection] = []
+
+	def observe(self, detections: list[Detection]) -> None:
+		self._detections = detections
+
+	def mask_for(self, frame_index: int, height: int, width: int) -> NDArray[np.uint8] | None:
+		del frame_index
+		if not self._detections:
+			return None
+		mask: NDArray[np.uint8] = np.full((height, width), 255, dtype=np.uint8)
+		for detection in self._detections:
+			box = detection.bbox
+			x0 = max(0, math.floor(box.x))
+			x1 = min(width, math.ceil(box.x + box.width))
+			y0 = max(0, math.floor(box.y))
+			y1 = min(height, math.ceil(box.y + box.height))
+			if x1 > x0 and y1 > y0:
+				mask[y0:y1, x0:x1] = 0
+		return mask
 
 
 def _textured_image(seed: int = 0) -> NDArray[np.uint8]:
@@ -52,7 +88,7 @@ def _make_estimator(min_anchor_overlap: float = 0.5) -> OrbEgoMotionEstimator:
 		min_matches=10,
 		ransac_threshold=3.0,
 		min_anchor_overlap=min_anchor_overlap,
-		mask_source=DetectionMaskSource(),
+		mask_source=BackgroundZoneMaskSource(_FULL_FRAME_ZONE),
 	)
 
 
@@ -93,7 +129,14 @@ class TestOrbEgoMotionEstimator:
 		# next frame yields no features to match -> no step fit -> carry forward.
 		# Proves the observed detections actually reach detectAndCompute's mask.
 		base = _textured_image()
-		estimator = _make_estimator()
+		estimator = OrbEgoMotionEstimator(
+			n_features=2000,
+			match_ratio=0.75,
+			min_matches=10,
+			ransac_threshold=3.0,
+			min_anchor_overlap=0.5,
+			mask_source=_FakeDetectionMaskSource(),
+		)
 		estimator.estimate(Frame(index=0, pixels=base))
 		estimator.observe([_vehicle(0.0, 0.0, 200.0, 200.0)])
 
@@ -109,7 +152,7 @@ class TestOrbEgoMotionEstimator:
 			min_matches=10,
 			ransac_threshold=3.0,
 			min_anchor_overlap=0.6,
-			mask_source=DetectionMaskSource(),
+			mask_source=BackgroundZoneMaskSource(_FULL_FRAME_ZONE),
 			anchor_observer=lambda index, pose: anchors.append((index, pose)),
 		)
 		estimator.estimate(Frame(index=0, pixels=_textured_image()))
@@ -124,7 +167,7 @@ class TestOrbEgoMotionEstimator:
 			min_matches=10,
 			ransac_threshold=3.0,
 			min_anchor_overlap=0.99,
-			mask_source=DetectionMaskSource(),
+			mask_source=BackgroundZoneMaskSource(_FULL_FRAME_ZONE),
 			anchor_observer=lambda index, pose: anchors.append((index, pose)),
 		)
 		base = _textured_image()
@@ -138,7 +181,14 @@ class TestOrbEgoMotionEstimator:
 		# known shift is still recovered — masking is targeted, not all-or-nothing.
 		base = _textured_image()
 		tx, ty = 7.0, -4.0
-		estimator = _make_estimator()
+		estimator = OrbEgoMotionEstimator(
+			n_features=2000,
+			match_ratio=0.75,
+			min_matches=10,
+			ransac_threshold=3.0,
+			min_anchor_overlap=0.5,
+			mask_source=_FakeDetectionMaskSource(),
+		)
 		estimator.estimate(Frame(index=0, pixels=base))
 		estimator.observe([_vehicle(0.0, 0.0, 20.0, 20.0)])
 
@@ -169,29 +219,6 @@ def _square_zone(
 		reference_frame=reference_frame,
 		polygon=Polygon((Point2D(x0, y0), Point2D(x1, y0), Point2D(x1, y1), Point2D(x0, y1))),
 	)
-
-
-class TestDetectionMaskSource:
-	def test_no_detections_yet_means_no_mask(self) -> None:
-		source = DetectionMaskSource()
-		assert source.mask_for(0, 100, 100) is None
-
-	def test_observed_detections_mask_their_bbox(self) -> None:
-		source = DetectionMaskSource()
-		source.observe([_vehicle(10.0, 10.0, 20.0, 20.0)])
-		mask = source.mask_for(0, 100, 100)
-		assert mask is not None
-		assert mask[15, 15] == 0  # inside the vehicle bbox
-		assert mask[0, 0] == 255  # outside it
-
-	def test_frame_index_is_ignored(self) -> None:
-		source = DetectionMaskSource()
-		source.observe([_vehicle(10.0, 10.0, 20.0, 20.0)])
-		mask_a = source.mask_for(0, 50, 50)
-		mask_b = source.mask_for(999, 50, 50)
-		assert mask_a is not None
-		assert mask_b is not None
-		assert np.array_equal(mask_a, mask_b)
 
 
 class TestBackgroundZoneMaskSource:

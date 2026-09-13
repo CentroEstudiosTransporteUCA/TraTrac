@@ -41,7 +41,7 @@ def to_global_link_polygons(
 		)
 	except KeyError as exc:
 		raise ValueError(
-			f"link zone reference_frame is not an anchor in the manifest: {exc}"
+			f"link zone reference_frame is not a frame in the transforms file: {exc}"
 		) from exc
 
 
@@ -70,7 +70,7 @@ def to_global_lane_polygons(
 		)
 	except KeyError as exc:
 		raise ValueError(
-			f"lane zone reference_frame is not an anchor in the manifest: {exc}"
+			f"lane zone reference_frame is not a frame in the transforms file: {exc}"
 		) from exc
 
 
@@ -99,7 +99,7 @@ def to_global_plane_polygons(
 		)
 	except KeyError as exc:
 		raise ValueError(
-			f"plane zone reference_frame is not an anchor in the manifest: {exc}"
+			f"plane zone reference_frame is not a frame in the transforms file: {exc}"
 		) from exc
 
 

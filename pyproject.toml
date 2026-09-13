@@ -36,7 +36,7 @@ fiftyone = ["fiftyone>=1.21.0"]
 tratrac = "tratrac.cli:app"
 tratrac-postprocess = "tratrac.cli_postprocess:app"
 tratrac-render = "tratrac.cli_render:app"
-tratrac-stabilize = "tratrac.cli_stabilize:app"
+tratrac-preprocess = "tratrac.cli_preprocess:app"
 tratrac-fiftyone = "tratrac.cli_fiftyone:app"
 
 [build-system]

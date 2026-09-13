@@ -1,9 +1,8 @@
 """Image-space background zones: regions safe for ORB feature extraction without a detector.
 
-An operator-authored (external tool, out of scope for this repo) alternative to
-detection-fed masking (`infrastructure/video/ego_motion_orb.py`'s
-`DetectionMaskSource`): a set of pixel polygons marking "use this region's features
-for ego-motion", so `tratrac-stabilize` never needs to run the detector at all. See
+An operator-authored (external tool, out of scope for this repo) set of pixel
+polygons marking "use this region's features for ego-motion", so
+`tratrac-preprocess` never needs to run a detector at all. See
 src/tratrac/infrastructure/video/EGO_MOTION.md's "Detector-free ego-motion" section.
 
 Structurally identical to `domain/exclusion.py`'s `ExclusionZone`/`ExclusionZones`

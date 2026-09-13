@@ -214,15 +214,16 @@ class TransformSink(Protocol):
 class AnchorSink(Protocol):
 	"""Receives each ORB keyframe **anchor** as the run discovers it.
 
-	One record per re-anchor: the anchor ``frame`` (its pixels are exported as a PNG
-	for the operator to draw exclusion zones on) and its global pose (raw -> global).
-	Adapters persist the images + a manifest of ``(frame_index, pose, image)``, which
-	the post-process pass reads to map zones authored on an anchor into the global
-	frame. Used as a context manager (the manifest is written on exit). See
+	One record per re-anchor: the anchor ``frame``, exported as a PNG for the
+	operator to draw exclusion zones/calibration correspondences on. The pose
+	itself is not carried here — it is already in the per-frame transform sidecar
+	(``TransformSink``) under the same ``frame.index``, so the post-process pass
+	resolves a zone's pose by reading that sidecar directly rather than a separate
+	anchor manifest. Used as a context manager. See
 	src/tratrac/application/EXCLUSION_ZONES.md.
 	"""
 
-	def record(self, frame: Frame, pose: Transform2D) -> None: ...
+	def record(self, frame: Frame) -> None: ...
 
 	def __enter__(self) -> AnchorSink: ...
 

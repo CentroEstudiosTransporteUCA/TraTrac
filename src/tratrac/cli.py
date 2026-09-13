@@ -11,8 +11,12 @@ config replays with just ``--config``.
 The run is **perception only**: it writes the track record (the raw tracked
 measurements, the run's canonical output). It does not produce an SSAM ``.trj`` —
 run ``tratrac-postprocess`` on the record to filter/smooth it into a ``.trj`` (src/tratrac/application/SMOOTHING.md).
-With ``--anchors-dir`` it also exports the ORB keyframe anchors (PNGs + manifest) an
-operator draws exclusion zones on (src/tratrac/application/EXCLUSION_ZONES.md).
+This run never resolves any geometric transform itself: ``input.transforms_in``
+must name a ``tratrac-preprocess estimate`` run's transforms file (which also
+exported the keyframe-anchor PNGs an operator draws exclusion zones/calibration
+correspondences on) — a static camera's file simply has no ego-motion rows, so
+its stabilization stage is the identity. See
+src/tratrac/infrastructure/video/EGO_MOTION.md.
 """
 
 from __future__ import annotations
@@ -34,21 +38,14 @@ from tratrac.application.config import (
 )
 from tratrac.application.pipeline import TrajectoryPipeline
 from tratrac.application.stabilization import EgoMotionStabilizer
-from tratrac.domain.geometry import Transform2D
 from tratrac.domain.ports import (
-	AnchorSink,
-	DetectionObserver,
 	DetectionStabilizer,
 	Detector,
 	EgoMotionEstimator,
 	TimingSink,
 	Tracker,
 	TrackSink,
-	TransformSink,
 )
-from tratrac.infrastructure.anchors.recording import AnchorRecordingEgoMotionEstimator
-from tratrac.infrastructure.anchors.sink import AnchorManifestSink
-from tratrac.infrastructure.calibration.scale_sidecar import write_scale
 from tratrac.infrastructure.config.toml import load_toml
 from tratrac.infrastructure.detection.rt_detr import RtDetrDetector
 from tratrac.infrastructure.detection.yolo_obb import YoloObbDetector
@@ -56,7 +53,6 @@ from tratrac.infrastructure.detection.yolov8_visdrone import YoloV8VisDroneDetec
 from tratrac.infrastructure.progress.console import ConsoleProgressReporter
 from tratrac.infrastructure.timing.csv import CsvTimingSink
 from tratrac.infrastructure.timing.decorators import (
-	TimedDetectionObserver,
 	TimedDetector,
 	TimedEgoMotion,
 	TimedStabilizer,
@@ -65,13 +61,7 @@ from tratrac.infrastructure.timing.decorators import (
 )
 from tratrac.infrastructure.tracking.boxmot_bot_sort import BoxmotBotSortTracker
 from tratrac.infrastructure.tracks.parquet import ParquetTrackSink
-from tratrac.infrastructure.transform.recording import RecordingEgoMotionEstimator
-from tratrac.infrastructure.transform.sink import (
-	CoordinateTransformSink,
-	PrecomputedEgoMotionEstimator,
-	read_transforms,
-)
-from tratrac.infrastructure.video.ego_motion_orb import DetectionMaskSource, OrbEgoMotionEstimator
+from tratrac.infrastructure.transform.sink import PrecomputedEgoMotionEstimator, read_ego_motion
 from tratrac.infrastructure.video.opencv import OpenCvVideoSource
 
 app = typer.Typer(
@@ -150,11 +140,13 @@ def process(
 		_emit_check_report(static_problems, as_json=False)
 		raise typer.Exit(code=2)
 	_prepare_output_path(run.export.out, force=force)
-	_prepare_output_path(run.export.scale_out, force=force)
 	if run.options.timing_csv is not None:
 		_prepare_output_path(run.options.timing_csv, force=force)
-	if run.export.transform_file is not None:
-		_prepare_output_path(run.export.transform_file, force=force)
+
+	try:
+		ego_motion_table = read_ego_motion(run.input.transforms_in)
+	except (ValueError, OSError) as exc:
+		raise typer.BadParameter(str(exc)) from exc
 
 	with _open_video(
 		run.input.video,
@@ -162,98 +154,39 @@ def process(
 		end_seconds=run.window.end_seconds,
 		process_fps=run.input.process_fps or None,
 	) as source:
-		try:
-			scale = run.calibration.resolve_scale(source.metadata)
-		except (ValueError, ConfigError) as exc:
-			# A non-positive altitude (e.g. an SRT with no usable values) surfaces from
-			# the calibration chain; report it cleanly rather than as a traceback.
-			raise typer.BadParameter(str(exc)) from exc
-		# The scale sidecar is fully known before the frame loop starts, so it's written
-		# once here rather than threaded into the track record (src/tratrac/infrastructure/calibration/scale_sidecar.py).
-		write_scale(run.export.scale_out, scale)
-		# Coordinate stabilization (MVP1.9, src/tratrac/infrastructure/video/EGO_MOTION.md): the detector and
-		# tracker run on the raw frame; the ego-motion transform is applied to the
-		# detections (not the pixels) inside the pipeline. None when stabilization is
-		# off. With ego_motion.transforms_in unset (the default), a live ORB estimator
-		# is also the DetectionObserver (masking vehicles out of its own feature
-		# extraction) and — when exporting anchors — notifies a queue the anchor
-		# recorder drains. With transforms_in set (a tratrac-stabilize run's output,
-		# "Detector-free ego-motion", src/tratrac/infrastructure/video/EGO_MOTION.md),
-		# the transform table is already known, so no ORB runs here at all and there
-		# is no DetectionObserver or new anchors to emit (export.anchors_dir is
-		# rejected alongside it at config-resolve time).
-		anchor_poses: list[Transform2D] = []
-		emit_anchors = run.export.anchors_dir is not None
-		ego_motion: EgoMotionEstimator | None = None
-		detection_observer: DetectionObserver | None = None
-		if run.ego_motion.enabled and run.ego_motion.transforms_in is not None:
-			try:
-				transforms_table = read_transforms(run.ego_motion.transforms_in)
-			except (ValueError, OSError) as exc:
-				raise typer.BadParameter(str(exc)) from exc
-			ego_motion = PrecomputedEgoMotionEstimator(transforms_table)
-		elif run.ego_motion.enabled:
-			orb = OrbEgoMotionEstimator(
-				n_features=run.ego_motion.n_features,
-				match_ratio=run.ego_motion.match_ratio,
-				min_matches=run.ego_motion.min_matches,
-				ransac_threshold=run.ego_motion.ransac_threshold,
-				min_anchor_overlap=run.ego_motion.min_anchor_overlap,
-				mask_source=DetectionMaskSource(),
-				anchor_observer=(
-					(lambda _index, pose: anchor_poses.append(pose)) if emit_anchors else None
-				),
-			)
-			ego_motion = orb
-			detection_observer = orb
+		# Coordinate stabilization (MVP1.9, src/tratrac/infrastructure/video/EGO_MOTION.md): the
+		# detector and tracker run on the raw frame; the ego-motion transform is applied to
+		# the detections (not the pixels) inside the pipeline. `tratrac` never estimates
+		# ego-motion itself -- `input.transforms_in` (a `tratrac-preprocess estimate` run's
+		# output, "Detector-free ego-motion") is always required, so this run's single
+		# detector pass never runs ORB. A static camera's file simply has no ego-motion
+		# rows, so `PrecomputedEgoMotionEstimator` returns the identity for every frame --
+		# `EgoMotionStabilizer` applying an identity is a no-op, so both are constructed
+		# unconditionally rather than branching on whether the file happens to have rows.
+		ego_motion: EgoMotionEstimator = PrecomputedEgoMotionEstimator(ego_motion_table)
 		det: Detector = _build_detector(run.detector, device=run.runtime.device)
-		# When we stabilize coordinates ourselves, disable BoT-SORT's own camera-motion
-		# compensation so it does not double-correct the already-stabilized boxes.
+		# We always stabilize coordinates ourselves now (even if the stage turns out to be
+		# the identity), so BoT-SORT's own camera-motion compensation is always disabled --
+		# running both would risk double-correcting the same boxes.
 		# is_obb is decided from the run's detector choice up front (Group A5/A9): boxmot
 		# infers the det-array layout from only the first non-empty frame, which would
 		# silently lock in AABB mode if that frame happened to have no detections.
 		tracker: Tracker = BoxmotBotSortTracker(
 			source.metadata,
 			det_thresh=run.tracker.det_thresh,
-			compensate_camera_motion=not run.ego_motion.enabled,
+			compensate_camera_motion=False,
 			is_obb=run.detector.name is DetectorChoice.YOLO_OBB,
 		)
-		# Map detections into the global frame when ego-motion is on; the pipeline's Null
-		# default (pass-through) handles a non-stabilized run.
-		stabilizer: DetectionStabilizer | None = (
-			EgoMotionStabilizer() if run.ego_motion.enabled else None
-		)
-		with (
-			_timing_sink(run.options.timing_csv) as sink,
-			_transform_sink(run.export.transform_file) as transform_sink,
-			_anchor_sink(run.export.anchors_dir, video_label=str(run.input.video)) as anchor_sink,
-		):
-			# Per-step timing wraps each port once per frame (src/tratrac/infrastructure/timing/STEP_TIMING.md). detect/track/record
-			# always run; observe/ego-motion/stabilize only on a stabilized run.
+		stabilizer: DetectionStabilizer = EgoMotionStabilizer()
+		with _timing_sink(run.options.timing_csv) as sink:
+			# Per-step timing wraps each port once per frame (src/tratrac/infrastructure/timing/STEP_TIMING.md).
 			if sink is not None:
 				det = TimedDetector(det, sink)
 				tracker = TimedTracker(tracker, sink)
-				if detection_observer is not None:
-					detection_observer = TimedDetectionObserver(detection_observer, sink)
-				if ego_motion is not None:
-					ego_motion = TimedEgoMotion(ego_motion, sink)  # innermost: times the ORB work
-				if stabilizer is not None:
-					stabilizer = TimedStabilizer(stabilizer, sink)
-			# Tee the per-frame transform and/or export anchors; these wrap *outside*
-			# TimedEgoMotion so their I/O is not counted as ego-motion time. The pipeline
-			# stays untouched; the concrete ORB keeps serving the observer + anchor queue.
-			pipeline_ego_motion: EgoMotionEstimator | None = ego_motion
-			if transform_sink is not None and pipeline_ego_motion is not None:
-				pipeline_ego_motion = RecordingEgoMotionEstimator(
-					pipeline_ego_motion, transform_sink
-				)
-			if anchor_sink is not None and pipeline_ego_motion is not None:
-				pipeline_ego_motion = AnchorRecordingEgoMotionEstimator(
-					pipeline_ego_motion, anchor_poses, anchor_sink
-				)
+				ego_motion = TimedEgoMotion(ego_motion, sink)
+				stabilizer = TimedStabilizer(stabilizer, sink)
 			# The track record is the run's output. The pipeline owns its lifecycle
-			# (open on enter, close on exit), so it is passed unopened. The GSD scale
-			# lives in its own sidecar (written above), not here.
+			# (open on enter, close on exit), so it is passed unopened.
 			track_sink: TrackSink = ParquetTrackSink(run.export.out, source.metadata)
 			if sink is not None:
 				track_sink = TimedTrackSink(track_sink, sink)
@@ -263,14 +196,13 @@ def process(
 				tracker=tracker,
 				sink=track_sink,
 				reporter=ConsoleProgressReporter(),
-				detection_observer=detection_observer,
 				stabilizer=stabilizer,
-				ego_motion=pipeline_ego_motion,
+				ego_motion=ego_motion,
 			)
 			n_frames = pipeline.run()
 
 	typer.echo(
-		f"Recorded {n_frames} frames -> {run.export.out} (scale={scale} m/px). "
+		f"Recorded {n_frames} frames -> {run.export.out}. "
 		"Run tratrac-postprocess on it to produce a .trj."
 	)
 
@@ -287,36 +219,25 @@ def static_run_problems(run: RunConfig) -> list[str]:
 	problems: list[str] = []
 	if not run.input.video.is_file():
 		problems.append(f"input.video {run.input.video} does not exist or is not a file.")
+	if not run.input.transforms_in.is_file():
+		problems.append(
+			f"input.transforms_in {run.input.transforms_in} does not exist or is not a file "
+			"-- run tratrac-preprocess first."
+		)
 	# Path-type guards the per-key flags used to enforce (dir_okay/file_okay) before they
-	# were removed (src/tratrac/application/CONFIG_DESIGN.md): file outputs must not be directories, the anchors dir not a
-	# file — caught here cleanly rather than as an opaque writer error later.
+	# were removed (src/tratrac/application/CONFIG_DESIGN.md): file outputs must not be
+	# directories — caught here cleanly rather than as an opaque writer error later.
 	for label, path in (
 		("export.out", run.export.out),
-		("export.scale_out", run.export.scale_out),
-		("export.transform_file", run.export.transform_file),
 		("run.timing_csv", run.options.timing_csv),
 	):
 		if path is not None and path.is_dir():
 			problems.append(f"{label} must be a file path, not a directory: {path}.")
-	if run.export.anchors_dir is not None and run.export.anchors_dir.is_file():
-		problems.append(
-			f"export.anchors_dir must be a directory, not a file: {run.export.anchors_dir}."
-		)
 	if (
 		run.options.timing_csv is not None
 		and run.export.out.resolve() == run.options.timing_csv.resolve()
 	):
 		problems.append("run.timing_csv must differ from export.out.")
-	if run.export.scale_out.resolve() == run.export.out.resolve():
-		problems.append("export.scale_out must differ from export.out.")
-	if run.export.transform_file is not None and run.export.transform_file.resolve() in {
-		run.export.out.resolve(),
-		run.export.scale_out.resolve(),
-		run.options.timing_csv.resolve() if run.options.timing_csv is not None else None,
-	}:
-		problems.append(
-			"export.transform_file must differ from export.out, export.scale_out, and run.timing_csv."
-		)
 	return problems
 
 
@@ -447,26 +368,6 @@ def _timing_sink(path: Path | None) -> Iterator[TimingSink | None]:
 		yield None
 		return
 	with CsvTimingSink(path) as sink:
-		yield sink
-
-
-@contextmanager
-def _transform_sink(path: Path | None) -> Iterator[TransformSink | None]:
-	"""Yield a JSONL transform sink when a path is given, else ``None`` (off)."""
-	if path is None:
-		yield None
-		return
-	with CoordinateTransformSink(path) as sink:
-		yield sink
-
-
-@contextmanager
-def _anchor_sink(out_dir: Path | None, *, video_label: str) -> Iterator[AnchorSink | None]:
-	"""Yield an anchor PNG+manifest sink when a directory is given, else ``None`` (off)."""
-	if out_dir is None:
-		yield None
-		return
-	with AnchorManifestSink(out_dir, video_label=video_label) as sink:
 		yield sink
 
 

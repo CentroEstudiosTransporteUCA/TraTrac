@@ -4,7 +4,7 @@ Pure application logic for ``tratrac-smooth`` (src/tratrac/application/SMOOTHING
 forward+RTS Kalman smoother (``application.kalman.smooth_track``) on a track's measured
 centroids, then reads position/velocity/acceleration out of the smoothed state — never
 finite-differencing noisy position. Measurements are in pixels; outputs are scaled to
-metric via a ``ScaleTransform`` (the GSD calibration, ``application/coordinate_transforms.py``)
+metric via a ``ScaleFunction`` (the GSD calibration, ``infrastructure/transform/records.py``)
 exactly as the EMA estimator does, so the result feeds ``SsamTrjExporter`` unchanged.
 """
 
@@ -13,11 +13,11 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from tratrac.application.coordinate_transforms import ScaleTransform
 from tratrac.application.kalman import SmoothedSample, smooth_track
 from tratrac.domain.geometry import Dimensions, Heading, Point2D, Vector2D
 from tratrac.domain.ports import InvertibleCoordinateTransform
 from tratrac.domain.vehicle import VehicleState
+from tratrac.infrastructure.transform.records import ScaleFunction
 
 # Below this speed the velocity direction is pure jitter; fall back to the last good
 # heading or the bbox major axis (mirrors EmaOrientationEstimator).
@@ -43,7 +43,7 @@ class TrackSample:
 def smooth_to_states(
 	track_id: int,
 	samples: list[TrackSample],
-	scale: ScaleTransform,
+	scale: ScaleFunction,
 	*,
 	pos_noise: float,
 	jerk: float,
@@ -87,7 +87,7 @@ def build_state(
 	kinematics: SmoothedSample,
 	width: float,
 	height: float,
-	scale: ScaleTransform,
+	scale: ScaleFunction,
 	last_heading: Heading | None,
 	angle: float | None = None,
 	oriented_size: tuple[float, float] | None = None,
@@ -193,12 +193,13 @@ def invert_state_to_image(
 
 
 def unscale_state_to_image(
-	state: VehicleState, scale: ScaleTransform
+	state: VehicleState, scale: ScaleFunction
 ) -> tuple[Point2D, float, Dimensions]:
 	"""Undo ``build_state``'s metric scaling (no homography involved) to recover pixels.
 
-	Used when ``--calibration`` was **not** given: the run's ``ScaleTransform`` (the GSD
-	metric scale, ``src/tratrac/calibration/GSD_CALIBRATION.md`` — config-only, zero-defaults
+	Used when the transforms file has scale rows, not homography rows: the run's
+	``ScaleFunction`` (the GSD metric scale,
+	``src/tratrac/calibration/GSD_CALIBRATION.md`` — config-only, zero-defaults
 	means it's essentially never exactly ``1.0``) still applied, so ``state``'s
 	position/dimensions are metric, not raw pixels, even without a homography.
 	"""

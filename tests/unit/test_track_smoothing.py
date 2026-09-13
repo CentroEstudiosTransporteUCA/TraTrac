@@ -11,7 +11,11 @@ import numpy as np
 import pytest
 from typer.testing import CliRunner
 
-from tratrac.application.coordinate_transforms import PerAnchorTransform, ScaleTransform
+from tratrac.application.coordinate_transforms import (
+	TransformTable,
+	TranslationTransform,
+	compose_invertible,
+)
 from tratrac.application.kalman import SmoothedSample
 from tratrac.application.track_smoothing import (
 	TrackSample,
@@ -25,8 +29,9 @@ from tratrac.domain.detection import Detection, TrackedDetection, VehicleClass
 from tratrac.domain.frame import VideoMetadata
 from tratrac.domain.geometry import BoundingBox, Dimensions, Heading, Point2D, Vector2D
 from tratrac.domain.vehicle import VehicleState
-from tratrac.infrastructure.calibration.scale_sidecar import write_scale
 from tratrac.infrastructure.tracks.parquet import ParquetTrackSink
+from tratrac.infrastructure.transform.records import HomographyFunction, ScaleFunction, TransformRow
+from tratrac.infrastructure.transform.sink import CoordinateTransformSink, whole_canvas
 
 
 def _samples(n: int, *, vx: float, fps: float = 10.0) -> list[TrackSample]:
@@ -45,11 +50,11 @@ def _samples(n: int, *, vx: float, fps: float = 10.0) -> list[TrackSample]:
 
 class TestSmoothToStates:
 	def test_empty_track(self) -> None:
-		assert smooth_to_states(1, [], ScaleTransform(1.0), pos_noise=2.0, jerk=20.0) == []
+		assert smooth_to_states(1, [], ScaleFunction(1.0), pos_noise=2.0, jerk=20.0) == []
 
 	def test_produces_state_per_sample_with_metric_scaling(self) -> None:
 		samples = _samples(30, vx=10.0)
-		states = smooth_to_states(7, samples, ScaleTransform(0.5), pos_noise=1.0, jerk=10.0)
+		states = smooth_to_states(7, samples, ScaleFunction(0.5), pos_noise=1.0, jerk=10.0)
 		assert len(states) == len(samples)
 		assert all(s.vehicle_id == 7 for s in states)
 		mid = states[15]
@@ -65,7 +70,7 @@ class TestSmoothToStates:
 		samples = [
 			TrackSample(i, i / 10.0, Point2D(20.0, 20.0), width=4.0, height=2.0) for i in range(10)
 		]
-		states = smooth_to_states(1, samples, ScaleTransform(1.0), pos_noise=2.0, jerk=20.0)
+		states = smooth_to_states(1, samples, ScaleFunction(1.0), pos_noise=2.0, jerk=20.0)
 		# No motion -> heading falls back to bbox major axis (width >= height -> east).
 		assert states[-1].heading.dx == 1.0
 
@@ -75,7 +80,7 @@ class TestSmoothToStates:
 			TrackSample(i, i / 10.0, Point2D(20.0, 20.0), width=4.0, height=2.0, angle=math.pi / 2)
 			for i in range(10)
 		]
-		states = smooth_to_states(1, samples, ScaleTransform(1.0), pos_noise=2.0, jerk=20.0)
+		states = smooth_to_states(1, samples, ScaleFunction(1.0), pos_noise=2.0, jerk=20.0)
 		assert states[-1].heading.dy == pytest.approx(1.0, abs=1e-6)
 
 	def test_obb_angle_never_overrides_a_moving_headings_velocity(self) -> None:
@@ -91,7 +96,7 @@ class TestSmoothToStates:
 			)
 			for i in range(30)
 		]
-		states = smooth_to_states(1, samples, ScaleTransform(1.0), pos_noise=1.0, jerk=10.0)
+		states = smooth_to_states(1, samples, ScaleFunction(1.0), pos_noise=1.0, jerk=10.0)
 		assert states[15].heading.dx > 0.9
 
 	def test_obb_angle_is_disambiguated_against_last_heading(self) -> None:
@@ -104,7 +109,7 @@ class TestSmoothToStates:
 			kinematics=SmoothedSample(px=0.0, py=0.0, vx=0.0, vy=0.0, ax=0.0, ay=0.0),
 			width=4.0,
 			height=2.0,
-			scale=ScaleTransform(1.0),
+			scale=ScaleFunction(1.0),
 			last_heading=Heading(1.0, 0.0),
 			angle=math.pi,
 		)
@@ -118,10 +123,22 @@ class TestSmoothToStates:
 			)
 			for i in range(5)
 		]
-		states = smooth_to_states(1, samples, ScaleTransform(2.0), pos_noise=2.0, jerk=20.0)
+		states = smooth_to_states(1, samples, ScaleFunction(2.0), pos_noise=2.0, jerk=20.0)
 		# Scaled by 2.0 m/px: length 9*2=18, width 3*2=6 — not the bbox's 4*2=8 / 2*2=4.
 		assert states[-1].dimensions.length == pytest.approx(18.0)
 		assert states[-1].dimensions.width == pytest.approx(6.0)
+
+
+def _homography_table(matrix: np.ndarray, *, frame_index: int = 0) -> TransformTable:
+	return TransformTable(
+		[
+			TransformRow(
+				frame_index,
+				whole_canvas(1000, 1000),
+				HomographyFunction(tuple(float(v) for v in matrix.flatten())),
+			)
+		]
+	)
 
 
 def _scale_homography(s: float) -> np.ndarray:
@@ -131,7 +148,7 @@ def _scale_homography(s: float) -> np.ndarray:
 class TestInvertStateToImage:
 	def test_undoes_a_pure_scale_projection(self) -> None:
 		# world = 0.5 * image -> image = 2 * world, the inverse this test checks.
-		projector = PerAnchorTransform({0: _scale_homography(0.5)})
+		projector = _homography_table(_scale_homography(0.5))
 		world_state = VehicleState(
 			vehicle_id=1,
 			timestamp_seconds=0.0,
@@ -152,7 +169,9 @@ class TestInvertStateToImage:
 		# A real (non-axis-aligned-preserving) homography plus the 0-origin shift
 		# _project_to_world composes in — the combination cli_postprocess.py actually uses.
 		matrix = np.array([[2.0, 0.3, 5.0], [0.1, 1.5, -2.0], [0.001, 0.0005, 1.0]])
-		projector = PerAnchorTransform({0: matrix}).shifted(37.0, -11.0)
+		projector = compose_invertible(
+			_homography_table(matrix, frame_index=5), TranslationTransform(37.0, -11.0)
+		)
 
 		pixel_centroid = Point2D(50.0, 80.0)
 		pixel_heading = Heading.from_angle(0.7)
@@ -193,7 +212,7 @@ class TestUnscaleStateToImage:
 			velocity=Vector2D(0.0, 0.0),
 			acceleration=0.0,
 		)
-		centroid, angle, dimensions = unscale_state_to_image(state, scale=ScaleTransform(0.5))
+		centroid, angle, dimensions = unscale_state_to_image(state, scale=ScaleFunction(0.5))
 		assert centroid.x == pytest.approx(20.0)
 		assert centroid.y == pytest.approx(40.0)
 		assert angle == pytest.approx(math.pi / 2)
@@ -201,8 +220,20 @@ class TestUnscaleStateToImage:
 		assert dimensions.width == pytest.approx(4.0)
 
 
+def _write_transforms_with_scale(
+	path: Path, *, width: int, height: int, n_frames: int, scale: float
+) -> None:
+	"""A minimal ``tratrac-preprocess estimate``-shaped transforms file: no ego-motion
+	rows, one scale row per frame -- everything ``tratrac-postprocess --transforms``
+	needs for an image-space (non-projected) run."""
+	zone = whole_canvas(width, height)
+	with CoordinateTransformSink(path, width=width, height=height) as sink:
+		for frame_index in range(n_frames):
+			sink.record_row(TransformRow(frame_index, zone, ScaleFunction(scale)))
+
+
 def _write_tracks(path: Path, samples: list[TrackSample]) -> Path:
-	"""Returns the scale sidecar's path (for ``--scale``)."""
+	"""Returns the transforms file's path (for ``--transforms``)."""
 	meta = VideoMetadata(width=1920, height=1080, fps=10.0, total_frames=len(samples))
 	with ParquetTrackSink(path, meta) as sink:
 		for s in samples:
@@ -220,19 +251,21 @@ def _write_tracks(path: Path, samples: list[TrackSample]) -> Path:
 				),
 			)
 			sink.record(s.frame_index, [det])
-	scale_path = path.with_name(path.name + ".scale.jsonl")
-	write_scale(scale_path, 1.0)
-	return scale_path
+	transforms_path = path.with_name(path.name + ".transforms.jsonl")
+	_write_transforms_with_scale(
+		transforms_path, width=meta.width, height=meta.height, n_frames=len(samples), scale=1.0
+	)
+	return transforms_path
 
 
 class TestSmoothCli:
 	def test_smooths_tracks_into_parseable_trj(self, tmp_path: Path) -> None:
 		tracks = tmp_path / "tracks.parquet"
 		out = tmp_path / "smooth.trj"
-		scale_path = _write_tracks(tracks, _samples(20, vx=8.0))
+		transforms_path = _write_tracks(tracks, _samples(20, vx=8.0))
 
 		result = CliRunner().invoke(
-			app, [str(tracks), "--out", str(out), "--scale", str(scale_path)]
+			app, [str(tracks), "--transforms", str(transforms_path), "--out", str(out)]
 		)
 		assert result.exit_code == 0, result.output
 		assert out.exists()
@@ -245,10 +278,10 @@ class TestSmoothCli:
 	def test_refuses_to_overwrite_without_force(self, tmp_path: Path) -> None:
 		tracks = tmp_path / "tracks.parquet"
 		out = tmp_path / "smooth.trj"
-		scale_path = _write_tracks(tracks, _samples(5, vx=8.0))
+		transforms_path = _write_tracks(tracks, _samples(5, vx=8.0))
 		out.write_text("existing")
 		result = CliRunner().invoke(
-			app, [str(tracks), "--out", str(out), "--scale", str(scale_path)]
+			app, [str(tracks), "--transforms", str(transforms_path), "--out", str(out)]
 		)
 		assert result.exit_code != 0
 		assert "force" in result.output.lower()
@@ -274,8 +307,10 @@ class TestExclusion:
 			for i in range(5):
 				# track 1 sits inside the zone [0,50]^2; track 2 is far outside.
 				sink.record(i, [_track(1, 10.0, 10.0), _track(2, 300.0, 300.0)])
-		scale_path = record.with_name(record.name + ".scale.jsonl")
-		write_scale(scale_path, 1.0)
+		transforms_path = record.with_name(record.name + ".transforms.jsonl")
+		_write_transforms_with_scale(
+			transforms_path, width=meta.width, height=meta.height, n_frames=5, scale=1.0
+		)
 
 		zones = tmp_path / "zones.json"
 		zones.write_text(
@@ -292,12 +327,12 @@ class TestExclusion:
 			app,
 			[
 				str(record),
+				"--transforms",
+				str(transforms_path),
 				"--out",
 				str(out),
 				"--exclusion-zones",
 				str(zones),
-				"--scale",
-				str(scale_path),
 			],
 		)
 		assert result.exit_code == 0, result.output

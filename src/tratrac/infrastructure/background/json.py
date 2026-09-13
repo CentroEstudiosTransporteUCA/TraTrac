@@ -2,7 +2,7 @@
 
 An external tool (out of scope for this repo, same as `calibration.json` and
 `exclusion_zones.json` today) lets an operator watch a video and draw the regions
-safe for ORB feature extraction, producing this file. `tratrac-stabilize` reads it
+safe for ORB feature extraction, producing this file. `tratrac-preprocess` reads it
 to mask ego-motion estimation without ever running a detector. See
 src/tratrac/infrastructure/video/EGO_MOTION.md's "Detector-free ego-motion" section.
 

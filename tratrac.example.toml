@@ -10,15 +10,32 @@
 # See src/tratrac/application/CONFIG_DESIGN.md.
 #
 # The run is PERCEPTION ONLY: it writes the track record (export.out). It does not
-# produce a .trj — run `tratrac-postprocess RECORD --out run.trj` afterwards (src/tratrac/application/SMOOTHING.md).
+# produce a .trj — run `tratrac-postprocess RECORD --transforms ... --out run.trj`
+# afterwards (src/tratrac/application/SMOOTHING.md).
+#
+# `tratrac` never resolves any geometric transform itself (no GSD scale, no
+# ego-motion, no world projection) -- input.transforms_in below always names a
+# `tratrac-preprocess` run's output instead. Run that FIRST, even for a fully
+# static camera (it's the only place scale gets resolved now):
+#
+#   tratrac-preprocess estimate clips/highway_run3.mp4 \
+#       --out out/highway_run3.transforms.jsonl \
+#       --meters-per-pixel 0.05
+#       # or: --drone-model mavic_3 --altitude-m 80.0   (or --srt clip.SRT)
+#       # add --background-zones bg.json --anchors-dir out/highway_run3.anchors/
+#       # for a moving drone, to also estimate + remove ego-motion
+#
+# See src/tratrac/infrastructure/video/EGO_MOTION.md.
 
 [input]
-# The processed video.
+# The processed video and the transforms.jsonl `tratrac-preprocess estimate`
+# (optionally followed by `project`, for world coordinates) already produced.
 video = "clips/highway_run3.mp4"
 process_fps = 0.0                 # cap processing to ~N frames/sec; 0.0 = every frame.
                                   # Decode-time decimation: faster on long clips, but fewer
                                   # frames => more BoT-SORT ID switches. See src/tratrac/infrastructure/TIMESTEP_PRECISION.md.
                                   # (.trj TIMESTEP decimation is a tratrac-postprocess flag now.)
+transforms_in = "out/highway_run3.transforms.jsonl"
 
 [detector]
 name = "yolov8_visdrone"          # yolov8_visdrone | rt_detr | yolo_obb (not yet the default;
@@ -31,31 +48,6 @@ filename = "visDrone.pt"          # weights file in the repo; required (unused b
 [runtime]
 device = "cpu"                    # cpu | mps | cuda | cuda:0
 
-[calibration]
-# Exactly ONE method. Specifying both is an error.
-# (A) direct ground-sample distance:
-meters_per_pixel = 0.05
-# (B) drone geometry — comment out (A) and use:
-# drone_model = "mavic_3"         # see calibration/drone_specs registry
-# altitude_m  = 80.0              # metres AGL ... OR provide an SRT instead:
-# srt = "clips/highway_run3.SRT"  # DJI sidecar with per-frame altitude
-
-[ego_motion]
-# ORB ego-motion (MVP1.9, see src/tratrac/infrastructure/video/EGO_MOTION.md). When on, detection/tracking
-# run on the raw full frame and the keyframe transform is applied to the DETECTIONS
-# (coordinates, not pixels) so trajectories are free of drone ego-motion and nothing
-# is ever cropped to black. The anchor re-sets when too little of it stays in view.
-enabled = false                   # explicit on/off; the keys below are required only when true
-n_features = 2000                 # ORB keypoints per frame
-match_ratio = 0.75                # Lowe ratio test, (0, 1); lower = stricter matches
-min_matches = 10                  # minimum good matches to fit a transform (else assume no motion)
-ransac_threshold = 3.0            # RANSAC reprojection threshold in pixels
-min_anchor_overlap = 0.6          # re-anchor the keyframe when <this fraction stays in view, (0, 1)
-transforms_in = ""                # "" = live ORB (default); else a tratrac-stabilize transforms.jsonl,
-                                  # read instead of estimating live so this run's single detector pass
-                                  # never also runs ORB. Incompatible with export.anchors_dir (a
-                                  # precomputed run discovers no new anchors of its own).
-
 [tracker]
 det_thresh = 0.1                  # BoT-SORT detection threshold (kept below detector.conf)
 
@@ -65,22 +57,14 @@ det_thresh = 0.1                  # BoT-SORT detection threshold (kept below det
 [export]
 out = "out/highway_run3.parquet"  # the track record (run's primary output, Parquet).
                                   # Feed it to tratrac-postprocess to get a .trj (src/tratrac/application/SMOOTHING.md).
-scale_out = "out/highway_run3.scale.jsonl"  # the GSD scale sidecar (a CoordinateTransform,
-                                  # infrastructure/transform/records.py), always written -- not toggleable, since
-                                  # [calibration] always yields a scale. Feed it to tratrac-postprocess --scale.
-transform_file = ""               # "" = off; else a per-frame ego-motion transform sidecar (JSONL). Requires
-                                  # ego_motion.enabled (feeds `tratrac-render --transforms` to map global-frame
-                                  # coords back onto the raw video)
-anchors_dir = ""                  # "" = off; else a directory for keyframe-anchor PNGs + manifest. Requires
-                                  # ego_motion.enabled. Draw exclusion ROIs on these PNGs; pass the manifest to
-                                  # tratrac-postprocess --anchors to filter tracks in those zones. See src/tratrac/application/EXCLUSION_ZONES.md.
 
 [window]
 start = ""                        # "" = clip start; else HH:MM:SS(.ms) / MM:SS / SS
 end = ""                          # "" = clip end
 
-# Exclusion zones are NOT a run setting anymore — they are applied post-hoc and track-aware
-# by `tratrac-postprocess --exclusion-zones zones.json [--anchors manifest.json]` (src/tratrac/application/EXCLUSION_ZONES.md).
+# Exclusion zones are NOT a run setting — they are applied post-hoc and track-aware
+# by `tratrac-postprocess --exclusion-zones zones.json --transforms out/highway_run3.transforms.jsonl`
+# (the same file as input.transforms_in above; see src/tratrac/application/EXCLUSION_ZONES.md).
 
 # Overwrite policy is NOT a config key — it never affects the trajectories. Use the
 # `--force` CLI flag to overwrite existing outputs (default: off). See src/tratrac/application/CONFIG_DESIGN.md.
