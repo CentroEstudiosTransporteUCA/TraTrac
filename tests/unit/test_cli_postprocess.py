@@ -335,6 +335,54 @@ class TestPostprocessWorldProjection:
 		assert ground_dx == pytest.approx(5.0, abs=0.5)
 		assert bridge_dx == pytest.approx(2.5, abs=0.5)
 
+	def test_multiple_scale_zones_apply_their_own_factor(self, tmp_path: Path) -> None:
+		"""Two SCALE zones (not homography) with different factors -- e.g. a fisheye lens'
+		radially-varying GSD, simplified to a left/right split. Regression test for the bug
+		where `postprocess` picked one zone's factor via `any_function()` and applied it to
+		every observation regardless of which zone it was actually in."""
+		record = tmp_path / "tracks.parquet"
+		out = tmp_path / "multi_scale.trj"
+		transforms_path = tmp_path / "transforms.jsonl"
+		with ParquetTrackSink(record, _META) as sink:
+			for frame in range(6):
+				sink.record(
+					frame,
+					[
+						_tracked(x=10.0 * frame + 20.0, y=50.0, track_id=1),  # left half
+						_tracked(x=10.0 * frame + 120.0, y=50.0, track_id=2),  # right half
+					],
+				)
+		left = (
+			Point2D(0.0, 0.0),
+			Point2D(100.0, 0.0),
+			Point2D(100.0, float(_META.height)),
+			Point2D(0.0, float(_META.height)),
+		)
+		right = (
+			Point2D(100.0, 0.0),
+			Point2D(float(_META.width), 0.0),
+			Point2D(float(_META.width), float(_META.height)),
+			Point2D(100.0, float(_META.height)),
+		)
+		with CoordinateTransformSink(
+			transforms_path, width=_META.width, height=_META.height
+		) as sink:
+			for frame_index in range(6):
+				sink.record_row(TransformRow(frame_index, left, ScaleFunction(0.5)))
+				sink.record_row(TransformRow(frame_index, right, ScaleFunction(0.25)))
+
+		result = CliRunner().invoke(
+			app, [str(record), "--transforms", str(transforms_path), "--out", str(out)]
+		)
+		assert result.exit_code == 0, result.output
+
+		left_dx = _centroid_for(out, 3, 1)[0] - _centroid_for(out, 2, 1)[0]
+		right_dx = _centroid_for(out, 3, 2)[0] - _centroid_for(out, 2, 2)[0]
+		# 10 px/frame at 0.5 m/px in the left zone, at 0.25 m/px in the right zone -- if the
+		# old any_function() bug picked one zone's factor for both, these would come out equal.
+		assert left_dx == pytest.approx(5.0, abs=0.5)
+		assert right_dx == pytest.approx(2.5, abs=0.5)
+
 	def test_homography_scales_metric_dimensions(self, tmp_path: Path) -> None:
 		record = tmp_path / "tracks.parquet"
 		out = tmp_path / "world.trj"

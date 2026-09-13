@@ -28,10 +28,13 @@ from dataclasses import dataclass
 from tratrac.domain.geometry import Point2D, point_in_polygon
 from tratrac.domain.ports import CoordinateTransform, InvertibleCoordinateTransform
 from tratrac.infrastructure.transform.records import (
+	IdentityFunction,
 	InvertibleTransformFunction,
 	TransformFunction,
 	TransformRow,
 )
+
+_IDENTITY = IdentityFunction()
 
 
 class TransformTable:
@@ -77,11 +80,46 @@ class TransformTable:
 			for rows in self._by_frame.values()
 		)
 
+	@property
+	def is_uniform(self) -> bool:
+		"""Whether this table reduces to one frame-independent function value: exactly one
+		row per frame, and every frame's function equal to every other's.
+
+		A caller safe to treat ``any_function()`` as *representative*, not an arbitrary
+		pick, is exactly a caller that has confirmed this first. It is ``False`` as soon
+		as more than one zone is in play at any frame (several scale zones, a per-plane
+		homography) or the value itself changes across frames (a multi-anchor
+		homography) -- either way a per-``(point, frame_index)`` lookup is required, a
+		single sampled value is not enough.
+		"""
+		if not self._by_frame:
+			return True
+		rows_by_frame = iter(self._by_frame.values())
+		first_rows = next(rows_by_frame)
+		if len(first_rows) != 1:
+			return False
+		representative = first_rows[0].function
+		return all(len(rows) == 1 and rows[0].function == representative for rows in rows_by_frame)
+
 	def apply(self, point: Point2D, frame_index: int) -> Point2D:
 		if not self._by_frame:
 			return point
 		row = self._select(point, frame_index)
 		return row.function.apply(point)
+
+	def function_at_point(self, point: Point2D, frame_index: int) -> TransformFunction:
+		"""The one row's function whose zone ``point`` falls in at ``frame_index``.
+
+		For a caller that needs to apply the *same* zone's function to several related
+		points (e.g. a bounding box's centroid and its extent corners) without each one
+		independently re-selecting a zone -- which could pick a different zone for a
+		corner near a boundary, or raise "matches no zone" for a corner that strays
+		outside a narrow zone even though the box's own position is squarely inside it.
+		An empty table returns the identity function, matching ``apply``.
+		"""
+		if not self._by_frame:
+			return _IDENTITY
+		return self._select(point, frame_index).function
 
 	def reverse(self, point: Point2D, frame_index: int) -> Point2D:
 		if not self._by_frame:

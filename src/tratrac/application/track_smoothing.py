@@ -197,10 +197,10 @@ def unscale_state_to_image(
 ) -> tuple[Point2D, float, Dimensions]:
 	"""Undo ``build_state``'s metric scaling (no homography involved) to recover pixels.
 
-	Used when the transforms file has scale rows, not homography rows: the run's
-	``ScaleFunction`` (the GSD metric scale,
-	``src/tratrac/calibration/GSD_CALIBRATION.md`` — config-only, zero-defaults
-	means it's essentially never exactly ``1.0``) still applied, so ``state``'s
+	Used for the uniform-scale fast path (``cli_postprocess.py``'s ``postprocess``): the
+	run's single ``ScaleFunction`` (the GSD metric scale,
+	``src/tratrac/calibration/GSD_CALIBRATION.md`` — config-only, zero-defaults means
+	it's essentially never exactly ``1.0``) still applied, so ``state``'s
 	position/dimensions are metric, not raw pixels, even without a homography.
 	"""
 	return (

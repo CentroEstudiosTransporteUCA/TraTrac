@@ -16,12 +16,21 @@ transforms file via ``--transforms`` so each zone's ``reference_frame`` is
 mapped into the global frame by that frame's pose. This tool never fits a
 homography or resolves scale itself — both come from ``--transforms``'
 projection-stage rows, written by ``tratrac-preprocess estimate``/``project``
-(MVP2, src/tratrac/application/WORLD_PROJECTION.md): if the file has homography rows the
-trajectories are projected onto the metric **world** plane before smoothing
-and the ``.trj`` carries world coordinates with ``DIMENSIONS.Scale = 1.0``; if
-it only has scale rows, coordinates stay image-space, scaled by that constant.
+(MVP2, src/tratrac/application/WORLD_PROJECTION.md). The dividing line for how
+they're applied is never the row *kind* (``scale`` vs ``homography``), only
+whether the file's ``TransformTable`` reduces to one constant value
+(``TransformTable.is_uniform`` — today's only real case, a single
+``--meters-per-pixel``/``--drone-model`` run): that one case is applied after
+smoothing, keeping the ``.trj`` in image-space pixels (what ``tratrac-render``
+and a scale-only ``DIMENSIONS.Scale`` already assume). Anything the table
+can't collapse to one value — any homography, or several scale zones (e.g. a
+fisheye lens' radially-varying GSD) — is instead projected into final output
+units **per observation**, before smoothing, via the same
+``TransformTable.apply(point, frame_index)`` lookup regardless of what kind of
+row answers it; the ``.trj`` then carries ``DIMENSIONS.Scale = 1.0``.
 ``--smoothed-record`` stays image-space either way — not yet supported when
-the homography isn't invertible (see "Dual-space export" above for why).
+the projection isn't invertible (more than one zone matches a given frame —
+see "Dual-space export" above for why).
 
 With ``--reid-merge`` (Group D2, ``docs/IMPLEMENTATION_PLAN.md``) a pre-computed ReID merge
 decision (``application/reid_merge.py``) remaps ``track_id`` on the record **first**, before
@@ -237,15 +246,12 @@ def postprocess(
 			f"{transforms} has no scale or homography rows -- run tratrac-preprocess estimate "
 			"(and project, for world coordinates) first."
 		)
-	if (
-		HomographyFunction in kinds_present
-		and smoothed_record is not None
-		and not projection.is_invertible
-	):
+	if smoothed_record is not None and not projection.is_invertible:
 		raise typer.BadParameter(
-			"--smoothed-record isn't supported with a multi-zone (per-plane) homography "
-			"projection that isn't invertible -- see "
-			"src/tratrac/application/SMOOTHING.md's 'Dual-space export' section."
+			"--smoothed-record isn't supported with a non-invertible multi-zone projection "
+			"(more than one zone matches a frame, e.g. a per-plane homography or several "
+			"scale zones) -- see src/tratrac/application/SMOOTHING.md's 'Dual-space export' "
+			"section."
 		)
 
 	footprint_count = 0
@@ -284,19 +290,26 @@ def postprocess(
 			label_for_point=lane_id_for_point,
 		)
 
+	# A table that reduces to one constant scale value (today's only real case: a single
+	# `--meters-per-pixel`/`--drone-model` run) is safe to apply *after* smoothing --
+	# smoothing pixels then multiplying by one constant is the same result linear
+	# filtering would give scaling first, and it keeps the .trj in image-space pixels
+	# (what tratrac-render / DIMENSIONS.Scale already assume for a non-projected run).
+	# Anything the table can't collapse to one value -- a homography (perspective
+	# distortion doesn't commute with linear smoothing regardless of uniformity), or
+	# several scale zones (e.g. a fisheye lens' radially-varying GSD) -- must be
+	# projected into its target units *before* smoothing, per observation via the same
+	# TransformTable.apply(point, frame_index) lookup homography already used: never
+	# summarize the table into one representative value when it genuinely isn't one.
 	projector: CoordinateTransform | None = None
-	projected_world = False
-	if HomographyFunction in kinds_present:
+	uniform_scale = projection.any_function() if projection.is_uniform else None
+	if isinstance(uniform_scale, ScaleFunction):
+		scale_transform = uniform_scale
+	else:
 		recording, pos_noise, jerk, projector = _project_to_world(
 			recording, projection, pos_noise, jerk
 		)
-		# Observations are already in world metres; the scale multiplier is a no-op.
 		scale_transform = ScaleFunction(1.0)
-		projected_world = True
-	else:
-		sample = projection.any_function()
-		assert isinstance(sample, ScaleFunction)  # guaranteed by the kinds_present check above
-		scale_transform = sample
 
 	states_by_frame = _smooth_recording(recording, scale_transform, pos_noise=pos_noise, jerk=jerk)
 	if link_ids:
@@ -331,7 +344,7 @@ def postprocess(
 		notes.append(f"assigned link ids to {len(link_ids)} observations")
 	if lane_zones is not None:
 		notes.append(f"assigned lane ids to {len(lane_ids)} observations")
-	if projected_world:
+	if projector is not None:
 		notes.append("projected to world coordinates")
 	note = f", {', '.join(notes)}" if notes else ""
 	outputs = ", ".join(str(p) for p in (out, smoothed_record) if p is not None)
@@ -604,8 +617,16 @@ def _normalize_world_recording(
 	return TrackRecording(metadata=world_meta, observations=shifted), -min_x, -min_y
 
 
-def _project_observation(o: TrackObservation, projector: CoordinateTransform) -> TrackObservation:
+def _project_observation(o: TrackObservation, projector: TransformTable) -> TrackObservation:
 	"""Map one observation's centroid + bbox extent into world metres.
+
+	Looks up the zone/function **once**, at the observation's own centroid, and applies
+	that same function to all five points (centre + 4 extent corners) -- not one
+	independent lookup per point. A corner near a zone boundary would otherwise risk
+	picking a *different* zone than the box's own position (an inconsistent projection
+	across one observation), or simply fall outside a narrow zone's polygon and raise
+	"matches no zone" for a box that only pokes past the canvas edge, even though the
+	observation itself is squarely inside it.
 
 	Drops ``angle``/``obb_w``/``obb_h`` (Group A7/A8 OBB fields): they're image-space
 	quantities, and a general homography's rotation need not match the image axes, so
@@ -614,11 +635,12 @@ def _project_observation(o: TrackObservation, projector: CoordinateTransform) ->
 	here (see `src/tratrac/application/WORLD_PROJECTION.md`); the smoother's low-speed
 	fallback drops back to the bbox-major-axis heuristic for a projected run instead.
 	"""
-	center = projector.apply(Point2D(o.cx, o.cy), o.frame_index)
-	left = projector.apply(Point2D(o.cx - o.width / 2.0, o.cy), o.frame_index)
-	right = projector.apply(Point2D(o.cx + o.width / 2.0, o.cy), o.frame_index)
-	top = projector.apply(Point2D(o.cx, o.cy - o.height / 2.0), o.frame_index)
-	bottom = projector.apply(Point2D(o.cx, o.cy + o.height / 2.0), o.frame_index)
+	function = projector.function_at_point(Point2D(o.cx, o.cy), o.frame_index)
+	center = function.apply(Point2D(o.cx, o.cy))
+	left = function.apply(Point2D(o.cx - o.width / 2.0, o.cy))
+	right = function.apply(Point2D(o.cx + o.width / 2.0, o.cy))
+	top = function.apply(Point2D(o.cx, o.cy - o.height / 2.0))
+	bottom = function.apply(Point2D(o.cx, o.cy + o.height / 2.0))
 	return replace(
 		o,
 		cx=center.x,
@@ -673,7 +695,12 @@ def _emit_trj(
 	*,
 	timestep_precision: float,
 ) -> None:
-	"""Write the smoothed .trj from the per-frame states, optionally decimating TIMESTEPs."""
+	"""Write the smoothed .trj from the per-frame states, optionally decimating TIMESTEPs.
+
+	``scale`` is the uniform-scale fast path's constant factor, or ``1.0`` when the
+	observations were already projected into final output units by ``_project_to_world``
+	before smoothing (any homography, or several scale zones).
+	"""
 	fps = recording.metadata.fps
 	exporter: TrajectoryExporter = SsamTrjExporter(out, recording.metadata, scale=scale.factor)
 	if timestep_precision > 0.0:
@@ -696,11 +723,11 @@ def _emit_smoothed_record(
 ) -> None:
 	"""Write the smoothed record always in image-space pixels (see ``smoothed_parquet.py``).
 
-	``projector`` is ``None`` (no world projection: scale rows only) or the shifted,
-	invertible projector ``_project_to_world`` returns — never a non-invertible
-	multi-zone (per-plane) one (rejected earlier, in ``postprocess``, when combined
-	with ``--smoothed-record``, so the cast below is a validated internal invariant,
-	not a user-facing error).
+	``projector`` is ``None`` (the uniform-scale fast path: ``scale`` alone undoes it) or
+	the shifted, invertible projector ``_project_to_world`` returns — never a
+	non-invertible multi-zone one (rejected earlier, in ``postprocess``, when combined
+	with ``--smoothed-record``, so the cast below is a validated internal invariant, not
+	a user-facing error).
 	"""
 	with SmoothedTrackParquetSink(path, metadata) as sink:
 		for frame_index in sorted(states_by_frame):

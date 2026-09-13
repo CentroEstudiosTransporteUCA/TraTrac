@@ -79,16 +79,21 @@ physically justified — world space, when there's a homography involved — exa
 (Parquet, `infrastructure/tracks/smoothed_parquet.py`) are both optional, independent outputs
 built from the **same** `states_by_frame` the one smoothing pass produces (`_smooth_recording`
 in `cli_postprocess.py`, unchanged) — `--out` is not required if `--smoothed-record` is given,
-and vice versa. `--smoothed-record` is always raw image-space pixels, regardless of whether the
-`--transforms` file carries homography rows:
+and vice versa. `--smoothed-record` is always raw image-space pixels, regardless of which of
+`postprocess`'s two paths produced `states_by_frame` (see `cli_postprocess.py`'s module
+docstring for the full uniform-vs-projected split):
 
-- **Scale rows only (no homography):** the smoothed `VehicleState`s are already image-space *up
-  to* the metric GSD scale every real run carries (MVP1.75, `calibration/GSD_CALIBRATION.md` —
-  the zero-defaults config means a run is essentially never un-calibrated in this sense).
-  `unscale_state_to_image` (`application/track_smoothing.py`) undoes that scale by plain
-  division — exact, since it's a pure uniform scale, not a homography.
-- **With homography rows:** `invert_state_to_image` (same module) inverts the *same* projector
-  `_project_to_world` returns for the forward pass — not a fresh fit, the literal object,
+- **The uniform-scale fast path** (`TransformTable.is_uniform` — today's only real case, a
+  single `--meters-per-pixel`/`--drone-model` run): the smoothed `VehicleState`s are already
+  image-space *up to* the metric GSD scale every real run carries (MVP1.75,
+  `calibration/GSD_CALIBRATION.md` — the zero-defaults config means a run is essentially never
+  un-calibrated in this sense). `unscale_state_to_image` (`application/track_smoothing.py`)
+  undoes that scale by plain division — exact, since it's a pure uniform scale, not a
+  homography.
+- **The projected path** (any homography, or several scale zones — anything
+  `is_uniform` is `False` for): `invert_state_to_image` (same module) inverts the *same*
+  projector `_project_to_world` returns for the forward pass — not a fresh fit, the literal
+  object,
   via `InvertibleCoordinateTransform.reverse(point, frame_index)` (`domain/ports.py`). It inverts **four points**
   independently (front/rear bumpers → centroid, heading, length; left/right side points →
   width) rather than transforming `centroid`+`heading`+`dimensions` directly — the same reason
@@ -120,8 +125,8 @@ project`) selects its homography by classifying the *input image* point's positi
 what's unknown when starting from a world point — so `TransformTable.is_invertible` is `False`
 whenever more than one distinct `zone` is in play for a frame. Combining `--smoothed-record`
 with a non-invertible (multi-zone) projection is rejected upfront with a clear error
-(`postprocess` in `cli_postprocess.py`, see the `kinds_present`/`is_invertible` check near the
-top of the command) rather than silently guessing or producing a misleading partial result. A
+(`postprocess` in `cli_postprocess.py`, see the `is_invertible` check near the top of the
+command) rather than silently guessing or producing a misleading partial result. A
 future version could carry each observation's plane id forward through smoothing so the reverse
 pass knows which homography to invert — not built yet; no real footage has needed multi-plane
 `--smoothed-record` output so far.
