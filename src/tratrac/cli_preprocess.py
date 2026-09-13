@@ -274,8 +274,14 @@ def project(
 	# Replace, not append: re-running project (e.g. with a tweaked calibration.json)
 	# must stay idempotent -- appending would leave the old homography rows in place
 	# too, and TransformTable would then see two rows per (frame, zone) and raise
-	# "ambiguous" on every read.
-	kept = [row for row in existing if not isinstance(row.function, HomographyFunction)]
+	# "ambiguous" on every read. Scale rows are dropped too, not just homography ones:
+	# once a homography is fitted it supersedes the GSD scale for that zone (cli_postprocess
+	# uses ScaleFunction(1.0) whenever homography rows are present), and a scale row shares
+	# the whole-canvas zone with a whole-scene homography row, so leaving it in place would
+	# make every frame ambiguous for exactly the same reason.
+	kept = [
+		row for row in existing if not isinstance(row.function, HomographyFunction | ScaleFunction)
+	]
 	staging = staging_path(transforms)
 	write_jsonl(staging, [*kept, *rows])
 	publish(staging, transforms)

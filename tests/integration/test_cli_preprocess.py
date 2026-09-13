@@ -166,6 +166,49 @@ def test_project_fits_a_homography_and_appends_it_to_the_same_file(
 	assert replaced.apply(Point2D(5.0, 5.0), 0) == projection.apply(Point2D(5.0, 5.0), 0)
 
 
+def test_project_drops_the_now_superseded_scale_rows(
+	synthetic_video: Path, whole_frame_zones: Path, tmp_path: Path
+) -> None:
+	"""``estimate`` writes a whole-canvas scale row per frame; a whole-scene homography also
+	lands on the whole-canvas zone. If ``project`` only stripped stale homography rows, the two
+	would coexist for the same (frame, zone) and every downstream ``TransformTable.apply`` --
+	e.g. tratrac-postprocess's ``--transforms`` read -- would raise "ambiguous"."""
+	out = tmp_path / "transforms.jsonl"
+	estimate_result = CliRunner().invoke(
+		app,
+		["estimate", str(synthetic_video), "--out", str(out), "--meters-per-pixel", "0.05"],
+	)
+	assert estimate_result.exit_code == 0, estimate_result.output
+
+	calibration = tmp_path / "calibration.json"
+	calibration.write_text(
+		json.dumps(
+			{
+				"correspondences": [
+					{"reference_frame": 0, "image": [0, 0], "world": [0, 0]},
+					{"reference_frame": 0, "image": [10, 0], "world": [20, 0]},
+					{"reference_frame": 0, "image": [10, 10], "world": [20, 20]},
+					{"reference_frame": 0, "image": [0, 10], "world": [0, 20]},
+				]
+			}
+		)
+	)
+	project_result = CliRunner().invoke(
+		app, ["project", "--transforms", str(out), "--calibration", str(calibration)]
+	)
+	assert project_result.exit_code == 0, project_result.output
+
+	from tratrac.domain.geometry import Point2D
+	from tratrac.infrastructure.transform.records import HomographyFunction, ScaleFunction
+	from tratrac.infrastructure.transform.sink import read_transform_table
+
+	projection = read_transform_table(out, kinds=(ScaleFunction, HomographyFunction))
+	assert projection.kinds() == {HomographyFunction}
+	point = projection.apply(Point2D(5.0, 5.0), 0)
+	assert point.x == pytest.approx(10.0, abs=1e-6)
+	assert point.y == pytest.approx(10.0, abs=1e-6)
+
+
 def test_refuses_to_overwrite_without_force(
 	synthetic_video: Path, whole_frame_zones: Path, tmp_path: Path
 ) -> None:
