@@ -4,9 +4,10 @@ Each decorator implements the port it wraps, forwards the call unchanged, and
 reports a ``StepTiming`` to a ``TimingSink``. Every step runs exactly once per
 frame, so each decorator counts its own calls as the frame ordinal — they stay
 aligned without sharing state. The full per-frame chain is detect → observe →
-ego-motion → stabilize → track → record; the stabilization-only steps (observe,
-ego-motion, stabilize) are only wrapped on a `--stabilize` run. See
-src/tratrac/infrastructure/timing/STEP_TIMING.md.
+ego-motion → stabilize → track → record; every step runs and is wrapped
+unconditionally (there is no run-level toggle) — the ego-motion/stabilize steps
+are just a no-op via the identity transform when the transforms file has no
+similarity rows. See src/tratrac/infrastructure/timing/STEP_TIMING.md.
 """
 
 from __future__ import annotations

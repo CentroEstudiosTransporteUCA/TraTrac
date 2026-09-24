@@ -33,8 +33,8 @@ swap with no change to the domain, the pipeline, or the other adapters.
 > but not because ORB was measured and found adequate — the one real clip validated so far
 > (`src/tratrac/application/REID_MERGE.md`'s real-footage findings) is a **stationary drone
 > hover**: frames sampled across its full ~15-minute length (start, middle, end) show
-> pixel-identical framing, no measurable camera motion. `ego_motion.enabled = false` was
-> correctly used for this clip — there's no ego-motion to estimate, so ORB's quality can't be
+> pixel-identical framing, no measurable camera motion. `tratrac-preprocess estimate` ran ORB against this clip as it does for every run, and
+> correctly found nothing to correct — there's no ego-motion to estimate, so ORB's quality can't be
 > evaluated here either way. This trigger needs footage with actual camera movement to mean
 > anything; it remains untested, not passed.
 

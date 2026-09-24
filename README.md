@@ -4,13 +4,15 @@ Vehicle tracking and trajectory export for cenital / nadir aerial video. The pip
 
 ## Status
 
-**MVP1.75 and MVP1.9 shipped; MVP2 partially shipped (post-hoc world projection).** Three tools, run in sequence:
+**MVP1.75 and MVP1.9 shipped; MVP2 shipped (single- and multi-homography world projection); MVP3/MVP6 shipped (Link/Lane ID).** Four tools, run in sequence (plus one optional fifth):
 
-1. **`tratrac`** — perception only. Detects (**YOLOv8-VisDrone** by default, aerial-trained; a fine-tuned **YOLO-OBB** oriented detector is the MVP1.5 target, still open — an unused `rt_detr` adapter also exists, no longer the planned upgrade), tracks (**BoT-SORT**, IoU-only), optionally removes drone ego-motion (MVP1.9, off by default), and writes the raw **track record** — a Parquet file, the pipeline's only output.
-2. **`tratrac-postprocess`** — offline. Optionally filters exclusion zones and optionally projects onto metric world coordinates (MVP2 Approach A: a post-hoc single homography), then runs a Kalman/RTS smoother to reconstruct kinematics and writes the binary **SSAM `.trj`**. This is the only path that produces a `.trj`.
-3. **`tratrac-render`** — optional. Draws the trajectories (and, optionally, validator violations) back onto the source video.
+1. **`tratrac-preprocess`** — mandatory, before every run, even a static camera. Two subcommands: `estimate` walks the clip once (no detector) resolving GSD metric scale and ORB ego-motion, writing both as rows into one shared **transforms file**, plus the keyframe-anchor PNGs operators draw zones/correspondences on; `project` fits a world-projection homography from those anchors into the same file. Neither `tratrac` nor `tratrac-postprocess` ever estimates a geometric transform itself — they only read this file.
+2. **`tratrac`** — perception only. Detects (**YOLOv8-VisDrone** by default, aerial-trained; a fine-tuned **YOLO-OBB** oriented detector is the MVP1.5 target, still open — an unused `rt_detr` adapter also exists, no longer the planned upgrade), tracks (**BoT-SORT**, IoU-only), applies whatever ego-motion rows the transforms file carries (the identity for a static camera — there's no separate on/off toggle), and writes the raw **track record** — a Parquet file, the pipeline's only output.
+3. **`tratrac-postprocess`** — offline. Applies the transforms file's scale-or-homography rows (metric world coordinates when it has homography rows — MVP2), optionally filters exclusion zones and assigns Link/Lane ID, then runs a Kalman/RTS smoother to reconstruct kinematics and writes the binary **SSAM `.trj`** and/or a smoothed Parquet record. This is the only path that produces a `.trj`.
+4. **`tratrac-render`** — optional. Draws the trajectories (and, optionally, validator violations) back onto the source video.
+5. **`tratrac-fiftyone`** — optional (`--extra fiftyone`). Builds a FiftyOne dataset from a track record for interactive visual QA.
 
-Metric calibration is mandatory, not a default: every run requires either a direct `meters_per_pixel` value or drone-model + altitude metadata (MVP1.75 GSD calibration), so a `.trj` is never silently pixel-space passed off as metres.
+Metric calibration is mandatory, not a default: `tratrac-preprocess estimate` requires either a direct `meters_per_pixel` value or drone-model + altitude metadata (MVP1.75 GSD calibration) before it will resolve a transforms file at all, so a `.trj` is never silently pixel-space passed off as metres.
 
 ### A note on the detector
 
@@ -30,22 +32,35 @@ uv sync
 
 ## Usage
 
-There are **no CLI flags for run parameters** — every value comes from a TOML config, so a
-`.trj` is always reconstructable from the file that produced it. Copy the template, edit it,
-then run the three tools in sequence:
+`tratrac` itself has **no CLI flags for run parameters** — every value comes from a TOML config,
+so a run is always reconstructable from the file that produced it. `tratrac-preprocess`,
+`tratrac-postprocess`, and `tratrac-render` are plain CLI tools instead (no config file). Copy
+the template, edit it, then run the pipeline in sequence:
 
 ```bash
-cp tratrac.example.toml my_run.toml   # edit: input.video, export.out, [calibration], ...
-uv run tratrac --config my_run.toml                            # → track record (Parquet)
-uv run tratrac-postprocess my_run.parquet --out my_run.trj     # → SSAM .trj
-uv run tratrac-render my_run.mp4 --trj my_run.trj --out my_run_overlay.mp4  # optional
+cp tratrac.example.toml my_run.toml   # edit: input.video, input.transforms_in, export.out, ...
+
+# 1. Resolve GSD scale + ego-motion (mandatory, even for a static camera) into one transforms file.
+uv run tratrac-preprocess estimate clips/highway_run3.mp4 --out my_run_transforms.jsonl --meters-per-pixel 0.05
+
+# 2. (Optional) fit a world-projection homography into that same file.
+uv run tratrac-preprocess project --transforms my_run_transforms.jsonl --calibration calibration.json
+
+# 3. Perception: detect + track, write the track record.
+uv run tratrac --config my_run.toml                                              # → track record (Parquet)
+
+# 4. Filter/project/smooth the record into a .trj.
+uv run tratrac-postprocess my_run.parquet --transforms my_run_transforms.jsonl --out my_run.trj
+
+# 5. (Optional) render the trajectories back onto the video.
+uv run tratrac-render my_run.mp4 --trj my_run.trj --transforms my_run_transforms.jsonl --out my_run_overlay.mp4
 ```
 
 Validate a config without running anything: `uv run tratrac --config my_run.toml --check`.
-Overwrite existing outputs: add `--force` to any of the three commands.
+Overwrite existing outputs: add `--force` to any of the tools that take it.
 
-See [`CONFIG.md`](CONFIG.md) for the full config schema, `tratrac.example.toml` for a
-documented template, and `CLAUDE.md`'s Commands table for every flag on all three tools
+See [`CONFIG.md`](CONFIG.md) for `tratrac`'s config schema, `tratrac.example.toml` for a
+documented template, and `CLAUDE.md`'s Commands table for every flag on every tool
 (exclusion zones, world projection, smoother tuning, violation overlays, ...).
 
 The first run downloads the chosen detector's checkpoint into the HuggingFace cache
@@ -62,15 +77,17 @@ uv run python scripts/validate_trj.py my_run.trj [--violations-csv out.csv] [--f
 # Per-run diagnostic figures (speed/accel/jerk, track lifespans, ...) from an outputs folder.
 uv run python scripts/plot_run.py OUTPUTS_DIR [--out DIR] [--video CLIP_OR_FOLDER]
 
-# Eyeball ORB ego-motion drift before deciding whether stabilization is worth enabling.
+# Eyeball ORB ego-motion drift before deciding whether the SuperPoint+LightGlue upgrade is worth building.
 uv run python scripts/visualize_stabilization.py my_run.mp4 [--mask] [--no-window --save out.mp4]
 ```
 
 ## Architecture
 
-Onion layers under `src/tratrac/` (`domain/` → `application/` → `infrastructure/`), plus three
-Typer CLI entry points — `cli.py` (`tratrac`, perception), `cli_postprocess.py`
-(`tratrac-postprocess`, smoothing/export), `cli_render.py` (`tratrac-render`, visualization).
+Onion layers under `src/tratrac/` (`domain/` → `application/` → `infrastructure/`), plus five
+Typer CLI entry points — `cli_preprocess.py` (`tratrac-preprocess`, the transforms file), `cli.py`
+(`tratrac`, perception), `cli_postprocess.py` (`tratrac-postprocess`, smoothing/export),
+`cli_render.py` (`tratrac-render`, visualization), `cli_fiftyone.py` (`tratrac-fiftyone`,
+optional visual QA).
 The perception run is a **streaming per-frame pipeline** (`TrajectoryPipeline`); it computes no
 kinematics and writes no `.trj` — it records raw tracked observations to a `TrackSink`
 (Parquet). Kinematics (orientation, speed, acceleration) are reconstructed entirely offline by
@@ -84,7 +101,7 @@ README stays intentionally brief so it doesn't drift out of sync with those.
 
 - **SSAM is an export format, never the internal representation.** The canonical in-memory type is `VehicleState`, which carries fields SSAM cannot represent (segmentation polygons, embeddings, plane metadata in later MVPs).
 - **Dual export, B-first.** The track record (raw measurements now; richer fields later) is the pipeline's primary output; the SSAM `.trj` is a derived, post-hoc product built from it.
-- **Every MVP emits valid SSAM from MVP1.** MVPs differ in trajectory *quality*, not whether trajectories exist — since the export inversion this takes two steps (`tratrac` → record, `tratrac-postprocess` → `.trj`) instead of one.
+- **Every MVP emits valid SSAM from MVP1.** MVPs differ in trajectory *quality*, not whether trajectories exist — since the export inversion this takes two steps (`tratrac` → record, `tratrac-postprocess` → `.trj`) instead of one, always preceded by `tratrac-preprocess` resolving the transforms file both steps read.
 
 See `src/tratrac/domain/ARCHITECTURE.md` for the full rationale behind these invariants. The
 SSAM `.trj` byte-level spec is in `src/tratrac/infrastructure/export/SSAM_FORMAT.md`, derived
@@ -106,10 +123,10 @@ All checked-in code passes ruff + strict mypy. Indentation is tabs.
 
 ## Known limitations
 
-- Coordinates are metric only when calibration is given; without world projection (MVP2 Approach A) they're still a single flat plane, not corrected for non-nadir gimbals or multi-level roads (bridges/overpasses need MVP3's multi-homography).
+- Coordinates are metric always (GSD calibration is mandatory), but stay a single flat plane unless a world-projection homography was fitted (`tratrac-preprocess project`, MVP2 Approach A) — not corrected for non-nadir gimbals unless one is, though bridges/overpasses now have MVP3's multi-homography/plane-assignment support.
 - Stabilization (MVP1.9) is feature-based ORB, not the target SuperPoint + LightGlue — fine for most footage, but the upgrade is tracked in `docs/BACKLOG.md` if measurement ever shows it's needed.
 - Object shadows on the ground are occasionally detected as separate vehicles — a YOLOv8-VisDrone weakness, not a pipeline bug.
-- No occlusion bridging: BoT-SORT is configured IoU-only with prediction-only tracks dropped from the output. Identity persistence arrives in MVP5, via DINOv3 appearance embeddings + motion-plausibility gating (not the originally planned FastReID — nadir footage discards too much of what vehicle-ReID models are trained to see; see `src/tratrac/infrastructure/tracking/TRACKER_CHOICE.md`).
+- No occlusion bridging yet in practice: BoT-SORT is configured IoU-only with prediction-only tracks dropped from the output. MVP5's offline fix — a post-hoc track-stitcher merging fragments via DINOv3 appearance embeddings + motion-plausibility gating (not the originally planned FastReID — nadir footage discards too much of what vehicle-ReID models are trained to see) — has its merge-decision and apply stages built and validated against real footage; only the DINOv3 embedding stage itself is still blocked on a GPU. See `src/tratrac/application/REID_MERGE.md`.
 
 ## Roadmap
 

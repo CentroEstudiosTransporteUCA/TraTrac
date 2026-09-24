@@ -1,21 +1,34 @@
 # Writing a TraTrac run config (`.toml`)
 
-A TraTrac run is fully described by a **persisted run config**: a single TOML
-file that names its own input video, output path, and every processing
-parameter. There are **no built-in defaults anywhere in the package** — every
-key below is mandatory. A missing or invalid value aborts the run (exit code 2)
-and lists *every* offending key at once.
+A `tratrac` run is fully described by a **persisted run config**: a single TOML
+file naming its input video, output path, and every processing parameter for
+the perception pass. There are **no built-in defaults anywhere in the
+package** — every key below is mandatory. A missing or invalid value aborts
+the run (exit code 2) and lists *every* offending key at once.
 
 This is a deliberate trade of typing convenience for scientific
-reproducibility: a `.trj` is reconstructable from the config that produced it.
+reproducibility: a run is reconstructable from the config that produced it.
 For the design rationale see `src/tratrac/application/CONFIG_DESIGN.md`; for a copyable starting
 point see `tratrac.example.toml`.
 
 ```bash
-uv run tratrac --config run.toml                  # replay; everything from the file
-uv run tratrac VIDEO --config run.toml            # positional VIDEO overrides input.video
-uv run tratrac VIDEO --config run.toml --conf 0.4 # any flag overrides its config key
+uv run tratrac --config run.toml            # the only way to run it
+uv run tratrac --config run.toml --check     # validate without running
+uv run tratrac --config run.toml --force     # overwrite existing outputs
 ```
+
+**There are no per-key override flags and no positional `VIDEO` argument** —
+`--config` is the only way values reach the run. `--force`/`--no-force` (overwrite
+control) and `--check`/`--json` (validate-only) are the only other flags, and
+neither is a config key: overwrite policy never affects the trajectories, and
+`--check` just short-circuits before the video is ever opened. See
+`src/tratrac/CHECK_COMMAND.md`.
+
+**This config covers `tratrac` only** — the perception pass. GSD calibration,
+ego-motion stabilization, and world-projection homography are no longer `tratrac`
+config keys at all: they're resolved upstream by the separate `tratrac-preprocess`
+tool and handed to `tratrac` as one path, `input.transforms_in`. See
+"What isn't here anymore" below.
 
 ---
 
@@ -28,19 +41,10 @@ uv run tratrac VIDEO --config run.toml --conf 0.4 # any flag overrides its confi
 
    | Off value | Meaning |
    | --- | --- |
+   | `process_fps = 0.0` | process every frame (no decode-time decimation) |
    | `timing_csv = ""` | profiling off |
-   | `force = false` | prompt before overwriting an existing output |
    | `start = ""` / `end = ""` | the clip's natural bounds (no trimming) |
-   | `timestep_precision = 0.0` | emit one TIMESTEP per processed frame |
-
----
-
-## Resolution & precedence
-
-Each key is resolved independently as: **CLI flag (if passed) → config file
-value → error**. A flag overrides only the one key it maps to; everything else
-still comes from the file. This lets a stable per-shoot config live on disk while
-the command line carries only what changes between runs.
+   | `force = false` (CLI flag, not a config key) | prompt before overwriting an existing output |
 
 ---
 
@@ -48,23 +52,27 @@ the command line carries only what changes between runs.
 
 ### `[input]`
 
-| Key | Type | Required | Notes / valid values | Override flag |
-| --- | --- | --- | --- | --- |
-| `video` | path string | yes | Must be a non-empty path that resolves to an existing file. | positional `VIDEO` |
+| Key | Type | Notes / valid values |
+| --- | --- | --- |
+| `video` | path string | Must be a non-empty path that resolves to an existing file. |
+| `process_fps` | number | Decode-time decimation cap, `>= 0.0`. `0.0` = process every frame. See `src/tratrac/infrastructure/TIMESTEP_PRECISION.md`. |
+| `transforms_in` | path string | A `tratrac-preprocess estimate` run's transforms file. Always required — `tratrac` never estimates ego-motion or resolves GSD scale itself, it only reads this file's rows. A static-camera run still needs it, for its scale rows. Must exist on disk (checked before the video opens). See below. |
 
 ```toml
 [input]
-video = "clips/highway_run3.mp4"
+video        = "clips/highway_run3.mp4"
+process_fps  = 0.0
+transforms_in = "out/highway_run3_transforms.jsonl"
 ```
 
 ### `[detector]`
 
-| Key | Type | Required | Notes / valid values | Override flag |
-| --- | --- | --- | --- | --- |
-| `name` | string | yes | `yolov8_visdrone` (MVP1 default) or `rt_detr`. | `--detector` |
-| `checkpoint` | string | yes | HuggingFace repo id. e.g. `Mahadih534/YoloV8-VisDrone`, or `PekingU/rtdetr_r18vd` for RT-DETR. | `--checkpoint` |
-| `conf` | number | yes | Detection confidence threshold, in `[0.0, 1.0]`. | `--conf` |
-| `filename` | string | yes | Weights file inside the repo (e.g. `visDrone.pt`). Consumed only by `yolov8_visdrone`, but **required even for `rt_detr`** (which ignores it) — a deliberate consequence of "every key mandatory". | `--checkpoint-file` |
+| Key | Type | Notes / valid values |
+| --- | --- | --- |
+| `name` | string | `yolov8_visdrone` (current default), `rt_detr` (dormant), or `yolo_obb` (not yet the default — see `src/tratrac/infrastructure/detection/DETECTOR_CHOICE.md`). |
+| `checkpoint` | string | HuggingFace repo id, e.g. `Mahadih534/YoloV8-VisDrone`. |
+| `conf` | number | Detection confidence threshold, in `[0.0, 1.0]`. |
+| `filename` | string | Weights file inside the repo. Consumed only by `yolov8_visdrone`, but **required for every detector** (zero-defaults rule) — still an open question whether to drop or repurpose it for the others, see `DETECTOR_CHOICE.md` "Open questions". |
 
 ```toml
 [detector]
@@ -76,131 +84,43 @@ filename   = "visDrone.pt"
 
 ### `[runtime]`
 
-| Key | Type | Required | Notes / valid values | Override flag |
-| --- | --- | --- | --- | --- |
-| `device` | string | yes | torch device. Must match `cpu`, `mps`, `cuda`, or `cuda:N` (e.g. `cuda:0`). | `--device` |
+| Key | Type | Notes / valid values |
+| --- | --- | --- |
+| `device` | string | torch device. Must match `cpu`, `mps`, `cuda`, or `cuda:N` (e.g. `cuda:0`). |
 
 ```toml
 [runtime]
 device = "cpu"
 ```
 
-### `[calibration]` — a *one-of*, not "all mandatory"
-
-Calibration methods are mutually exclusive, so exactly **one** must be fully
-specified. Specifying both `meters_per_pixel` and `drone_model` is an **error**
-(no silent priority). There is **no `.SRT` auto-discovery** — give the path
-explicitly.
-
-**Method A — direct GSD:**
-
-| Key | Type | Notes | Override flag |
-| --- | --- | --- | --- |
-| `meters_per_pixel` | number | Ground sample distance, must be `> 0`. | `--meters-per-pixel` |
-
-```toml
-[calibration]
-meters_per_pixel = 0.05
-```
-
-**Method B — drone geometry** (`drone_model` + one altitude source):
-
-| Key | Type | Notes | Override flag |
-| --- | --- | --- | --- |
-| `drone_model` | string | One of the registered models (below). Case-insensitive. | `--drone-model` |
-| `altitude_m` | number | Flight altitude AGL in metres, `> 0`. **One of** this or `srt`. | `--altitude` |
-| `srt` | path string | DJI `.SRT` sidecar with per-frame altitude. **One of** this or `altitude_m`. | `--srt` |
-
-Registered `drone_model` keys: `air_2s`, `mavic_2_pro`, `mavic_3`,
-`mini_3_pro`, `mini_4_pro` (add more in `src/tratrac/calibration/drone_specs.py`).
-
-```toml
-[calibration]
-drone_model = "mavic_3"
-altitude_m  = 80.0
-# or, instead of altitude_m:
-# srt = "clips/highway_run3.SRT"
-```
-
-> When using method B, leave `meters_per_pixel` out of the section entirely
-> (writing both is the both-methods error).
-
-### `[ego_motion]` — ORB ego-motion (toggle + conditional params)
-
-ORB ego-motion (MVP1.9, see `src/tratrac/infrastructure/video/EGO_MOTION.md`). When on, detection and tracking
-run on the **raw, full-resolution frame** and the keyframe transform is applied to the
-**detections** (coordinates, not pixels), so trajectories are free of drone ego-motion
-and nothing is ever cropped to black. The keyframe anchor re-sets once too little of it
-stays in view (`min_anchor_overlap`). `enabled` is **always required** (off is explicit);
-the other parameters are required **only when `enabled = true`** and may be omitted when
-it is `false`.
-
-| Key | Type | Required | Notes / valid values | Override flag |
-| --- | --- | --- | --- | --- |
-| `enabled` | boolean | yes | `true` turns stabilization on; `false` leaves coordinates untouched. | `--stabilize` / `--no-stabilize` |
-| `n_features` | integer | when enabled | ORB keypoints per frame, `> 0` (e.g. `2000`). | `--orb-features` |
-| `match_ratio` | number | when enabled | Lowe ratio test, in `(0, 1)`; lower = stricter matches (e.g. `0.75`). | `--orb-match-ratio` |
-| `min_matches` | integer | when enabled | Min good matches to fit a transform, `>= 2`; below it the step is treated as no motion (e.g. `10`). | `--orb-min-matches` |
-| `ransac_threshold` | number | when enabled | RANSAC reprojection threshold in pixels, `> 0` (e.g. `3.0`). | `--orb-ransac-threshold` |
-| `min_anchor_overlap` | number | when enabled | Re-anchor the keyframe when its shared visible area drops below this fraction, in `(0, 1)` (e.g. `0.6`). | `--min-anchor-overlap` |
-
-```toml
-[ego_motion]
-enabled            = true
-n_features         = 2000
-match_ratio        = 0.75
-min_matches        = 10
-ransac_threshold   = 3.0
-min_anchor_overlap = 0.6
-```
-
-> To disable, just `enabled = false` — the other keys can be left out entirely.
-
 ### `[tracker]`
 
-| Key | Type | Required | Notes / valid values | Override flag |
-| --- | --- | --- | --- | --- |
-| `det_thresh` | number | yes | BoT-SORT detection threshold, in `[0.0, 1.0]`. Convention: keep it below `detector.conf`. | `--det-thresh` |
+| Key | Type | Notes / valid values |
+| --- | --- | --- |
+| `det_thresh` | number | BoT-SORT detection threshold, in `[0.0, 1.0]`. Convention: keep it below `detector.conf`. |
 
 ```toml
 [tracker]
 det_thresh = 0.1
 ```
 
-### `[orientation]`
-
-| Key | Type | Required | Notes / valid values | Override flag |
-| --- | --- | --- | --- | --- |
-| `smoothing_window` | integer | yes | EMA heading window. Must be `>= 2`. | `--smoothing-window` |
-
-```toml
-[orientation]
-smoothing_window = 5
-```
-
 ### `[export]`
 
-| Key | Type | Required | Notes / valid values | Override flag |
-| --- | --- | --- | --- | --- |
-| `out` | path string | yes | Output `.trj` path (non-empty). Parent dirs are created. | `--out` / `-o` |
-| `timestep_precision` | number | yes | Minimum seconds between exported TIMESTEPs. `0.0` = every frame. Values `> 0.5` produce a coarseness warning (still valid, but sparse for SSAM conflict analysis). | `--timestep-precision` |
-| `video_out` | string | yes | `""` = no overlay video; else an `.mp4` path. Writes each **raw** frame with bumpers/IDs/trails drawn (trajectories are mapped back onto the raw frame when `ego_motion.enabled`). Only the `.trj` leg is decimated by `timestep_precision`; the video keeps every frame. Must differ from `out` and `run.timing_csv`. | `--video-out` |
-| `video_trail` | integer | yes (when `video_out` set) | Trail length in frames for the overlay; `0` = whole path, `N` = rolling window of `N`. Only read when `video_out` is on. | `--video-trail` |
+| Key | Type | Notes / valid values |
+| --- | --- | --- |
+| `out` | path string | Output **track record** path (Parquet) — `tratrac`'s only output. Not a `.trj`: run `tratrac-postprocess` on this file to get one. Parent dirs are created. |
 
 ```toml
 [export]
-out                = "out/highway_run3.trj"
-timestep_precision = 0.0
-video_out          = ""          # "" = off; else "out/highway_run3_overlay.mp4"
-video_trail        = 0           # 0 = whole path (only used when video_out is set)
+out = "out/highway_run3.parquet"
 ```
 
 ### `[window]` — analysis trimming
 
-| Key | Type | Required | Notes / valid values | Override flag |
-| --- | --- | --- | --- | --- |
-| `start` | string | yes | `""` = clip start, else a timecode. | `--start` |
-| `end` | string | yes | `""` = clip end, else a timecode. Must be `> 0` and after `start`. | `--end` |
+| Key | Type | Notes / valid values |
+| --- | --- | --- |
+| `start` | string | `""` = clip start, else a timecode. |
+| `end` | string | `""` = clip end, else a timecode. Must be `> 0` and after `start`. |
 
 Timecode formats: `SS(.ms)`, `MM:SS(.ms)`, or `HH:MM:SS(.ms)` — e.g. `12.5`,
 `1:30`, `00:01:30.250`.
@@ -213,16 +133,52 @@ end   = ""
 
 ### `[run]` — run options
 
-| Key | Type | Required | Notes / valid values | Override flag |
-| --- | --- | --- | --- | --- |
-| `force` | boolean | yes | `true` overwrites existing outputs silently; `false` prompts (and errors in a non-TTY run). | `--force` / `--no-force` |
-| `timing_csv` | string | yes | `""` = profiling off; else a CSV path for per-frame step timings. Must differ from `export.out`. | `--timing-csv` |
+| Key | Type | Notes / valid values |
+| --- | --- | --- |
+| `timing_csv` | string | `""` = profiling off; else a CSV path for per-frame step timings. Must differ from `export.out`. See `src/tratrac/infrastructure/timing/STEP_TIMING.md`. |
+
+`force` is **not** a config key — it's the CLI-only `--force`/`--no-force` flag
+(overwrite control is pure I/O, never affects the trajectories, so it's excluded
+from the reproducible run spec on purpose). See `src/tratrac/application/CONFIG_DESIGN.md`.
 
 ```toml
 [run]
-force      = false
 timing_csv = ""
 ```
+
+---
+
+## What isn't here anymore
+
+Earlier revisions of this config had `[calibration]` (GSD scale), `[ego_motion]`
+(ORB stabilization toggle + tuning), and `[orientation]` (a live heading-smoothing
+window) sections. All three are gone from `tratrac`'s config — not renamed,
+removed:
+
+- **GSD calibration and ego-motion** are resolved once, upstream, by
+  `tratrac-preprocess estimate` (its own CLI flags — `--meters-per-pixel` or
+  `--drone-model`+`--altitude-m`/`--srt` for scale; ORB tuning knobs live only
+  here too). The result is written into one shared transforms file, which
+  `input.transforms_in` above just names. There is no `[ego_motion]` section or
+  `enabled` toggle in `tratrac` to gate on — whether stabilization applies is a
+  property of that file's *content* (whether it has similarity rows), not a
+  flag. See `src/tratrac/infrastructure/video/EGO_MOTION.md`,
+  `src/tratrac/calibration/GSD_CALIBRATION.md`, and
+  `src/tratrac/infrastructure/transform/TRANSFORM_SINK.md`.
+- **World-projection homography** is fitted by the same tool's `project`
+  subcommand (`tratrac-preprocess project --transforms ... --calibration
+  calibration.json`), from operator-authored image↔world correspondences, into
+  that same transforms file. `tratrac` never fits or applies one — that's
+  `tratrac-postprocess`'s job, via its own `--transforms` flag. See
+  `src/tratrac/application/WORLD_PROJECTION.md`.
+- **Orientation** is no longer computed live. `tratrac` writes only raw tracked
+  positions; heading, speed, and acceleration are reconstructed entirely
+  offline by `tratrac-postprocess`'s Kalman/RTS smoother, tuned via its own
+  `--pos-noise`/`--jerk` flags, not a config section. See
+  `src/tratrac/application/SMOOTHING.md`.
+
+See `CLAUDE.md`'s Commands table for every flag on `tratrac-preprocess`,
+`tratrac-postprocess`, and `tratrac-render`.
 
 ---
 
@@ -230,7 +186,9 @@ timing_csv = ""
 
 ```toml
 [input]
-video = "clips/highway_run3.mp4"
+video         = "clips/highway_run3.mp4"
+process_fps   = 0.0
+transforms_in = "out/highway_run3_transforms.jsonl"
 
 [detector]
 name       = "yolov8_visdrone"
@@ -241,36 +199,17 @@ filename   = "visDrone.pt"
 [runtime]
 device = "cpu"
 
-[calibration]
-drone_model = "mavic_3"
-altitude_m  = 80.0
-
-[ego_motion]
-enabled            = true
-n_features         = 2000
-match_ratio        = 0.75
-min_matches        = 10
-ransac_threshold   = 3.0
-min_anchor_overlap = 0.6
-
 [tracker]
 det_thresh = 0.1
 
-[orientation]
-smoothing_window = 5
-
 [export]
-out                = "out/highway_run3.trj"
-timestep_precision = 0.0
-video_out          = "out/highway_run3_overlay.mp4"
-video_trail        = 0
+out = "out/highway_run3.parquet"
 
 [window]
 start = ""
 end   = ""
 
 [run]
-force      = false
 timing_csv = ""
 ```
 
@@ -282,10 +221,10 @@ A run with missing or invalid keys exits with code 2 and lists everything wrong
 in one message — fix them all in one pass:
 
 ```
-ERROR: invalid run configuration; supply each value via the --config TOML or its flag:
+ERROR: invalid run configuration; supply each value via the --config TOML
+or its flag:
   - input.video is missing.
+  - input.transforms_in does not exist or is not a file -- run tratrac-preprocess first.
   - detector.conf must be in [0.0, 1.0], got 1.5.
   - runtime.device 'gpu' is invalid; expected cpu, mps, or cuda[:N] (e.g. cuda:0).
-  - calibration: specify exactly one of meters_per_pixel or drone_model, not both.
-  - orientation.smoothing_window must be >= 2.
 ```

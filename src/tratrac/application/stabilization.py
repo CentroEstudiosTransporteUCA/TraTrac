@@ -46,9 +46,10 @@ def apply_transform(detection: Detection, transform: Transform2D) -> Detection:
 class EgoMotionStabilizer:
 	"""``DetectionStabilizer`` that maps each detection into the global frame via the pose.
 
-	The concrete stabilize step for a `--stabilize` run. A first-class collaborator (rather
-	than an inline loop) so it sits behind the ``DetectionStabilizer`` port and is timeable
-	like the other steps (src/tratrac/infrastructure/timing/STEP_TIMING.md)."""
+	The concrete stabilize step, constructed unconditionally every run — a no-op via the
+	identity transform when the transforms file has no similarity rows. A first-class
+	collaborator (rather than an inline loop) so it sits behind the ``DetectionStabilizer``
+	port and is timeable like the other steps (src/tratrac/infrastructure/timing/STEP_TIMING.md)."""
 
 	def stabilize(self, detections: list[Detection], transform: Transform2D) -> list[Detection]:
 		return [apply_transform(detection, transform) for detection in detections]

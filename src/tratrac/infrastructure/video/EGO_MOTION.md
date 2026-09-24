@@ -1,6 +1,8 @@
 # Ego-Motion Estimation: Keyframe-Anchored ORB (MVP1.9, intermediate)
 
-> **Status — ✅ Shipped** (optional, off by default). The MVP number is a capability ID, not
+> **Status — ✅ Shipped** (always attempted by `tratrac-preprocess estimate`, a no-op when a
+> clip has no camera motion to correct — not a config toggle, see "Config Surface" below).
+> The MVP number is a capability ID, not
 > execution order — see the roadmap reconciliation in `docs/ROADMAP.md`. An intermediate
 > "keep if good enough" shortcut before MVP2's learned stabilizer + world projection.
 

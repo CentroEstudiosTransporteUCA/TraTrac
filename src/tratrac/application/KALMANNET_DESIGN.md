@@ -97,10 +97,10 @@ designed against speculatively.
 - New module, e.g. `application/kalmannet.py`, implementing the **same per-axis CA structure**
   as `application/kalman.py` (`_transition`, `_H` reused or duplicated) but with `_update`'s
   gain computation swapped for a small RNN's output.
-- Selected via an explicit opt-in (mirroring how `ego_motion.enabled` and `DetectorChoice` work
-  elsewhere in this repo — "off is explicit," no silent default change): a new
-  `tratrac-postprocess` flag, not a replacement for `--pos-noise`/`--jerk`, so the classical
-  filter stays available and remains the default until this is validated.
+- Selected via an explicit opt-in (mirroring how `DetectorChoice` works elsewhere in this repo —
+  "off is explicit," no silent default change): a new `tratrac-postprocess` flag, not a
+  replacement for `--pos-noise`/`--jerk`, so the classical filter stays available and remains the
+  default until this is validated.
 - Training happens **offline**, outside the `tratrac`/`tratrac-postprocess` runtime — a
   standalone training script (not designed here) producing a checkpoint the new module loads,
   the same shape as the detector/tracker checkpoints already loaded elsewhere in this repo.

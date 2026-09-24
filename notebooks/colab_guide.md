@@ -1,18 +1,18 @@
 # Running TraTrac on Google Colab (GPU)
 
-Copy-paste recipe to run the current 3-tool pipeline (`tratrac` → `tratrac-postprocess` →
-`tratrac-render`) on a Colab GPU (T4 is enough) and compare a stabilized vs. non-stabilized
-run with `validate_trj`. Each fenced block is one Colab **cell**.
+Copy-paste recipe to run the current pipeline (`tratrac-preprocess` → `tratrac` →
+`tratrac-postprocess` → `tratrac-render`) on a Colab GPU (T4 is enough) and compare a
+stabilized vs. non-stabilized run with `validate_trj`. Each fenced block is one Colab **cell**.
 
-> This guide previously targeted an older CLI generation (a `--video-out` flag on `tratrac`
-> itself, a `tratrac-smooth` command, a standalone `render_violations.py` script, and an
-> `orientation.method` config key comparing EMA vs. inline-Kalman vs. offline-RTS smoothing).
-> None of that exists anymore: the live pipeline computes no kinematics at all now (the
-> export inversion, see `CLAUDE.md`), so the only smoother left is the offline Kalman/RTS
-> pass in `tratrac-postprocess`, and rendering/violation-marking are both handled by
-> `tratrac-render` in one pass. This rewrite targets the current 3-tool pipeline; the
-> remaining meaningful ablation axis is **stabilized vs. non-stabilized** (`ego_motion.enabled`),
-> not smoothing strategy.
+> This guide previously targeted an older CLI generation more than once — first a `--video-out`
+> flag on `tratrac` itself, a `tratrac-smooth` command, and an `orientation.method` config key
+> (all gone: the live pipeline computes no kinematics at all now, the export inversion, see
+> `CLAUDE.md`); then a "3-tool pipeline" with ego-motion/GSD-scale toggled by a `[ego_motion]`
+> config section and a CSV transforms sidecar (also gone: `tratrac-preprocess` is now a
+> mandatory 4th tool that resolves every geometric transform — GSD scale, ego-motion, and later
+> world-projection homography — into one shared **JSON-Lines** file, `input.transforms_in`;
+> there is no `[ego_motion]` section or `enabled` toggle left in `tratrac`'s config at all). This
+> rewrite targets the current 4-tool pipeline.
 
 **Drive layout this assumes** — create it and upload your files:
 
@@ -23,11 +23,13 @@ run with `validate_trj`. Each fenced block is one Colab **cell**.
 └── outputs/          # created automatically; one folder per config
 ```
 
-The three `.toml`s are copies of `tratrac.example.toml` with `input.video`, `export.out`, and
-(for the `rotonda_*` pair) `[ego_motion]` edited per config; they're gitignored, so create and
-upload them yourself. `cruce.toml` needs no stabilization (a static/near-static shot);
-`rotonda_nostab.toml` / `rotonda_stab.toml` are the same moving-drone clip with
-`ego_motion.enabled = false` / `true`.
+The three `.toml`s are copies of `tratrac.example.toml` with `input.video`, `input.transforms_in`,
+and `export.out` edited per config; they're gitignored, so create and upload them yourself.
+`input.transforms_in` for each points at the transforms file step 6 below produces for that
+clip — `rotonda_stab` points at the normal one `tratrac-preprocess estimate` writes;
+`rotonda_nostab` points at a copy of it with the ego-motion rows stripped (there's no config
+toggle anymore, so "no stabilization" for a moving clip means feeding `tratrac` a transforms
+file that simply has no `ego_motion`-type rows — see step 6).
 
 The repo pins torch to the **CPU** index; on a GPU we swap to the **cu126** index (the only
 one carrying torch 2.12 at time of writing — check `pyproject.toml` for the current pin).
@@ -95,10 +97,43 @@ OUTPUT_DIR = "/content/drive/MyDrive/URBAn/TraTrac/outputs"
 ```
 
 The `ls` must show your two `.mp4`s and the three `.toml`s. Configs use absolute Drive paths
-for `input.video` and `export.out`, so the runs below need nothing else. (Outputs are written
-straight to Drive, so they survive the runtime shutting down.)
+for `input.video`, `input.transforms_in`, and `export.out`, so the runs below need nothing else
+once step 6 has produced the transforms files they point at. (Outputs are written straight to
+Drive, so they survive the runtime shutting down.)
 
-## 6. Pass 1 — perception (writes the track record)
+## 6. Pass 0 — resolve the transforms file (mandatory, before every run)
+
+`tratrac-preprocess estimate` walks each clip once (no detector), resolving GSD metric scale
+and ORB ego-motion, and writes both as rows into one JSON-Lines transforms file. This has to run
+even for `cruce_simple.mp4`'s static shot — it's the only place the scale row gets resolved.
+
+```python
+!uv run tratrac-preprocess estimate "$VIDEO_DIR/cruce_simple.mp4" \
+    --out "$OUTPUT_DIR/cruce/cruce_transforms.jsonl" --meters-per-pixel 0.05
+!uv run tratrac-preprocess estimate "$VIDEO_DIR/rotonda.mp4" \
+    --out "$OUTPUT_DIR/rotonda_stab/rotonda_transforms.jsonl" --meters-per-pixel 0.05
+```
+
+For the `rotonda_nostab` arm of the ablation, copy that same file with its `ego_motion`-type
+rows stripped — `tratrac` treats a transforms file with no similarity rows as "no stabilization"
+automatically, since it's the file's *content* that decides, not a config flag:
+
+```python
+import json
+src = f"{OUTPUT_DIR}/rotonda_stab/rotonda_transforms.jsonl"
+dst = f"{OUTPUT_DIR}/rotonda_nostab/rotonda_transforms.jsonl"
+import os
+os.makedirs(f"{OUTPUT_DIR}/rotonda_nostab", exist_ok=True)
+with open(src) as f_in, open(dst, "w") as f_out:
+    for line in f_in:
+        if json.loads(line)["type"] != "ego_motion":
+            f_out.write(line)
+```
+
+Point each config's `input.transforms_in` at the matching file (`cruce_transforms.jsonl`,
+`rotonda_stab`'s original, `rotonda_nostab`'s stripped copy) before running the next cell.
+
+## 7. Pass 1 — perception (writes the track record)
 
 First run downloads the YOLOv8-VisDrone weights. Each config writes its track record
 (`export.out`, a `.parquet` file) — no flags, everything comes from the TOML.
@@ -109,25 +144,29 @@ First run downloads the YOLOv8-VisDrone weights. Each config writes its track re
 !uv run tratrac --config "$CONFIG_DIR/rotonda_stab.toml"
 ```
 
-## 7. Pass 2 — offline smoothing (writes the `.trj`)
+## 8. Pass 2 — offline smoothing (writes the `.trj`)
 
-`tratrac-postprocess` runs the Kalman/RTS smoother and writes the SSAM `.trj`. For the
-stabilized run, keep the record's projected coordinates as-is (no `--calibration` needed
-beyond what's already baked into MVP1.75 GSD calibration in the config).
+`tratrac-postprocess` applies the transforms file's rows, runs the Kalman/RTS smoother, and
+writes the SSAM `.trj`. `--transforms` is always required — pass each run's own transforms file
+from step 6 (not the config's `input.transforms_in` directly; `tratrac-postprocess` takes it as
+its own flag).
 
 ```python
 !uv run tratrac-postprocess "$OUTPUT_DIR/cruce/cruce.parquet" \
+    --transforms "$OUTPUT_DIR/cruce/cruce_transforms.jsonl" \
     --out "$OUTPUT_DIR/cruce/cruce.trj"
 !uv run tratrac-postprocess "$OUTPUT_DIR/rotonda_nostab/rotonda_nostab.parquet" \
+    --transforms "$OUTPUT_DIR/rotonda_nostab/rotonda_transforms.jsonl" \
     --out "$OUTPUT_DIR/rotonda_nostab/rotonda_nostab.trj"
 !uv run tratrac-postprocess "$OUTPUT_DIR/rotonda_stab/rotonda_stab.parquet" \
+    --transforms "$OUTPUT_DIR/rotonda_stab/rotonda_transforms.jsonl" \
     --out "$OUTPUT_DIR/rotonda_stab/rotonda_stab.trj"
 ```
 
 Re-tune the smoother for free (no re-detection) by re-running any of these lines with
 `--pos-noise 1.5 --jerk 5` and re-validating below.
 
-## 8. Validate, then render each result video
+## 9. Validate, then render each result video
 
 Validate all three variants, dumping each one's violations to a CSV:
 
@@ -139,29 +178,31 @@ for folder, stem in [("cruce", "cruce"), ("rotonda_nostab", "rotonda_nostab"), (
 ```
 
 Render one result video per variant — trajectories drawn, violations marked in the same
-pass. The `rotonda_stab` run needs `--transforms` (the ego-motion sidecar CSV, only produced
-when `ego_motion.enabled` and `export.transform_csv` are both set in the config) so the
-marks map from the stabilized coordinate frame back onto the raw video:
+pass. Every variant needs its own `--transforms` file (from step 6) so the marks map from the
+run's coordinate frame back onto the raw video, whether or not that file happens to carry
+ego-motion rows:
 
 ```python
 !uv run tratrac-render "$VIDEO_DIR/cruce_simple.mp4" \
     --trj "$OUTPUT_DIR/cruce/cruce.trj" \
+    --transforms "$OUTPUT_DIR/cruce/cruce_transforms.jsonl" \
     --violations "$OUTPUT_DIR/cruce/cruce_violations.csv" \
     --out "$OUTPUT_DIR/cruce/cruce_result.mp4" --force
 !uv run tratrac-render "$VIDEO_DIR/rotonda.mp4" \
     --trj "$OUTPUT_DIR/rotonda_nostab/rotonda_nostab.trj" \
+    --transforms "$OUTPUT_DIR/rotonda_nostab/rotonda_transforms.jsonl" \
     --violations "$OUTPUT_DIR/rotonda_nostab/rotonda_nostab_violations.csv" \
     --out "$OUTPUT_DIR/rotonda_nostab/rotonda_nostab_result.mp4" --force
 !uv run tratrac-render "$VIDEO_DIR/rotonda.mp4" \
     --trj "$OUTPUT_DIR/rotonda_stab/rotonda_stab.trj" \
-    --transforms "$OUTPUT_DIR/rotonda_stab/rotonda_stab_transforms.csv" \
+    --transforms "$OUTPUT_DIR/rotonda_stab/rotonda_transforms.jsonl" \
     --violations "$OUTPUT_DIR/rotonda_stab/rotonda_stab_violations.csv" \
     --out "$OUTPUT_DIR/rotonda_stab/rotonda_stab_result.mp4" --force
 ```
 
 ### What to read
 
-- **orientation smoothness % / speed-accel plausibility %** (from step 8's `validate_trj`
+- **orientation smoothness % / speed-accel plausibility %** (from step 9's `validate_trj`
   output) — stabilization should raise both on the moving clip: compare
   `rotonda_nostab` → `rotonda_stab`.
 - **Three `<variant>_result.mp4`** — the visual checks: each variant's trajectories + red
@@ -172,5 +213,5 @@ marks map from the stabilized coordinate frame back onto the raw video:
 
 - **Full clips:** raise the configs' `[window] end` (or set it `""`) once a short run looks
   right — minutes on a T4.
-- **Skip the overlay videos:** the render step (8) is the slow part per config; skip it for a
-  faster metrics-only pass over steps 1–8's validation output.
+- **Skip the overlay videos:** the render step (9) is the slow part per config; skip it for a
+  faster metrics-only pass over steps 6–9's validation output.
