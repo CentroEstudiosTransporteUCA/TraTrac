@@ -25,7 +25,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
-All commands run from the repo root. `uv` manages the venv (`.venv/`) and resolves dependencies from `pyproject.toml` + `uv.lock`.
+All commands run from the repo root. `uv` manages the venv (`.venv/`) and resolves dependencies from `pyproject.toml` + `uv.lock`. CI (`.github/workflows/ci.yml`) runs format-check, lint, type-check, and `tests/unit` on every push/PR to `main` — the same gates below, so a clean local run should mean a clean CI run. CI does not run the slow/integration suite (network-dependent checkpoint download).
 
 | Purpose | Command |
 | --- | --- |

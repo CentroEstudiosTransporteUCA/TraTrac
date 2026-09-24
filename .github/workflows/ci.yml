@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.2.0
+        # Caching defaults to "auto", which already caches on GitHub-hosted runners for
+        # push/pull_request events -- no need to force it on.
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        # No --extra fiftyone: it's an optional, heavy (~80 transitive packages, its own
+        # bundled MongoDB) visualization extra that nothing in the core package or its
+        # tests imports unconditionally -- mypy is already configured to treat `fiftyone.*`
+        # as untyped/absent (see pyproject.toml's [[tool.mypy.overrides]]), so CI doesn't
+        # need it installed to type-check cli_fiftyone.py.
+        run: uv sync --locked
+
+      - name: Check formatting
+        run: uv run ruff format --check .
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Type-check
+        run: uv run mypy
+
+      - name: Unit tests
+        # Only tests/unit -- the slow/integration suite (tests/integration, `-m slow`)
+        # downloads a real detector checkpoint over the network on first run, which
+        # doesn't belong on every push/PR. Run it manually with `uv run pytest -m slow`
+        # before a release, not as a CI gate.
+        run: uv run pytest tests/unit
