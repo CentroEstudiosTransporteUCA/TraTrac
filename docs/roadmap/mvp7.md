@@ -54,7 +54,7 @@ Visualization Platform
 
 ---
 
-## Exploration pass (Group F, `docs/IMPLEMENTATION_PLAN.md`)
+## Exploration pass (Group F, GitHub Issues)
 
 ### Visualization: FiftyOne — still the right call, landed
 
@@ -166,7 +166,7 @@ for the final stage, copying over only the built virtualenv/artifacts — cited 
   index Group A1 already verified resolves for it), `uv sync` with `[tool.uv.sources]`
   rewritten at build time (via `sed`, visible in the `Dockerfile`, not baked into the checked-in
   `pyproject.toml`) to point at the CUDA torch/torchvision index instead of the CPU one this
-  repo defaults to — the same manual-edit decision point Group A1 (`docs/IMPLEMENTATION_PLAN.md`)
+  repo defaults to — the same manual-edit decision point Group A1 (GitHub Issues)
   already identifies, reused for deployment rather than dev, and deliberately *not* the
   uv-extras approach A1 tried and rejected (bare `uv sync`/`uv run` silently resolving to CUDA
   would be exactly as unsafe in a Dockerfile's own dev-facing commands as it was found to be

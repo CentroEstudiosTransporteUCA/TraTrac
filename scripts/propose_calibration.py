@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Propose candidate world-projection calibration points from visible road markings.
 
-Group C4 (``docs/IMPLEMENTATION_PLAN.md``): automatic road-geometry calibration, scoped to
+Group C4 (GitHub Issues): automatic road-geometry calibration, scoped to
 **correspondence proposal only** — TraTrac finds candidate calibratable image points, a human
 (via an external interactive tool, e.g. URBAn — the repo-boundary split this scope decision
 settled on) confirms/adjusts them and supplies the real-world coordinates. This is deliberately

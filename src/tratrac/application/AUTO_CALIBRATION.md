@@ -2,7 +2,7 @@
 
 ## Status
 
-Shipped, **scoped to proposal only** (`docs/IMPLEMENTATION_PLAN.md` Group C4). The repo-boundary
+Shipped, **scoped to proposal only** (GitHub Issues Group C4). The repo-boundary
 question the plan flagged as needing an explicit decision before this task could start —
 "does TraTrac ship only the correspondence-proposal capability, with interactive confirm/adjust
 living in URBAn?" — is resolved: **yes, proposal only.** `scripts/propose_calibration.py`

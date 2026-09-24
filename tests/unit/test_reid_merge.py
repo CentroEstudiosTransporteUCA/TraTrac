@@ -1,6 +1,6 @@
 """Tests for the ReID merge-decision stage: motion-plausibility gating, appearance scoring,
-and greedy 1:1 resolution. Pure — no video/GPU/embeddings model, matching
-docs/IMPLEMENTATION_PLAN.md's Group D2 test-file map entry."""
+and greedy 1:1 resolution. Pure — no video/GPU/embeddings model, matching Group D2's merge
+stage (see GitHub Issues)."""
 
 from __future__ import annotations
 

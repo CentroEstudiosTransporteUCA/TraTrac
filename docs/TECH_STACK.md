@@ -179,7 +179,7 @@ What's genuinely open is that `--pos-noise`/`--jerk` are **fixed, hand-tuned hyp
 2025 research consensus has moved toward **hybrid classical+learned** filters that keep the
 Kalman structure (interpretable, physically grounded — worth preserving) but learn the Kalman
 gain from data instead of computing it analytically. This is no longer just a flagged
-direction — `src/tratrac/application/KALMANNET_DESIGN.md` (Group E, `docs/IMPLEMENTATION_PLAN.md`)
+direction — `src/tratrac/application/KALMANNET_DESIGN.md` (Group E, GitHub Issues)
 is a research/design spike into it: architecture mechanics, a reconsidered recommendation
 (plain **unsupervised** KalmanNet trained on TraTrac's own recorded track data — the real
 blocker turned out to be data *diversity*, not the presence of ground-truth labels, which
@@ -205,8 +205,8 @@ independently corroborated in the current literature, not TraTrac-specific conce
 What *has* moved is the calibration **workflow**. A May 2026 pipeline demonstrates deriving the
 road-plane homography **automatically from visible road geometry** — lane markings, road
 borders, crosswalks — instead of an operator manually clicking image↔world correspondence
-points, which is what TraTrac's current Approach A requires and what URBAn's checklist already
-flags as a UX gap (`URBAn/docs/PRODUCTION_MVP.md`). The same source's caveats match what
+points, which is what TraTrac's current Approach A requires and what URBAn's "Visual calibration
+tool" issue already flags as a UX gap. The same source's caveats match what
 `application/WORLD_PROJECTION.md` already documents independently: far-field vehicles are most
 sensitive to homography error, and manual validation currently outperforms fully automatic
 calibration — so this is a real upgrade path for reducing operator burden, not a replacement for

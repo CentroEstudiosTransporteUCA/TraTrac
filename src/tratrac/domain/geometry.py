@@ -57,7 +57,7 @@ class Heading:
 		"""Cosine of the angle between two unit headings (both are unit length by construction).
 
 		Used to disambiguate a 0-360° OBB angle's front/back against the last known
-		heading (`docs/IMPLEMENTATION_PLAN.md` Group A7): negative means the candidate
+		heading (GitHub Issues Group A7): negative means the candidate
 		points the wrong way and should be reversed.
 		"""
 		return self.dx * other.dx + self.dy * other.dy
@@ -256,7 +256,7 @@ def point_in_polygon(point: Point2D, polygon: Sequence[Point2D]) -> bool:
 def oriented_extent(polygon: Polygon, angle: float | None) -> tuple[float, float]:
 	"""A ``(length, width)`` pair describing how far ``polygon`` extends along ``angle`` and its
 	perpendicular — the real occupancy-derived dimensions a footprint (Group D1,
-	``docs/IMPLEMENTATION_PLAN.md``) buys over a bbox/OBB estimate.
+	GitHub Issues) buys over a bbox/OBB estimate.
 
 	When ``angle`` is known (radians, standard math convention — matches
 	``Detection.angle``/``Heading.from_angle``), each vertex is projected onto the heading axis
@@ -284,7 +284,7 @@ def oriented_extent(polygon: Polygon, angle: float | None) -> tuple[float, float
 def oriented_box_to_aabb(cx: float, cy: float, w: float, h: float, angle: float) -> BoundingBox:
 	"""The axis-aligned enclosing box of a rotated ``(cx, cy, w, h, angle)`` rectangle.
 
-	Shared by every OBB-capable adapter (`docs/IMPLEMENTATION_PLAN.md` Group A4/A5) that needs
+	Shared by every OBB-capable adapter (GitHub Issues Group A4/A5) that needs
 	an unconditional ``Detection.bbox`` alongside the oriented box — ORB masking and IoU
 	association still work in AABB space even when the detector/tracker reports orientation.
 	"""

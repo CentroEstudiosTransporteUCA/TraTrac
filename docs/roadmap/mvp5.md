@@ -6,7 +6,7 @@
 > vehicle-ReID models are trained to discriminate on, and there's no nadir-matched dataset to
 > fine-tune FastReID against the way there is for detection. Full comparison and sources:
 > `src/tratrac/infrastructure/tracking/TRACKER_CHOICE.md`. **Landed** (Group D2,
-> `docs/IMPLEMENTATION_PLAN.md`): the "merge decision" + "apply" stages —
+> GitHub Issues): the "merge decision" + "apply" stages —
 > `application/reid_merge.py`'s motion-plausibility gate + appearance scoring, and
 > `tratrac-postprocess --reid-merge`'s track_id remap. See `src/tratrac/application/REID_MERGE.md`.
 > **Not landed:** the "embed" stage (DINOv3 per-fragment embeddings) — needs a GPU and real

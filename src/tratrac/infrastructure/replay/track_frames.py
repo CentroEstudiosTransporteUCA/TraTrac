@@ -1,6 +1,6 @@
 """Windowed video replay keyed to a track record.
 
-Shared infra for Group D (``docs/IMPLEMENTATION_PLAN.md``): segmentation (D1) and ReID-embed
+Shared infra for Group D (GitHub Issues): segmentation (D1) and ReID-embed
 (D2) both need to re-open the source video and pair each frame with the track record's
 observations at that frame, so each can crop per-track image patches. Extracted from the
 windowed-reopen + ``round(timestamp * fps)``-bucketing pattern ``cli_render.py`` already proved

@@ -2,7 +2,7 @@
 
 ## Status
 
-Link ID and Lane ID shipped (`docs/IMPLEMENTATION_PLAN.md` Groups C1/C2), Strategy A
+Link ID and Lane ID shipped (GitHub Issues Groups C1/C2), Strategy A
 (hand-drawn polygons) of `docs/roadmap/road_topology.md`. Optional and off by default, applied
 **post-hoc** by `tratrac-postprocess` via `--link-zones`/`--lane-zones`. Plane ID's *zones and
 classification helper* also live here (Group C5), but its *consumer* is
@@ -49,7 +49,7 @@ way Link/Lane do.
 Link/Lane classification runs on **image-space** coordinates, at the same stage exclusion
 filtering does — after exclusion drops whole tracks, before the already-fitted projection rows
 (read from `--transforms`) are applied to project coordinates to world metres. This matches the
-composition order in `docs/IMPLEMENTATION_PLAN.md`'s "Composition-root integration order":
+composition order documented in `src/tratrac/POSTPROCESS_ORDER.md`:
 
 ```
 read record
@@ -106,7 +106,7 @@ fields — it's a standalone label with no cross-referencing metadata.
 - **Strategies B/C** (`docs/roadmap/road_topology.md`) — trajectory-clustered or
   externally-sourced (OSM/`.pth`) road geometry — remain unexplored; Strategy A (hand-drawn) is
   what's shipped.
-- **Automatic/assisted authoring** (Group C4, `docs/IMPLEMENTATION_PLAN.md`) is a separate,
+- **Automatic/assisted authoring** (Group C4, GitHub Issues) is a separate,
   already-shipped task, not this doc's concern — see `application/AUTO_CALIBRATION.md`. Its
   repo-boundary question (does TraTrac ship only a correspondence/zone *proposal* capability,
   with interactive confirm/adjust living in URBAn?) is resolved there: yes, proposal-only.

@@ -3,7 +3,7 @@
 ## Status
 
 **Research/design spike only — no code.** This is the concrete next step
-`docs/IMPLEMENTATION_PLAN.md` Group E calls for ("a research/design spike producing
+GitHub Issues Group E calls for ("a research/design spike producing
 `application/KALMANNET_DESIGN.md` before any code"), and what `SMOOTHING.md`'s "Frontier
 upgrade" section flagged as "a genuine design-pass item, not a drop-in swap." This doc goes
 one level deeper than that flag — architecture mechanics, a reconsidered recommendation on
@@ -88,8 +88,8 @@ designed against speculatively.
   *sequence length* being forgiving; it says nothing about how many *distinct* tracks/sites/
   vehicle-motion-regimes are needed before the learned gain generalizes rather than
   overfitting to one camera setup. This project has no real-footage corpus yet
-  (`docs/PRODUCTION_MVP.md`'s "Validated against real congress-site footage" line is itself
-  still open) — so there is currently not even one deployment's worth of diverse recorded
+  (no full real-footage validation pass has cleared `validate_trj` yet — see the B1/B2 issues
+  in GitHub Issues) — so there is currently not even one deployment's worth of diverse recorded
   tracks to train against, let alone several. **This is the actual blocker**, not "no labels."
 
 ## Proposed integration surface (design-only; not implemented)

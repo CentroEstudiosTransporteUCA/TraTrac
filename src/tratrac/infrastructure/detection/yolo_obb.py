@@ -1,4 +1,4 @@
-"""YOLO-OBB detector adapter (MVP1.5, replanned — Group A4, docs/IMPLEMENTATION_PLAN.md).
+"""YOLO-OBB detector adapter (MVP1.5, replanned — Group A4, GitHub Issues).
 
 Wraps `ultralytics`'s OBB task (`result.obb`, distinct from the plain-detect `result.boxes`
 the MVP1 `yolov8_visdrone.py` adapter uses) so each detection carries the model's own
@@ -7,7 +7,7 @@ oriented-box angle and size instead of only an axis-aligned box. See
 
 **Not yet the default detector, and not yet backed by a fine-tuned checkpoint** — `checkpoint`
 must be pointed at a UAV-OBB-fine-tuned `yolo11-obb`/`yolo26-obb` weights file once one exists
-(`docs/IMPLEMENTATION_PLAN.md` Group A2, blocked on a GPU + the UAV-OBB dataset, neither of
+(GitHub Issues Group A2, blocked on a GPU + the UAV-OBB dataset, neither of
 which this adapter's construction depends on). Until then this class is exercised only by its
 unit tests (a real checkpoint's class order and angle convention are unverified — see the two
 open questions in `DETECTOR_CHOICE.md`).
@@ -23,7 +23,7 @@ from tratrac.domain.detection import Detection, VehicleClass
 from tratrac.domain.frame import Frame
 from tratrac.domain.geometry import oriented_box_to_aabb
 
-# UAV-OBB's six classes (docs/IMPLEMENTATION_PLAN.md Group A2), mapped into TraTrac's
+# UAV-OBB's six classes (Group A2, GitHub Issues), mapped into TraTrac's
 # VehicleClass. "bike" buckets into MOTORCYCLE (TraTrac has no separate bicycle/moped class);
 # "other_vehicle"/"taxi" bucket into CAR, mirroring the "van -> car bucket" precedent already
 # used by the MVP1 YOLOv8-VisDrone adapter. Keyed by lowercased label name, not class index —

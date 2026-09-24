@@ -1,7 +1,7 @@
 # Road Topology Sourcing
 
 > **Status — Strategy A (hand-drawn polygons) shipped for both Link ID and Lane ID**
-> (`docs/IMPLEMENTATION_PLAN.md` Groups C1/C2): `domain/road_graph.py`'s `LinkZone`/`LaneZone`,
+> (GitHub Issues Groups C1/C2): `domain/road_graph.py`'s `LinkZone`/`LaneZone`,
 > `application/road_graph.py`'s per-observation classification, and `infrastructure/road_graph/json.py`'s
 > sidecar loaders are wired into `tratrac-postprocess` as `--link-zones`/`--lane-zones`, each
 > classifying every surviving observation per-frame (not per-track) and stamping the result onto

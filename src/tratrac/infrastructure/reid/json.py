@@ -1,4 +1,4 @@
-"""Sidecar JSON reader/writer for the ReID merge decision (Group D2, ``docs/IMPLEMENTATION_PLAN.md``).
+"""Sidecar JSON reader/writer for the ReID merge decision (Group D2, GitHub Issues).
 
 ``application/reid_merge.py``'s ``resolve_merges`` output — plus the full candidate list, kept
 for operator audit — round-trips through this file so the "merge decision" and "apply" stages

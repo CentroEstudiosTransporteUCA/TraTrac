@@ -25,7 +25,7 @@ construction. See commit `291a18b`.
 
 ### YOLO-OBB training harness → `ultralytics`'s own CLI
 
-`docs/IMPLEMENTATION_PLAN.md` Group A2 had planned a `scripts/train_yolo_obb.py` wrapper script.
+GitHub Issues Group A2 had planned a `scripts/train_yolo_obb.py` wrapper script.
 `ultralytics` already ships a complete OBB fine-tuning CLI/API (`yolo obb train
 data=... model=yolo11n-obb.pt ...` / `YOLO(...).train(...)`), and the target dataset (UAV-OBB)
 is already in YOLO-OBB label format — there was nothing left for a wrapper to do beyond

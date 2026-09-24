@@ -1,6 +1,6 @@
 """Tests for road-topology zones: the zone->global conversion, per-point classification, and
-the sidecar-JSON loaders. Pure stdlib — no cv2/model downloads. See docs/IMPLEMENTATION_PLAN.md
-Groups C1/C2/C5."""
+the sidecar-JSON loaders. Pure stdlib — no cv2/model downloads. See GitHub Issues, Groups
+C1/C2/C5."""
 
 from __future__ import annotations
 

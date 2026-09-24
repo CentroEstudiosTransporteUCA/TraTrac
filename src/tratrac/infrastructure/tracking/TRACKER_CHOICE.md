@@ -36,7 +36,7 @@ When ego-motion coordinate stabilization is enabled (MVP1.9, see
 `src/tratrac/infrastructure/video/EGO_MOTION.md`), BoT-SORT's own camera-motion-compensation is
 disabled (`cmc_method=None`) so it doesn't double-correct already-stabilized detections.
 
-**OBB tracking is wired in** (Group A5, `docs/IMPLEMENTATION_PLAN.md`): `boxmot_bot_sort.py`
+**OBB tracking is wired in** (Group A5, GitHub Issues): `boxmot_bot_sort.py`
 takes an explicit `is_obb` constructor flag — not per-frame auto-detection, since `boxmot`
 infers the det-array layout from the *first* non-empty frame only and would lock in AABB mode
 if that frame happened to have no detections — and builds the 7-column

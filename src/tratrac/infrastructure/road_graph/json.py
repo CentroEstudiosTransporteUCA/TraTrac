@@ -20,7 +20,7 @@ Lane schema::
           "vertices": [[x1, y1], [x2, y2], [x3, y3]] }
     ] }
 
-Plane schema (Group C5, ``docs/IMPLEMENTATION_PLAN.md``)::
+Plane schema (Group C5, GitHub Issues)::
 
     { "plane_zones": [
         { "plane_id": 0,

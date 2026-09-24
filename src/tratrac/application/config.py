@@ -33,7 +33,7 @@ class DetectorChoice(StrEnum):
 	``yolov8_visdrone`` is the MVP1 emergency detector — community YOLOv8 fine-tuned
 	on VisDrone, picked because COCO-pretrained RT-DETR fails on aerial inputs.
 	``rt_detr`` stays available as a dormant alternative behind the ``Detector`` port.
-	``yolo_obb`` (Group A9, ``docs/IMPLEMENTATION_PLAN.md``) wraps ``ultralytics``'s OBB task
+	``yolo_obb`` (Group A9, GitHub Issues) wraps ``ultralytics``'s OBB task
 	(see ``src/tratrac/infrastructure/detection/yolo_obb.py``) — **not yet the default**: MVP1.5's
 	acceptance criterion is that a fine-tuned checkpoint measurably beats the YOLOv8-VisDrone
 	baseline (``scripts/probe_detector.py`` + ``scripts/validate_trj.py``) before the default

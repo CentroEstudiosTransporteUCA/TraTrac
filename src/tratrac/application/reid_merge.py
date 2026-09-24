@@ -1,6 +1,6 @@
 """Offline ReID fragment-merge decision: motion-plausibility gating + appearance scoring.
 
-Pure application logic for Group D2's "merge decision" stage (``docs/IMPLEMENTATION_PLAN.md``,
+Pure application logic for Group D2's "merge decision" stage (GitHub Issues,
 ``docs/roadmap/mvp5.md``): no video, no GPU, fully re-tunable offline like
 ``--pos-noise``/``--jerk``. Consumes track fragments — a tracker splits the same physical
 vehicle into more than one ``track_id`` across an occlusion — each carrying an appearance

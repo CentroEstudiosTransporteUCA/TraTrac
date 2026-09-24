@@ -1,6 +1,6 @@
 # MVP 3 — MULTI-PLANE WORLD TRAJECTORIES
 
-> **Status — 🟡 Partially shipped** (`docs/IMPLEMENTATION_PLAN.md` Groups C1/C5). The MVP number
+> **Status — 🟡 Partially shipped** (GitHub Issues Groups C1/C5). The MVP number
 > is a capability ID, not execution order — see the roadmap reconciliation in `docs/ROADMAP.md`.
 > **Landed:** Link ID assignment (Strategy A hand-drawn polygons, `application/ROAD_GRAPH.md`)
 > and multi-homography Plane Assignment + Projection (`MultiPlaneTransform`,

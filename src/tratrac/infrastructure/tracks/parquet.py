@@ -54,7 +54,7 @@ _SCHEMA = pa.schema(
 		("h", pa.float64()),
 		("vehicle_class", pa.string()),
 		("score", pa.float64()),
-		# OBB fields (Group A6, docs/IMPLEMENTATION_PLAN.md): nullable, populated only when the
+		# OBB fields (Group A6, GitHub Issues): nullable, populated only when the
 		# run's detector reports an oriented box. A record written before these columns existed
 		# is still readable — see ``_optional_float`` in ``read_tracks``.
 		("angle", pa.float64()),

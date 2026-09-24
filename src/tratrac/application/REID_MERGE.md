@@ -2,7 +2,7 @@
 
 ## Status
 
-Partially shipped (`docs/IMPLEMENTATION_PLAN.md` Group D2, `docs/roadmap/mvp5.md`). **Landed:**
+Partially shipped (GitHub Issues Group D2, `docs/roadmap/mvp5.md`). **Landed:**
 the "merge decision" and "apply" stages — `application/reid_merge.py`, the
 `KinematicKalmanFilter.from_state`/`predict` extension it's built on
 (`application/kalman.py`), `infrastructure/reid/json.py`, and `tratrac-postprocess
@@ -130,7 +130,7 @@ default gate parameters):
   genuinely disappearing behind an occluder and plausibly reappearing later, which is the
   specific failure mode ReID merging targets. **Conclusion**: on this footage, low continuity
   compliance is dominantly a *detector quality* problem, not an occlusion/identity problem — this
-  is real evidence (not a guess) that MVP1.5's YOLO-OBB fine-tune (`docs/IMPLEMENTATION_PLAN.md`
+  is real evidence (not a guess) that MVP1.5's YOLO-OBB fine-tune (GitHub Issues
   Group A2, still GPU-blocked) is likely higher-leverage for this metric than finishing ReID's
   embed stage would be, though both remain worth finishing.
 - This does **not** mean the motion gate or `resolve_merges` are broken — 52 candidates out of

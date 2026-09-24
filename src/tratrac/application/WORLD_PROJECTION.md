@@ -5,7 +5,7 @@
 > order — see the roadmap reconciliation in `docs/ROADMAP.md`. **World projection** is
 > implemented as a **post-hoc homography**, fitted by `tratrac-preprocess project` — see
 > "Implementation (Approach A — shipped)" below. **Multi-anchor projection**
-> (`docs/IMPLEMENTATION_PLAN.md` Group C3) has also landed: fitting groups correspondences by
+> (GitHub Issues Group C3) has also landed: fitting groups correspondences by
 > `reference_frame` and fits one homography per anchor, materializing a row (with the nearest
 > anchor's matrix baked in) for every frame — one homography *kind*, not a dedicated class;
 > a single-anchor (or static) calibration is simply the one-row-value case, not a separate code
@@ -485,7 +485,7 @@ for a static camera):
 ### Automatic calibration from road geometry — landed, proposal-only (Group C4)
 
 The operator workflow above requires manually clicking image↔world correspondence points —
-`URBAn/docs/PRODUCTION_MVP.md` already flags this as a UX gap (hand-authored JSON). A May 2026
+URBAn's "Visual calibration tool" issue already flags this as a UX gap (hand-authored JSON). A May 2026
 pipeline demonstrates deriving the road-plane homography **automatically from visible road
 geometry** — lane markings, road borders, crosswalks — instead of manual correspondences. Its
 caveats match what this doc already documented independently, not new information: far-field

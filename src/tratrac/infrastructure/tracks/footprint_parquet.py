@@ -1,6 +1,6 @@
 """Footprint sidecar: per-observation occupancy polygon, from post-hoc segmentation.
 
-Group D1 (``docs/IMPLEMENTATION_PLAN.md``, MVP4 remainder): a segmentation stage (SAM 3, not
+Group D1 (GitHub Issues, MVP4 remainder): a segmentation stage (SAM 3, not
 built yet — needs a GPU, see ``src/tratrac/application/FOOTPRINT.md``) would write one polygon
 per track observation here, and ``tratrac-postprocess --footprint`` reads it back to replace
 bbox/OBB-derived ``Dimensions`` with mask-derived ones before smoothing — the real accuracy

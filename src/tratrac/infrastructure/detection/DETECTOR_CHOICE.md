@@ -263,7 +263,7 @@ a complete OBB training CLI/API (`yolo obb train ...` / `YOLO(...).train(...)`);
    — a `uv` extras restructuring (`--extra cpu`/`--extra cuda`, avoiding the
    manual edit) was tried and rejected: bare `uv sync`/`uv run` silently resolved
    to `cuda` with no explicit flag, an unacceptable footgun in a normally-CPU
-   environment (see `docs/IMPLEMENTATION_PLAN.md` Group A1). A working index slug
+   environment (see GitHub Issues Group A1). A working index slug
    was verified at the time: `cu128` only publishes torch wheels up to 2.11.0
    (short of this project's `torch>=2.12.0` pin); `cu130` resolves — re-check
    https://pytorch.org/get-started/locally/ before trusting that slug is still

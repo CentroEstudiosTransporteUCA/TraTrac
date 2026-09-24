@@ -9,7 +9,7 @@
 > `src/tratrac/infrastructure/detection/DETECTOR_CHOICE.md`), which was this MVP's original
 > justification for needing segmentation at all — what segmentation still adds on top is a
 > precise occupancy **mask/footprint**, not orientation. **Landed** (Group D1,
-> `docs/IMPLEMENTATION_PLAN.md`): the footprint sidecar storage format and
+> GitHub Issues): the footprint sidecar storage format and
 > `tratrac-postprocess --footprint` (`src/tratrac/application/FOOTPRINT.md`) — it reuses Group A's
 > OBB dimension slot (`obb_w`/`obb_h`), so `build_state` and world-projection already handle a
 > footprint-derived size correctly with no new consumer code. **Not started:** the segmentation

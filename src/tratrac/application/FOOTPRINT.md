@@ -2,7 +2,7 @@
 
 ## Status
 
-Partially shipped (`docs/IMPLEMENTATION_PLAN.md` Group D1, MVP4 remainder). **Landed:** the
+Partially shipped (GitHub Issues Group D1, MVP4 remainder). **Landed:** the
 sidecar storage format (`infrastructure/tracks/footprint_parquet.py`), the pure geometry it's
 built on (`domain/geometry.oriented_extent`), and `tratrac-postprocess --footprint`'s
 consumption of it. **Not landed:** the segmentation stage that would actually produce a
@@ -17,7 +17,7 @@ A **footprint** is one polygon per `(track_id, frame_index)` — the vehicle's a
 outline, as opposed to a bounding box or oriented box's rectangular approximation of it.
 `tratrac-postprocess --footprint sidecar.parquet` replaces bbox/OBB-derived `Dimensions` with
 footprint-derived ones for every observation the sidecar covers, before smoothing — the real
-accuracy payoff segmentation buys over even an oriented box, per `docs/IMPLEMENTATION_PLAN.md`'s
+accuracy payoff segmentation buys over even an oriented box, per GitHub Issues's
 framing of this group.
 
 ## Why the storage format doesn't need SAM 3 to exist

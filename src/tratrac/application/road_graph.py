@@ -5,7 +5,7 @@ but classification is per-observation (a vehicle can cross links/lanes/planes
 mid-track) rather than the track-level majority vote ``excluded_track_ids`` uses.
 Link/Lane classification feeds SSAM's per-VEHICLE-RECORD fields; Plane
 classification feeds `MultiPlaneTransform` (Group C5) instead — see
-``docs/IMPLEMENTATION_PLAN.md`` Groups C1/C2/C5.
+GitHub Issues Groups C1/C2/C5.
 """
 
 from __future__ import annotations

@@ -33,7 +33,7 @@ class TrackSample:
 	center: Point2D
 	width: float
 	height: float
-	# OBB fields (Group A7, docs/IMPLEMENTATION_PLAN.md): the detector's own oriented-box
+	# OBB fields (Group A7, GitHub Issues): the detector's own oriented-box
 	# angle (radians) and (length, width) in pixels, when available. ``None`` for an
 	# AABB-only run — ``width``/``height`` above (the bbox) are always populated regardless.
 	angle: float | None = None

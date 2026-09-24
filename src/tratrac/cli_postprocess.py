@@ -32,7 +32,7 @@ image-space either way — not yet supported when the projection isn't
 invertible (more than one zone matches a given frame — see "Dual-space
 export" above for why).
 
-With ``--reid-merge`` (Group D2, ``docs/IMPLEMENTATION_PLAN.md``) a pre-computed ReID merge
+With ``--reid-merge`` (Group D2, GitHub Issues) a pre-computed ReID merge
 decision (``application/reid_merge.py``) remaps ``track_id`` on the record **first**, before
 anything else track-lifetime-aware runs — fragments the tracker split across an occlusion are
 stitched into one continuous track, which the existing per-track smoothing then handles with
@@ -377,7 +377,7 @@ def _apply_reid_merge(
 	"""Remap ``track_id`` on every observation through a resolved ReID merge decision.
 
 	Runs before exclusion filtering / Link-Lane-Plane assignment / world projection (Group D2's
-	composition-root position, ``docs/IMPLEMENTATION_PLAN.md``): those stages are all
+	composition-root position, see ``POSTPROCESS_ORDER.md``): those stages are all
 	track-lifetime-aware, so occlusion-split fragments must already be one track_id by the time
 	they run, or e.g. exclusion's majority vote would see two short, separately-judged tracks
 	instead of the vehicle's whole life. A track id absent from the mapping is left unchanged
@@ -433,7 +433,7 @@ def _assign_labels[Zones: (LinkZones, LaneZones)](
 	``(track_id, frame_index)``.
 
 	Shared by ``--link-zones`` and ``--lane-zones`` (src/tratrac/domain/ARCHITECTURE.md /
-	docs/IMPLEMENTATION_PLAN.md Groups C1/C2): per-observation, not per-track, since a vehicle
+	GitHub Issues Groups C1/C2): per-observation, not per-track, since a vehicle
 	can cross links/lanes mid-track and SSAM's Link ID / Lane ID are per-VEHICLE-RECORD fields.
 	Runs on image-space coordinates (before any world projection), the same stage
 	exclusion filtering already runs at.

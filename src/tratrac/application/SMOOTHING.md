@@ -171,7 +171,7 @@ physically-impossible-jerk violations than the EMA `.trj` (the Punzo metric, §1
 grounded — worth preserving, not replacing wholesale) but learn the Kalman gain from data
 instead of computing it analytically from hand-tuned noise parameters. **This is now a design
 spike, not just a flagged frontier** — see `application/KALMANNET_DESIGN.md` (Group E,
-`docs/IMPLEMENTATION_PLAN.md`) for the architecture mechanics, a reconsidered recommendation
+GitHub Issues) for the architecture mechanics, a reconsidered recommendation
 (plain **unsupervised** KalmanNet trained on TraTrac's own recorded track data, not
 MAML-KalmanNet — TraTrac's blocker turned out to be data *diversity*, not the presence of
 labels), a proposed integration surface, and what's still genuinely open. Still not a drop-in

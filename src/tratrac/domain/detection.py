@@ -37,7 +37,7 @@ class Detection:
 	angle: float | None = None
 	# The rotated box's own (length, width) in pixels, distinct from ``bbox``'s
 	# axis-aligned (width, height) — the real accuracy payoff OBB buys for
-	# vehicle sizing (`docs/IMPLEMENTATION_PLAN.md` Group A7). ``None`` unless
+	# vehicle sizing (GitHub Issues Group A7). ``None`` unless
 	# ``angle`` is also set.
 	oriented_size: tuple[float, float] | None = None
 
