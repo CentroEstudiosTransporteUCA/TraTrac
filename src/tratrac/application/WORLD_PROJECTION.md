@@ -1,27 +1,23 @@
 # World Projection — MVP 2 (Coordinate Systems + Approach A)
 
-> **Status — 🟡 Partially shipped (world projection + multi-anchor + multi-homography/plane
-> landed; stabilization upgrade deferred).** The MVP number is a capability ID, not execution
-> order — see the roadmap reconciliation in `docs/ROADMAP.md`. **World projection** is
-> implemented as a **post-hoc homography**, fitted by `tratrac-preprocess project` — see
-> "Implementation (Approach A — shipped)" below. **Multi-anchor projection**
-> (GitHub Issues Group C3) has also landed: fitting groups correspondences by
-> `reference_frame` and fits one homography per anchor, materializing a row (with the nearest
-> anchor's matrix baked in) for every frame — one homography *kind*, not a dedicated class;
-> a single-anchor (or static) calibration is simply the one-row-value case, not a separate code
-> path. **Multi-homography plane projection** (MVP3, Group C5) has landed too: fitting instead
-> classifies each correspondence against elevation-plane zones (`--plane-zones`,
-> `application/ROAD_GRAPH.md`) and materializes one homography row per plane per frame, each
-> carrying that plane's own polygon as its `zone` — spatial selection, orthogonal to the
-> per-anchor path's temporal (`frame_index`) selection; the two are not composed (a calibration
-> spanning both multiple anchors and multiple planes pools an anchor's correspondences per plane
-> regardless of anchor, a known, documented limitation). **Automatic-calibration correspondence
-> proposal** (Group C4) has landed too, scoped to proposal-only per its resolved repo-boundary
-> question — see "Automatic calibration from road geometry" below and
-> `src/tratrac/application/AUTO_CALIBRATION.md`. The one piece still **not** done: the
-> SuperPoint + LightGlue stabilization upgrade (MVP1.9's ORB still does ego-motion;
-> `docs/BACKLOG.md` item 1). With all landed, SSAM positions can be metric world
-> coordinates for wide-swept, many-anchor, grade-separated scenes, not just bounded flat ones.
+**World projection** is implemented as a **post-hoc homography**, fitted by `tratrac-preprocess
+project` — see "Implementation (Approach A)" below. **Multi-anchor projection** (GitHub Issues
+Group C3) groups correspondences by `reference_frame` and fits one homography per anchor,
+materializing a row (with the nearest anchor's matrix baked in) for every frame — one
+homography *kind*, not a dedicated class; a single-anchor (or static) calibration is simply the
+one-row-value case, not a separate code path. **Multi-homography plane projection** (MVP3, Group
+C5) instead classifies each correspondence against elevation-plane zones (`--plane-zones`,
+`application/ROAD_GRAPH.md`) and materializes one homography row per plane per frame, each
+carrying that plane's own polygon as its `zone` — spatial selection, orthogonal to the
+per-anchor path's temporal (`frame_index`) selection; the two are not composed (a calibration
+spanning both multiple anchors and multiple planes pools an anchor's correspondences per plane
+regardless of anchor, a known, documented limitation). **Automatic-calibration correspondence
+proposal** (Group C4) is scoped to proposal-only per its resolved repo-boundary question — see
+"Automatic calibration from road geometry" below and `src/tratrac/application/AUTO_CALIBRATION.md`.
+The SuperPoint + LightGlue stabilization upgrade (MVP1.9's ORB still does ego-motion; Group B3,
+GitHub Issues) is separate, tracked there. With projection, multi-anchor, and multi-plane all in
+place, SSAM positions can be metric world coordinates for wide-swept, many-anchor,
+grade-separated scenes, not just bounded flat ones.
 
 ---
 
@@ -88,11 +84,11 @@ Meaning:
 - SSAM may still parse the file
 - but the analytics become scientifically invalid
 
-### Multi-Homography Geometry — landed (Group C5, MVP3)
+### Multi-Homography Geometry (Group C5, MVP3)
 
-> See "Multi-homography plane projection — landed (Group C5)" further below for the shipped
-> per-plane `homography` row design. The rationale below (why single-homography breaks for
-> grade separation, why not full 3D) is unchanged by that landing.
+> See "Multi-homography plane projection" further below for the per-plane `homography` row
+> design. The rationale below (why single-homography breaks for grade separation, why not full
+> 3D) is unchanged by it.
 
 #### Why
 
@@ -131,7 +127,7 @@ not arbitrary 3D scenes.
 #### Cost
 
 **Pros:** correct geometry for bridges/overpasses.
-**Cons:** requires calibration + road-plane annotations. See `docs/roadmap/mvp3.md`.
+**Cons:** requires calibration + road-plane annotations.
 
 ---
 
@@ -147,7 +143,7 @@ not arbitrary 3D scenes.
 > keyframe-anchored ORB + RANSAC similarity adapter behind the `EgoMotionEstimator`
 > port, applied to *detection coordinates* (not pixels) before tracking. So MVP2's
 > stabilization line is an *upgrade* (ORB → SuperPoint + LightGlue, see
-> `docs/BACKLOG.md` item 1) gated on measurement, **not** a from-scratch addition.
+> Group B3, GitHub Issues) gated on measurement, **not** a from-scratch addition.
 > MVP2's genuinely new capability is **world projection** (the homography below);
 > ego-motion compensation is inherited.
 
@@ -286,7 +282,7 @@ MVP2 then adds what the GSD shortcut **cannot** provide:
 
 ## Link / Lane IDs
 
-See `docs/roadmap/road_topology.md`.
+See `application/ROAD_GRAPH.md`.
 
 - **Link ID** — still hardcoded `0`. MVP2 introduces world-space coordinates
   but no road graph; segment identity arrives in MVP3.
@@ -297,14 +293,14 @@ Conflict TTC / PET become physically valid in this MVP; conflict
 
 ---
 
-## Implementation (Approach A — shipped)
+## Implementation (Approach A)
 
 > The sections above are the **conceptual** MVP2 (in-pipeline stabilization +
-> projection, SuperPoint + LightGlue). What actually shipped is a narrower,
+> projection, SuperPoint + LightGlue). What's actually implemented is a narrower,
 > cheaper intermediate that satisfies the load-bearing requirement — metric
 > world coordinates in SSAM — for single-/few-anchor bounded scenes, behind ports
 > shaped so the multi-anchor version drops in without touching callers. This
-> mirrors how MVP1.9 shipped ORB as an intermediate before the learned stabilizer.
+> mirrors how MVP1.9 uses ORB as an intermediate before the learned stabilizer.
 
 ### Decision: projection is **post-hoc**, not in the pipeline
 
@@ -389,7 +385,7 @@ world metres with pixel-tuned noise would mis-scale the filter. Fix: multiply
 Q/R *ratio* (hence the filter's behaviour) while matching the world magnitudes —
 the filter de-jitters identically, just in metres.
 
-### Multi-anchor projection — landed (Group C3)
+### Multi-anchor projection (Group C3)
 
 The seams described below (written when only Approach A existed) let the multi-anchor
 projector drop in **behind the same row model**, with no caller changes — and that's exactly
@@ -413,7 +409,7 @@ what happened, though it has since been folded into the unified transforms file 
 - The anchor-manifest lift (`pose(reference_frame)`) was already in place and needed no
   changes.
 
-**Not done by this landing:** each anchor's `pos_noise`/`jerk` scale conversion is computed
+**Not implemented:** each anchor's `pos_noise`/`jerk` scale conversion is computed
 **per observation** (`cli_postprocess._representative_local_scale` averages each observation's
 own local scale, not a pre-averaged point — see the fix note in `application/SMOOTHING.md` if
 present), so a track crossing an anchor boundary mid-life still gets one averaged
@@ -422,7 +418,7 @@ Full pose-interpolated control regions (the "Approach D" end of the original com
 unimplemented — the nearest-anchor hard switch was judged sufficient unless real footage shows
 a visible seam.
 
-### Multi-homography plane projection — landed (Group C5, MVP3)
+### Multi-homography plane projection (Group C5, MVP3)
 
 Fitting (`cli_preprocess._fit_per_plane`) selects a homography by **spatially classifying the
 point itself** against elevation-plane zones (ground, bridge, overpass, ...; `--plane-zones`,
@@ -482,7 +478,7 @@ for a static camera):
 ] }
 ```
 
-### Automatic calibration from road geometry — landed, proposal-only (Group C4)
+### Automatic calibration from road geometry (proposal-only, Group C4)
 
 The operator workflow above requires manually clicking image↔world correspondence points —
 URBAn's "Visual calibration tool" issue already flags this as a UX gap (hand-authored JSON). A May 2026
@@ -493,7 +489,7 @@ vehicles are most sensitive to homography error, and manual validation currently
 fully-automatic calibration.
 
 **Group C4's repo-boundary question — does TraTrac ship only correspondence-proposal, with
-interactive confirm/adjust living in URBAn — is resolved: yes.** `scripts/propose_calibration.py`
+interactive confirm/adjust living in URBAn — resolves to yes.** `scripts/propose_calibration.py`
 auto-proposes candidate image-side points from road markings (Canny + Hough line detection,
 filtered by brightness *and* local contrast against the surrounding surface — see
 `src/tratrac/application/AUTO_CALIBRATION.md` for the full design, the real-footage validation
@@ -548,4 +544,4 @@ ground points.
   `compute_homography` docstring).
 - **Stabilization is still ORB** (MVP1.9), not SuperPoint + LightGlue — the projection
   inherits whatever drift the ego-motion fit carries. The SuperPoint upgrade is
-  `docs/BACKLOG.md` item 1.
+  Group B3 in GitHub Issues.

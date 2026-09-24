@@ -1,18 +1,14 @@
 # ReID merge decision: motion-plausibility gating + appearance scoring
 
-## Status
-
-Partially shipped (GitHub Issues Group D2, `docs/roadmap/mvp5.md`). **Landed:**
-the "merge decision" and "apply" stages — `application/reid_merge.py`, the
-`KinematicKalmanFilter.from_state`/`predict` extension it's built on
+The "merge decision" and "apply" stages (GitHub Issues Group D2) — `application/reid_merge.py`,
+the `KinematicKalmanFilter.from_state`/`predict` extension it's built on
 (`application/kalman.py`), `infrastructure/reid/json.py`, and `tratrac-postprocess
---reid-merge`. The motion-gate half has also now been **run against real footage**
+--reid-merge` — are built and have been run against real footage
 (`scripts/probe_reid_merge.py` — see "Validated against real footage" below), though with a
-placeholder embedding, not DINOv3. **Not landed:** the "embed" stage
-(`cli_embed.py`/`tratrac-embed`, DINOv3 per-fragment appearance vectors) — it needs a GPU and a
-real DINOv3 model, unavailable in this environment. This module is deliberately indifferent to
-how the embedding was produced — see "Why merge decision doesn't need the embed stage to exist"
-below.
+placeholder embedding, not DINOv3. The "embed" stage (`cli_embed.py`/`tratrac-embed`, DINOv3
+per-fragment appearance vectors) needs a GPU and a real DINOv3 model to build. This module is
+deliberately indifferent to how the embedding was produced — see "Why merge decision doesn't
+need the embed stage to exist" below.
 
 ## What this adds
 
@@ -39,8 +35,8 @@ model to make ReID work at all. Rather than build a separate travel-time model, 
 The three D2 stages split expensive/cacheable from cheap/re-tunable, mirroring
 `SMOOTHING.md`'s two-pass design:
 
-1. **Embed** (unbuilt) — the only stage needing video + a GPU + DINOv3. Would write one
-   embedding per track fragment to an `embeddings.parquet` sidecar.
+1. **Embed** (needs a GPU + real DINOv3 to build) — the only stage needing video. Would write
+   one embedding per track fragment to an `embeddings.parquet` sidecar.
 2. **Merge decision** (`application/reid_merge.py`) — pure, no video/GPU, fully re-tunable
    offline like `--pos-noise`/`--jerk`. Consumes `TrackFragment`s (whatever produced their
    `embedding` field) and decides merges.
@@ -131,7 +127,7 @@ default gate parameters):
   specific failure mode ReID merging targets. **Conclusion**: on this footage, low continuity
   compliance is dominantly a *detector quality* problem, not an occlusion/identity problem — this
   is real evidence (not a guess) that MVP1.5's YOLO-OBB fine-tune (GitHub Issues
-  Group A2, still GPU-blocked) is likely higher-leverage for this metric than finishing ReID's
+  Group A2) is likely higher-leverage for this metric than finishing ReID's
   embed stage would be, though both remain worth finishing.
 - This does **not** mean the motion gate or `resolve_merges` are broken — 52 candidates out of
   ~1.2M possible pairs (1,545²) is exactly what a tight, working gate should produce when most
@@ -139,7 +135,7 @@ default gate parameters):
   have enough genuine occlusion-driven fragmentation for ReID merging to move the needle much,
   which is itself useful information, not a null result.
 
-## Not done by this landing
+## What the embed stage would still need, and open design questions
 
 - **The embed stage** (`cli_embed.py`, DINOv3) — needs a GPU + real footage; the whole
   appearance-scoring half of this design is unvalidated until it exists. The motion gate alone

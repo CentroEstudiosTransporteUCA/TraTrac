@@ -2,9 +2,9 @@
 
 Vehicle tracking and trajectory export for cenital / nadir aerial video. The pipeline detects vehicles, tracks identities across frames, and — via an offline pass — reconstructs kinematics and writes [SSAM](https://highways.dot.gov/safety/rsa/ssam/surrogate-safety-assessment-model-ssam) `.trj` files ready for traffic safety analytics.
 
-## Status
+## Pipeline
 
-**MVP1.75 and MVP1.9 shipped; MVP2 shipped (single- and multi-homography world projection); MVP3/MVP6 shipped (Link/Lane ID).** Four tools, run in sequence (plus one optional fifth):
+Four tools, run in sequence (plus one optional fifth):
 
 1. **`tratrac-preprocess`** — mandatory, before every run, even a static camera. Two subcommands: `estimate` walks the clip once (no detector) resolving GSD metric scale and ORB ego-motion, writing both as rows into one shared **transforms file**, plus the keyframe-anchor PNGs operators draw zones/correspondences on; `project` fits a world-projection homography from those anchors into the same file. Neither `tratrac` nor `tratrac-postprocess` ever estimates a geometric transform itself — they only read this file.
 2. **`tratrac`** — perception only. Detects (**YOLOv8-VisDrone** by default, aerial-trained; a fine-tuned **YOLO-OBB** oriented detector is the MVP1.5 target, still open — an unused `rt_detr` adapter also exists, no longer the planned upgrade), tracks (**BoT-SORT**, IoU-only), applies whatever ego-motion rows the transforms file carries (the identity for a static camera — there's no separate on/off toggle), and writes the raw **track record** — a Parquet file, the pipeline's only output.
@@ -105,8 +105,8 @@ README stays intentionally brief so it doesn't drift out of sync with those.
 
 See `src/tratrac/domain/ARCHITECTURE.md` for the full rationale behind these invariants. The
 SSAM `.trj` byte-level spec is in `src/tratrac/infrastructure/export/SSAM_FORMAT.md`, derived
-from the two PDFs alongside it. Where SSAM's `Link ID` and `Lane ID` come from at each MVP is
-in `docs/roadmap/road_topology.md`.
+from the two PDFs alongside it. Where SSAM's `Link ID` and `Lane ID` come from is
+in `src/tratrac/application/ROAD_GRAPH.md`.
 
 ## Development
 
@@ -124,7 +124,7 @@ All checked-in code passes ruff + strict mypy. Indentation is tabs.
 ## Known limitations
 
 - Coordinates are metric always (GSD calibration is mandatory), but stay a single flat plane unless a world-projection homography was fitted (`tratrac-preprocess project`, MVP2 Approach A) — not corrected for non-nadir gimbals unless one is, though bridges/overpasses now have MVP3's multi-homography/plane-assignment support.
-- Stabilization (MVP1.9) is feature-based ORB, not the target SuperPoint + LightGlue — fine for most footage, but the upgrade is tracked in `docs/BACKLOG.md` if measurement ever shows it's needed.
+- Stabilization (MVP1.9) is feature-based ORB, not the target SuperPoint + LightGlue — fine for most footage, but the upgrade (Group B3, GitHub Issues) is trigger-gated on measurement ever showing it's needed.
 - Object shadows on the ground are occasionally detected as separate vehicles — a YOLOv8-VisDrone weakness, not a pipeline bug.
 - No occlusion bridging yet in practice: BoT-SORT is configured IoU-only with prediction-only tracks dropped from the output. MVP5's offline fix — a post-hoc track-stitcher merging fragments via DINOv3 appearance embeddings + motion-plausibility gating (not the originally planned FastReID — nadir footage discards too much of what vehicle-ReID models are trained to see) — has its merge-decision and apply stages built and validated against real footage; only the DINOv3 embedding stage itself is still blocked on a GPU. See `src/tratrac/application/REID_MERGE.md`.
 

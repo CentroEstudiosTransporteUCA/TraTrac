@@ -1,16 +1,9 @@
 # KalmanNet-family adaptive noise: design spike (Group E)
 
-## Status
-
-**Research/design spike only — no code.** This is the concrete next step
-GitHub Issues Group E calls for ("a research/design spike producing
-`application/KALMANNET_DESIGN.md` before any code"), and what `SMOOTHING.md`'s "Frontier
-upgrade" section flagged as "a genuine design-pass item, not a drop-in swap." This doc goes
-one level deeper than that flag — architecture mechanics, a reconsidered recommendation on
-which KalmanNet variant to target, an integration surface, and a training-data plan — but
-stops short of writing any Python. No dataset plan existed before this doc; there still isn't
-a *committed* one, but there is now a concrete, checkable proposal (below) instead of an open
-question.
+A research/design spike, deliberately stopping short of any code — what `SMOOTHING.md`'s
+"Frontier upgrade" section flagged as "a genuine design-pass item, not a drop-in swap." This doc
+goes one level deeper than that flag — architecture mechanics, a reconsidered recommendation on
+which KalmanNet variant to target, an integration surface, and a training-data plan.
 
 ## What this would replace
 

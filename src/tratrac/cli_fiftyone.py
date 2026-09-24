@@ -6,8 +6,7 @@ raw track record (``infrastructure/tracks/parquet.py``) and/or a smoothed record
 both can be inspected/compared in the FiftyOne App. A reader, not a pipeline stage: nothing
 here runs detection or tracking; it reads what ``tratrac``/``tratrac-postprocess`` already
 wrote, the same "post-hoc tool over existing outputs" shape as ``scripts/plot_run.py`` and
-``scripts/validate_trj.py``. See ``docs/roadmap/mvp7.md``'s "Exploration pass" for the design
-this follows.
+``scripts/validate_trj.py``. See ``FIFTYONE.md`` for the full design.
 
 **Not the SSAM ``.trj``, deliberately.** An earlier version of this module read ``--trj``
 directly and normalized its coordinates as if they were always raw video pixels. That's true

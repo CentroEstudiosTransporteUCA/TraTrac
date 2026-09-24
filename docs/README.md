@@ -2,8 +2,8 @@
 
 Design docs used to live in one centralized `vault/` folder. They now live **next to the code
 they describe** — this file is the index into all of them, plus the handful of docs that are
-genuinely cross-cutting (a roadmap milestone, an end-state diagram, a backlog) and have no
-single code location to sit beside.
+genuinely cross-cutting (project philosophy, an end-state diagram, the full tech stack) and have
+no single code location to sit beside.
 
 Feature tracking and status live in
 [GitHub Issues](https://github.com/CentroEstudiosTransporteUCA/TraTrac/issues) and the org's
@@ -16,13 +16,17 @@ Read `docs/ROADMAP.md` first for the project's status; everything else is detail
 
 | Doc | What it covers |
 | --- | --- |
-| [`ROADMAP.md`](ROADMAP.md) | System objective, core philosophy, and the MVP capability-ladder-vs-execution-order reconciliation table. Start here. |
+| [`ROADMAP.md`](ROADMAP.md) | System objective and core philosophy — the project's north star, not a task list. Start here. |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | The end-state pipeline diagram (final architecture vision). |
 | [`PIPELINE_STAGES.md`](PIPELINE_STAGES.md) | Which stages always run vs. are optional, and for the optional ones, which must stay in the live `tratrac` pass vs. can be deferred to post-processing — the single source of truth for this, not duplicated elsewhere. |
-| [`TECH_STACK.md`](TECH_STACK.md) | Full stack, layer by layer, with research-backed comparisons and citations for each pick — what's confirmed (BoT-SORT, SuperPoint+LightGlue, multi-homography), what changed after review (detection: YOLO-OBB not RT-DETR; ReID: DINOv3 not FastReID; segmentation: SAM 3 not SAM2; decode: TorchCodec not PyAV), and what's not yet adopted (SAM 3, DINOv3 ReID, Lane Graph, KalmanNet, FiftyOne, CVAT, Docker/CUDA). Already-shipped choices are documented next to their adapters instead — see `DETECTOR_CHOICE.md` and `TRACKER_CHOICE.md` in the table below. |
-| [`BACKLOG.md`](BACKLOG.md) | "Shipped cheaper now, upgrade later" tracker — deliberate quality upgrades deferred behind a stable port (ego-motion estimator, video I/O). |
-| [`BUILD_VS_BUY.md`](BUILD_VS_BUY.md) | Audit of hand-rolled code with mature external-library alternatives (e.g. hand-rolled JSON validation vs. `pydantic`), ordered by priority for review — not a scheduled to-do list. |
-| [`roadmap/`](roadmap/) | Not-yet-started MVPs (3–7) and road-topology (Link/Lane ID) sourcing strategy — kept together because none of this has a code location yet. |
+| [`TECH_STACK.md`](TECH_STACK.md) | Full stack, layer by layer, with research-backed comparisons and citations for each pick — what's confirmed (BoT-SORT, SuperPoint+LightGlue, multi-homography), what changed after review (detection: YOLO-OBB not RT-DETR; ReID: DINOv3 not FastReID; segmentation: SAM 3 not SAM2; decode: TorchCodec not PyAV), and what's not yet adopted (SAM 3, DINOv3 ReID, Lane Graph, KalmanNet, CVAT). Already-shipped choices are documented next to their adapters instead — see `DETECTOR_CHOICE.md` and `TRACKER_CHOICE.md` in the table below. |
+
+Feature/task status (what's built, what's blocked, what's next) lives in
+[GitHub Issues](https://github.com/CentroEstudiosTransporteUCA/TraTrac/issues) and the org's
+[Traffic Analysis Pipeline project board](https://github.com/orgs/CentroEstudiosTransporteUCA/projects/1).
+Advisory "should we do this" content (build-vs-buy audits, alternative approaches not currently
+planned) lives in [GitHub Discussions](https://github.com/CentroEstudiosTransporteUCA/TraTrac/discussions).
+Neither lives in a repo file.
 
 ## Repo-root
 
@@ -31,6 +35,7 @@ Read `docs/ROADMAP.md` first for the project's status; everything else is detail
 | [`../README.md`](../README.md) | Install, usage, CLI options — the user-facing entry point. |
 | [`../CLAUDE.md`](../CLAUDE.md) | Conventions for working in this repo with an AI coding agent. |
 | [`../CONFIG.md`](../CONFIG.md) | How to write a `run.toml` — user-facing config guide. |
+| [`../DEPLOYMENT.md`](../DEPLOYMENT.md) | Docker multi-stage build for deployment | `../Dockerfile` |
 
 ## Design docs next to code (`src/tratrac/`)
 
@@ -59,6 +64,7 @@ Read `docs/ROADMAP.md` first for the project's status; everything else is detail
 | [`infrastructure/export/SSAM_FORMAT.md`](../src/tratrac/infrastructure/export/SSAM_FORMAT.md) | SSAM `.trj` byte-level spec (+ the two authoritative PDFs alongside it) | `infrastructure/export/ssam_trj.py` |
 | [`infrastructure/export/VIDEO_EXPORT.md`](../src/tratrac/infrastructure/export/VIDEO_EXPORT.md) | Post-hoc trajectory overlay rendering (`tratrac-render`) | `infrastructure/export/overlay_video.py` |
 | [`POSTPROCESS_ORDER.md`](../src/tratrac/POSTPROCESS_ORDER.md) | The fixed stage order inside `cli_postprocess.postprocess` (footprint → ReID-merge → exclusion → plane/link/lane → projection → smoothing → export) and why it can't be reshuffled | `cli_postprocess.py` |
+| [`FIFTYONE.md`](../src/tratrac/FIFTYONE.md) | Building a FiftyOne dataset from existing outputs for interactive visual QA, the MongoDB-on-Linux workaround it needed | `cli_fiftyone.py` |
 | [`calibration/GSD_CALIBRATION.md`](../src/tratrac/calibration/GSD_CALIBRATION.md) | MVP1.75 ground-sample-distance metric calibration from drone metadata | `calibration/gsd.py`, `drone_specs.py`, `srt_parser.py` (called from `cli_preprocess.py`'s `estimate` subcommand — no dedicated scale sidecar anymore, see `TRANSFORM_SINK.md`) |
 | [`CHECK_COMMAND.md`](../src/tratrac/CHECK_COMMAND.md) | Scope of `tratrac --check` (validate a config without running) | `cli.py` |
 

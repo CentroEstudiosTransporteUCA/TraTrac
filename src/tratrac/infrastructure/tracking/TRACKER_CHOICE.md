@@ -83,7 +83,7 @@ place, right time, right velocity for the elapsed gap). This mirrors the Songdo 
 appearance+temporal fusion in principle, using the motion infrastructure TraTrac already has
 instead of a separate travel-time model. Cheap color/footprint-shape heuristics remain a
 legitimate fallback given how little nadir-view visual signal survives at all — see
-`docs/roadmap/mvp5.md` for the full MVP5 plan.
+`application/REID_MERGE.md` for the full design.
 
 **The motion-plausibility gate half of this is landed** (`application/reid_merge.py`,
 `src/tratrac/application/REID_MERGE.md`): `KinematicKalmanFilter.from_state`/`.predict`

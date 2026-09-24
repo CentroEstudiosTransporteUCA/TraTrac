@@ -1,15 +1,12 @@
 # Footprint sidecar: mask-derived vehicle dimensions
 
-## Status
-
-Partially shipped (GitHub Issues Group D1, MVP4 remainder). **Landed:** the
-sidecar storage format (`infrastructure/tracks/footprint_parquet.py`), the pure geometry it's
-built on (`domain/geometry.oriented_extent`), and `tratrac-postprocess --footprint`'s
-consumption of it. **Not landed:** the segmentation stage that would actually produce a
-footprint sidecar (`cli_segment.py`/`tratrac-segment`, SAM 3) — it needs a GPU and a real SAM 3
-model, unavailable in this environment. Like `application/reid_merge.py` before it, this module
-is deliberately indifferent to how the polygon was produced — see "Why the storage format
-doesn't need SAM 3 to exist" below.
+The sidecar storage format (`infrastructure/tracks/footprint_parquet.py`), the pure geometry
+it's built on (`domain/geometry.oriented_extent`), and `tratrac-postprocess --footprint`'s
+consumption of it (GitHub Issues Group D1, MVP4 remainder) don't depend on the segmentation
+stage that would actually produce a footprint sidecar (`cli_segment.py`/`tratrac-segment`, SAM
+3) — that stage needs a GPU and a real SAM 3 model to build. Like `application/reid_merge.py`
+before it, this module is deliberately indifferent to how the polygon was produced — see "Why
+the storage format doesn't need SAM 3 to exist" below.
 
 ## What this adds
 
@@ -82,10 +79,10 @@ list-shaped data in this codebase is stored rather than inventing a struct type)
 `infrastructure/tracks/parquet.py`'s writer/reader shape (buffered row-group writes, a
 `...Sink` context manager, a plain read function) rather than a new pattern.
 
-## Not done by this landing
+## Scope boundaries
 
 - **The segmentation stage itself** (`cli_segment.py`, SAM 3) — needs a GPU + a real model; see
-  above for exactly what's deferred vs. what already landed.
+  above for exactly what this deferred and why.
 - **No attempt to re-derive orientation from the mask** — `oriented_extent` only *uses* an
   already-known angle (from Group A's OBB detector, when present); it doesn't fit one from the
   polygon itself (e.g. minimum-area rectangle / PCA) when no angle is available.

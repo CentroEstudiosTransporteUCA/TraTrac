@@ -1,4 +1,4 @@
-# Scope — `tratrac --check` (✅ landed)
+# Scope — `tratrac --check`
 
 A validation-only mode so the Tauri client (and CI) can verify a config **without
 running** the pipeline. Goal: make `application/config.py` the single source of truth

@@ -106,7 +106,7 @@ gap had gone untracked, unlike the RT-DETR→YOLOv8 detector swap (`src/tratrac/
 which documents its override explicitly. Only the **encode** side moved to
 PyAV; `OpenCvVideoSource` (decode, seeking, `--process-fps` frame-skipping) and
 the drawing primitives (`cv2.line`/`circle`/`putText`) stay on `cv2` — see
-`docs/BACKLOG.md` for the deferred full-decode PyAV+NVDEC migration.
+Group B4 in GitHub Issues for the deferred full-decode TorchCodec+NVDEC migration.
 
 ## Violations in the same pass
 

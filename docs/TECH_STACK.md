@@ -11,7 +11,7 @@
 | Tracking | BoT-SORT | — (confirmed) |
 | ReID | DINOv3 embeddings + motion-plausibility gating | ⚠️ was FastReID |
 | Motion Modeling | Constant-acceleration Kalman/RTS (shipped); KalmanNet-family adaptive noise (frontier) | ⚠️ was "Extended Kalman Filter" |
-| Geometry | Multi-Homography (OpenCV); auto-calibration from road geometry where possible | 🟡 refined |
+| Geometry | Multi-Homography (OpenCV); auto-calibration from road geometry where possible | ⚠️ refined |
 | Plane Assignment | Polygon-Based Plane Mapping | — |
 | Topology Constraints | Lane Graph Model | — |
 | Storage | Apache Parquet | — (shipped) |
@@ -233,7 +233,7 @@ that problem is already solved at the detector, before segmentation ever runs. W
 still adds on top is a precise **occupancy mask/footprint** — useful for exact contact-point or
 road-plane assignment — not orientation. Worth explicitly re-scoping MVP4 around "do we need
 pixel-accurate footprints" rather than carrying forward the original "segmentation gives us
-orientation" framing, which OBB now makes partially redundant. See `docs/roadmap/mvp4.md`.
+orientation" framing, which OBB now makes partially redundant. See `src/tratrac/application/FOOTPRINT.md`.
 
 **Sources:**
 - [Best Computer Vision Models in 2026 — task-by-task guide, SAM2 vs YOLO-seg vs SAM3](https://blog.roboflow.com/best-computer-vision-models/)
@@ -244,7 +244,7 @@ orientation" framing, which OBB now makes partially redundant. See `docs/roadmap
 
 ## Video decoding: TorchCodec, not PyAV
 
-PyAV correctly fixed the **encode** side already (see `docs/BACKLOG.md` item 3) — that stays.
+PyAV correctly fixed the **encode** side already (Group B4, GitHub Issues) — that stays.
 For **decode**, the qualitatively better current choice is **TorchCodec**: PyTorch's own
 official media library, under active development specifically to replace ad-hoc PyAV/torchaudio
 usage in PyTorch pipelines (PyTorch is consolidating decode/encode capability into it and
@@ -253,7 +253,7 @@ and is reported as consistently the best-performing library for its designed use
 many videos as part of a data pipeline, which is structurally close to what `tratrac`'s
 perception run needs. Given TraTrac's runtime is already PyTorch, this is a better final target
 than PyAV for decode specifically, independent of the real integration risk already documented
-in `docs/BACKLOG.md` item 3 (the `--process-fps` no-decode-skip behavior `cv2.grab()` currently
+in Group B4 (GitHub Issues) (the `--process-fps` no-decode-skip behavior `cv2.grab()` currently
 provides has no direct one-line equivalent in either PyAV or TorchCodec — that risk is unchanged
 by this pick, not resolved by it).
 
@@ -270,5 +270,5 @@ Plane assignment, topology/lane-graph, FiftyOne, CVAT, and Docker/CUDA deploymen
 audited in this investigation — the table above carries them forward unchanged from the
 original stack, not because they were confirmed, but because they weren't in scope. FiftyOne
 and Docker/CUDA were separately checked (and landed) as part of Group F's own exploration pass
-— see `docs/roadmap/mvp7.md`, which re-confirmed FiftyOne still fits on a 2026 check. CVAT
+— see `src/tratrac/FIFTYONE.md`, which re-confirmed FiftyOne still fits on a 2026 check. CVAT
 remains genuinely unexamined.

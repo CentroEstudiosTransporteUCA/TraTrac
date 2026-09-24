@@ -75,10 +75,10 @@ Nothing here runs unless `tratrac-postprocess` or `tratrac-render` is separately
 | Stage | Why it's safely post-hoc | Detail |
 | --- | --- | --- |
 | Exclusion zone filtering | Pure point-in-polygon over recorded centroids | `src/tratrac/application/EXCLUSION_ZONES.md` |
-| World projection (single- and multi-homography both land as the same `homography` row kind, fitted by `tratrac-preprocess project`, applied by `tratrac-postprocess`) | A pure coordinate map over already-recorded measurements, needs no pixels | `src/tratrac/application/WORLD_PROJECTION.md`, `docs/roadmap/mvp3.md` |
+| World projection (single- and multi-homography both land as the same `homography` row kind, fitted by `tratrac-preprocess project`, applied by `tratrac-postprocess`) | A pure coordinate map over already-recorded measurements, needs no pixels | `src/tratrac/application/WORLD_PROJECTION.md` |
 | Export-time (TIMESTEP) decimation | Thins an otherwise-complete `.trj` | `src/tratrac/infrastructure/TIMESTEP_PRECISION.md` |
 | Rendering (+ `--violations`, `--transforms`) | Fully derivable from an already-finished `.trj` and a re-opened video file | `src/tratrac/infrastructure/export/VIDEO_EXPORT.md` |
-| Link ID / Lane ID assignment (shipped, `--link-zones`/`--lane-zones`) | Point-in-polygon over recorded centroids, same pattern as exclusion zones; a `.trj` without either flag just carries `0` | `src/tratrac/application/ROAD_GRAPH.md`, `docs/roadmap/road_topology.md` |
+| Link ID / Lane ID assignment (shipped, `--link-zones`/`--lane-zones`) | Point-in-polygon over recorded centroids, same pattern as exclusion zones; a `.trj` without either flag just carries `0` | `src/tratrac/application/ROAD_GRAPH.md` |
 
 **Placement followed as recommended, for two mostly-built stages:**
 

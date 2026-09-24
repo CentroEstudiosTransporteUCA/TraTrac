@@ -1,10 +1,9 @@
 # Ego-Motion Estimation: Keyframe-Anchored ORB (MVP1.9, intermediate)
 
-> **Status — ✅ Shipped** (always attempted by `tratrac-preprocess estimate`, a no-op when a
-> clip has no camera motion to correct — not a config toggle, see "Config Surface" below).
-> The MVP number is a capability ID, not
-> execution order — see the roadmap reconciliation in `docs/ROADMAP.md`. An intermediate
-> "keep if good enough" shortcut before MVP2's learned stabilizer + world projection.
+Always attempted by `tratrac-preprocess estimate`, a no-op when a clip has no camera motion to
+correct — not a config toggle, see "Config Surface" below. An intermediate
+"keep if good enough" shortcut before MVP2's learned stabilizer + world projection; the MVP
+number is a capability ID, not execution order.
 
 ---
 
@@ -17,7 +16,7 @@ sizes/speeds from GSD) and MVP2 (world projection), and is explicitly an
 estimator behind the `EgoMotionEstimator` port, quantify how much it improves
 trajectories on real footage, and keep it only if the gain justifies the cost. If
 not, the *port* survives as the seam MVP2 plugs the learned stabilizer into (see
-`docs/BACKLOG.md` item 1).
+the B3 SuperPoint+LightGlue issue in GitHub Issues).
 
 It is **not** world projection. Coordinates remain image-space and therefore still
 non-physical per the coordinate-semantics invariant (`src/tratrac/domain/ARCHITECTURE.md`).
@@ -109,7 +108,7 @@ of the frame is the vehicles we track. A stabilizer must estimate background mot
 
 Both are zero-new-dependency (`cv2` already present). `docs/TECH_STACK.md` /
 `src/tratrac/application/WORLD_PROJECTION.md` name **SuperPoint + LightGlue** as the eventual target; ORB is the
-intermediate, recorded as `docs/BACKLOG.md` item 1.
+intermediate, tracked as Group B3 in GitHub Issues.
 
 ---
 
@@ -317,7 +316,7 @@ consumers (`tratrac-render`) can map stabilized coordinates back onto the raw vi
 
 MVP2 keeps the `EgoMotionEstimator` port and replaces the adapter:
 
-- **Stabilizer upgrade** — ORB → SuperPoint + LightGlue (`docs/BACKLOG.md` item 1),
+- **Stabilizer upgrade** — ORB → SuperPoint + LightGlue (Group B3, GitHub Issues),
   if the ORB measurement shows it is needed.
 - **World projection** — a homography from the (now ego-motion-free) image plane to
   metric world coordinates, making SSAM positions physically meaningful and giving

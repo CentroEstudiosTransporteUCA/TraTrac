@@ -10,9 +10,11 @@ every step a port, so every step is timeable. It belongs to no MVP — it is
 observability plumbing, a sibling of progress reporting (`src/tratrac/application/PROGRESS_REPORTING.md`).
 (The set has churned with the architecture: `orient`/`export` left when kinematics and
 the `.trj` moved to the offline `tratrac-postprocess` — src/tratrac/application/SMOOTHING.md; `observe`, `ego_motion`,
-`stabilize`, `record` were added so the remaining loop is fully covered. The three
-stabilization-only steps — `observe`, `ego_motion`, `stabilize` — are blank on a
-non-stabilized run, where their collaborators are not wired.)
+`stabilize`, `record` were added so the remaining loop is fully covered. All steps are
+wrapped unconditionally, every run — there is no run-level toggle. The three
+stabilization-only steps — `observe`, `ego_motion`, `stabilize` — just report near-zero
+time on a run whose transforms file has no similarity rows, since `EgoMotionStabilizer`
+applying the identity transform is a fast no-op, not an unwired collaborator.)
 
 The difference from progress: progress is always-on and flows *through* the
 pipeline (the pipeline emits it). Timing is opt-in and wraps the *ports around*
@@ -72,9 +74,10 @@ telemetry POST wants (no buffering a whole frame before sending).
 - `CsvTimingSink` (`infrastructure/timing/csv.py`) is the first adapter: a
   **wide** CSV (`frame,detect,observe,ego_motion,stabilize,track,record`, one row per
   frame). It buffers a frame's step durations and flushes the row when the ordinal advances
-  (safe because a frame's records arrive consecutively); steps not wired for a run (the
-  stabilization-only three on a non-stabilized run) are blank. The last frame, and any
-  partial frame from a mid-step crash, flush on close.
+  (safe because a frame's records arrive consecutively); every column is populated on every
+  run — the stabilization-only three just report near-zero time when the transforms file has
+  no similarity rows. The last frame, and any partial frame from a mid-step crash, flush on
+  close.
 - Tomorrow's telemetry/socket sink is just another `TimingSink` — no pipeline,
   domain, or decorator change.
 
@@ -99,3 +102,24 @@ the bare collaborators run unwrapped.
 - `infrastructure/timing/decorators.py` — `StepStopwatch` + the `Timed*`
   decorators (read the clock = infrastructure).
 - `infrastructure/timing/csv.py` — `CsvTimingSink` (file I/O = infrastructure).
+
+---
+
+## Real-footage measurement (CPU baseline)
+
+A real 10-second window of a real intersection clip was run with `--timing-csv` on (CPU, the
+only runtime available when this was measured):
+
+| Step | Mean | Share of measured time |
+| --- | --- | --- |
+| `detect` (YOLOv8-VisDrone) | 114.2 ms/frame | 87.4% |
+| `track` (BoT-SORT) | 16.4 ms/frame | 12.6% |
+| `record` (Parquet write) | 0.02 ms/frame | ~0% |
+
+The timed steps summed to 98.3% of total wall time — decode + Python loop overhead is only
+~1.7% on this run. Inference (`detect`) dominates by nearly an order of magnitude over the next
+largest step; decode is not silently serialized behind anything on this codebase's actual
+per-frame loop shape. This is CPU-only evidence: swapping the detector onto a GPU would shrink
+`detect` by roughly an order of magnitude and could plausibly make decode relatively significant
+enough to matter — re-profile with `--timing-csv` once a GPU is available, before deciding
+whether a faster decoder or an async runtime is actually worth building.

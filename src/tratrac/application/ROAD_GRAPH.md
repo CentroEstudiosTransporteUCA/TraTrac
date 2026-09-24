@@ -1,17 +1,36 @@
 # Road-topology zones: Link ID, Lane ID, and Plane ID classification
 
-## Status
-
-Link ID and Lane ID shipped (GitHub Issues Groups C1/C2), Strategy A
-(hand-drawn polygons) of `docs/roadmap/road_topology.md`. Optional and off by default, applied
-**post-hoc** by `tratrac-postprocess` via `--link-zones`/`--lane-zones`. Plane ID's *zones and
-classification helper* also live here (Group C5), but its *consumer* is
+Link ID and Lane ID are sourced via **Strategy A: hand-drawn polygons**, authored once per
+camera setup and applied **post-hoc** by `tratrac-postprocess` via `--link-zones`/`--lane-zones`.
+Plane ID's *zones and classification helper* also live here, but its *consumer* is
 `tratrac-preprocess project`'s `_fit_per_plane` (`cli_preprocess.py`) — plane classification runs
 once, at **fit** time, to group calibration correspondences per plane; the resulting homography
 row simply embeds that plane's polygon as its `zone` field, so nothing downstream ever
 re-classifies by plane again (see `src/tratrac/application/WORLD_PROJECTION.md` and
 `src/tratrac/infrastructure/transform/TRANSFORM_SINK.md`'s "One file, one row model" for that
 story); this doc covers the shared zone/classification infrastructure the three fields build on.
+
+## Why this matters
+
+SSAM's `Link ID` and `Lane ID` fields (see `src/tratrac/infrastructure/export/SSAM_FORMAT.md`,
+VEHICLE record) require knowledge of the road network that does not fall out of detection or
+tracking alone. Without correct values, SSAM misclassifies Lane-Change conflicts as Rear-End (or
+vice versa) and aggregates per-link/per-lane analytics into a single bucket. Geometric conflict
+detection (TTC, PET) still works without these IDs — they're required for *classification* and
+*grouping*, not for *finding* conflicts.
+
+## Link vs. Lane vs. Plane — three orthogonal concepts
+
+- **Link** — a *directional* road segment between two decision points (intersections, ramps,
+  merges); an edge in the road graph, each direction its own link. "Main St eastbound between
+  Oak Ave and Elm St" is one link, the westbound counterpart a separate one.
+- **Lane** — a *lateral subdivision* of a link. A 3-lane road has lanes 1, 2, 3 all belonging to
+  the same link; lane changes happen within a link, not between links.
+- **Plane** — an *elevation surface* (ground, bridge, overpass), used only to pick which
+  homography a point projects through. Orthogonal to both of the above: a bridge plane can carry
+  many links (the highway plus its ramps), and a single link can span multiple planes (an
+  on-ramp going from ground to bridge). Plane assignment never yields a `link_id` — link
+  assignment is a separate, also polygon-based, classification.
 
 ## What this adds
 
@@ -21,8 +40,8 @@ reference_frame, polygon)`, `LaneZone(link_id, lane_id, reference_frame, polygon
 classify every surviving **observation**, stamped onto `VehicleState.link_id`/`lane_id` (the
 SSAM VEHICLE record fields); Plane classifies a **projector query point** at `to_world()` time
 instead — it's a purely internal homography-selection key, never written into `VehicleState`
-(`docs/roadmap/road_topology.md` covers what Link/Lane mean conceptually and why Plane is
-orthogonal to both: a bridge plane can carry many links, and a link can span multiple planes).
+(see "Link vs. Lane vs. Plane" above for why Plane is orthogonal to both: a bridge plane can
+carry many links, and a link can span multiple planes).
 
 ## Why per-observation, not per-track (unlike exclusion zones)
 
@@ -101,12 +120,18 @@ classification itself is plain point-in-polygon over the lane zones, independent
 separately-computed Link ID for the same point. `plane_zones` has no `link_id`/`lane_id`
 fields — it's a standalone label with no cross-referencing metadata.
 
-## Not done by this landing
+## Alternative sourcing strategies (not built)
 
-- **Strategies B/C** (`docs/roadmap/road_topology.md`) — trajectory-clustered or
-  externally-sourced (OSM/`.pth`) road geometry — remain unexplored; Strategy A (hand-drawn) is
-  what's shipped.
-- **Automatic/assisted authoring** (Group C4, GitHub Issues) is a separate,
-  already-shipped task, not this doc's concern — see `application/AUTO_CALIBRATION.md`. Its
-  repo-boundary question (does TraTrac ship only a correspondence/zone *proposal* capability,
-  with interactive confirm/adjust living in URBAn?) is resolved there: yes, proposal-only.
+Strategy A doesn't scale to ad-hoc scenes — it requires manual per-camera setup and breaks if
+the camera moves between recordings. Two alternatives, ranked by operational complexity, are
+tracked as future work (see GitHub Issues): **Strategy B** clusters observed centroid paths to
+discover lane/link geometry automatically (self-supervised, but less precise and fails on
+low-traffic scenes); **Strategy C** projects OpenStreetMap/GIS/Mapillary lane geometry into
+image coordinates via a georeferenced homography (highest accuracy, but needs real-world camera
+calibration and is operationally complex). Strategy A remains acceptable for production as long
+as scenes are pre-configured.
+
+Automatic/assisted *authoring* of Strategy A's polygons themselves (proposing calibration
+correspondences from visible road markings) is a separate, already-shipped concern — see
+`application/AUTO_CALIBRATION.md`. TraTrac ships only the proposal capability; interactive
+confirm/adjust lives in URBAn.

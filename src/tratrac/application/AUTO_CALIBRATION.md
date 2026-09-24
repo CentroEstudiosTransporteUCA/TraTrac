@@ -1,15 +1,13 @@
 # Automatic calibration: correspondence proposal from road geometry
 
-## Status
-
-Shipped, **scoped to proposal only** (GitHub Issues Group C4). The repo-boundary
-question the plan flagged as needing an explicit decision before this task could start —
-"does TraTrac ship only the correspondence-proposal capability, with interactive confirm/adjust
-living in URBAn?" — is resolved: **yes, proposal only.** `scripts/propose_calibration.py`
-detects candidate road-marking line segments on a still frame and writes their **image-side**
-coordinates in `calibration.json`'s schema, with `world` left `null` for a human (via URBAn, or
-hand-editing) to confirm and fill in. TraTrac does not attempt the interactive confirm/adjust
-step, and does not attempt to infer real-world coordinates automatically.
+Scoped to **proposal only** (GitHub Issues Group C4). The repo-boundary question this design
+had to resolve — "does TraTrac ship only the correspondence-proposal capability, with
+interactive confirm/adjust living in URBAn?" — resolves to: **yes, proposal only.**
+`scripts/propose_calibration.py` detects candidate road-marking line segments on a still frame
+and writes their **image-side** coordinates in `calibration.json`'s schema, with `world` left
+`null` for a human (via URBAn, or hand-editing) to confirm and fill in. TraTrac does not attempt
+the interactive confirm/adjust step, and does not attempt to infer real-world coordinates
+automatically.
 
 ## Why proposal-only, grounded in the cited literature
 
@@ -67,7 +65,7 @@ not worse than — the cited paper's own "plausible but geometrically imperfect"
 of automatic line-based calibration; it's exactly why the output is scoped as a proposal a human
 reviews, not a calibration TraTrac would use unattended.
 
-## Not done by this landing
+## Scope boundaries
 
 - **Parameter tuning is a starting point, not validated across sites.** Defaults were checked
   against one real frame from one intersection; a different lighting condition, marking

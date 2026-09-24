@@ -1,8 +1,7 @@
 # GSD Calibration: Metric Sizes and Speeds from Drone Metadata (MVP1.75)
 
-> **Status — ✅ Shipped.** The MVP number is a capability ID, not execution order — see the
-> roadmap reconciliation in `docs/ROADMAP.md`. Delivered before MVP1.5 as an independent
-> shortcut.
+Delivered before MVP1.5 as an independent shortcut — the MVP number is a capability ID, not
+execution order.
 
 ---
 
@@ -77,24 +76,26 @@ it varies per frame (see Limitations).
 
 ## Pipeline
 
+GSD calibration is not a step inside the perception run — it's resolved by a separate, earlier
+tool, `tratrac-preprocess estimate`, and handed to every downstream step as a row in the shared
+transforms file:
+
 ```text
 Video ─────┐
            ↓
-       Drone-Model Config ─→ GSD Calibration
-           ↓                       ↑
-       Altitude Source ────────────┘
-           ↓
-        YOLOv8-VisDrone
-           ↓
-        BoT-SORT
-           ↓
-        Orientation Estimator (now unit-aware)
-           ↓
-        SSAM .trj Export (Scale = GSD)
+       Drone-Model Config ─→ GSD Calibration ──→ scale row in transforms.jsonl
+           ↓                       ↑                         │
+       Altitude Source ────────────┘                         │
+                                                               ↓
+                                          tratrac: YOLOv8-VisDrone → BoT-SORT → track record
+                                                               ↓
+                                    tratrac-postprocess: Kalman/RTS smoother (unit-aware,
+                                    reads the scale row) → SSAM .trj Export (Scale = GSD)
 ```
 
-The pipeline difference from MVP1: one new "Calibration" step at the
-front, and the orientation estimator + exporter become unit-aware.
+The difference from MVP1: the transforms file carries a calibration the offline smoother and
+exporter (both in `tratrac-postprocess`) use to produce real units, instead of the `Scale = 1.0`
+placeholder MVP1 wrote.
 
 ---
 
@@ -111,38 +112,40 @@ front, and the orientation estimator + exporter become unit-aware.
 
 ### CLI surface
 
-Calibration is part of the persisted run config (`src/tratrac/application/CONFIG_DESIGN.md`):
-specify `[calibration]` in the TOML or pass the matching flags. Exactly one
-method — `meters_per_pixel`, or `drone_model` + an altitude source
-(`altitude_m` or an `srt` path).
+GSD calibration is not part of `tratrac`'s config at all — it's resolved once, upstream, by
+`tratrac-preprocess estimate`, and lives only as `scale` rows in the shared transforms file that
+`tratrac`'s `input.transforms_in` names. Exactly one calibration method — `--meters-per-pixel`,
+or `--drone-model` + an altitude source (`--altitude-m` or `--srt`):
 
 ```bash
 # Drone metadata via an SRT sidecar (explicit path; no auto-discovery)
-uv run tratrac VIDEO --out OUT --drone-model mavic_3 --srt VIDEO.SRT  # + other required flags
+uv run tratrac-preprocess estimate VIDEO --out transforms.jsonl --drone-model mavic_3 --srt VIDEO.SRT
 
 # Direct GSD override
-uv run tratrac VIDEO --out OUT --meters-per-pixel 0.05  # + other required flags
+uv run tratrac-preprocess estimate VIDEO --out transforms.jsonl --meters-per-pixel 0.05
 ```
 
-> Note: since the zero-defaults refactor (`src/tratrac/application/CONFIG_DESIGN.md`), all other
-> run parameters are mandatory too — the practical invocation is
-> `uv run tratrac --config run.toml` with these as overrides.
+See `CONFIG.md`'s "What isn't here anymore" section for why this moved out of `tratrac`'s TOML
+config, and `src/tratrac/infrastructure/transform/TRANSFORM_SINK.md` for the shared transforms
+file this writes into.
 
 ### Domain changes
 
 - `VehicleState.dimensions`, `velocity`, `acceleration` are populated in
-  **real units** (metres, m/s, m/s²) from this MVP onward. The orientation
-  estimator multiplies pixel-derived values by `meters_per_pixel` before
-  packing them into the state.
+  **real units** (metres, m/s, m/s²) from this MVP onward. `tratrac-postprocess`'s
+  Kalman/RTS smoother (`application/track_smoothing.py`'s `build_state`) multiplies
+  pixel-derived values by the transforms file's `scale` row before packing them into the state
+  — this now happens entirely offline, not during the perception run.
 - `VehicleState.centroid` stays in calibrated grid units (pixels). The
   exporter passes it through unchanged into the SSAM record's X / Y
   fields; SSAM readers recover real metres via `× Scale`.
 
 ### Exporter changes
 
-- Takes a required `scale` constructor argument; MVP1.75 supplies the
-  computed `meters_per_pixel`. (The old `scale=1.0` default was removed by the
-  zero-defaults refactor — see `src/tratrac/application/CONFIG_DESIGN.md`.)
+- `SsamTrjExporter` (in `tratrac-postprocess`, the only `.trj` path) takes a required `scale`
+  constructor argument; the transforms file's resolved `meters_per_pixel` supplies it. (The old
+  `scale=1.0` default was removed by the zero-defaults refactor — see
+  `src/tratrac/application/CONFIG_DESIGN.md`.)
 - No struct changes; no on-disk format changes.
 
 ### Worked example
@@ -160,25 +163,14 @@ All physically meaningful with zero homography work.
 
 ---
 
-## Output Quality
+## What this delivers and what it doesn't
 
-### Available
-
-- Real metric `Length`, `Width`, `Speed`, `Acceleration` in `.trj`
-- Valid `DIMENSIONS.Scale` so SSAM coordinate recovery works
-- All MVP1 capabilities (tracks, orientation, SSAM `.trj` structure)
-- **Scientifically valid TTC and PET conflict metrics for hovering nadir
-  drone clips**
-
-### Missing (deferred to MVP2)
-
-- Stabilisation: any drone or camera motion shows up as fake vehicle
-  velocity in the trajectories
-- Non-nadir perspective correction: distance-per-pixel varies across the
-  frame when the gimbal isn't straight down
-- Per-frame altitude handling for vertically-moving drones (see below)
-
----
+Real metric `Length`, `Width`, `Speed`, `Acceleration` in `.trj`, a valid `DIMENSIONS.Scale` so
+SSAM coordinate recovery works, and scientifically valid TTC/PET conflict metrics — but only for
+a hovering nadir drone clip. What this shortcut deliberately doesn't cover — stabilization (any
+drone or camera motion shows up as fake vehicle velocity), non-nadir perspective correction
+(distance-per-pixel varies across the frame when the gimbal isn't straight down), and per-frame
+altitude handling for vertically-moving drones — is MVP2's job, via full world projection.
 
 ## Limitations
 
@@ -195,14 +187,10 @@ over:
 
 ---
 
-## Acceptance criteria
-
-This MVP is done when:
+## Verification
 
 - A drone clip with a known `--drone-model` produces a `.trj` whose
   `Length` field matches a hand-measured vehicle to within ~10%.
 - `Speed` for a vehicle traveling at a known speed matches to within ~10%.
 - `DIMENSIONS.Scale` in the dump-trj output equals the GSD value.
-- Existing MVP1 unit tests continue to pass (the domain change is
-  backward-compatible because `meters_per_pixel = 1.0` reproduces MVP1
-  behaviour).
+- The domain change is backward-compatible: `meters_per_pixel = 1.0` reproduces MVP1 behaviour.

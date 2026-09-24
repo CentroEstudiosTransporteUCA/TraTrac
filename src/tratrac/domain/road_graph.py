@@ -4,12 +4,11 @@ Mirrors ``domain/exclusion.py``'s shape (a set of polygons, each authored on a
 *reference frame*) but carries a label instead of a uniform drop decision — a
 vehicle/point inside a zone is classified into that zone's label rather than
 excluded. Link/Lane feed the SSAM ``VehicleState.link_id``/``lane_id`` fields
-(``domain/vehicle.py``); Plane (Group C5, GitHub Issues,
-``docs/roadmap/mvp3.md``) is a purely internal grouping key — it selects which
-homography a `MultiPlaneTransform` applies and is never written into
+(``domain/vehicle.py``); Plane (Group C5, GitHub Issues) is a purely internal grouping key —
+it selects which homography a `MultiPlaneTransform` applies and is never written into
 `VehicleState` (elevation, not road-segment identity; a bridge plane can carry
 many links, and a single link can span multiple planes on a ramp). See
-``docs/roadmap/road_topology.md`` for the Link/Lane sourcing strategy.
+``application/ROAD_GRAPH.md`` for the Link/Lane sourcing strategy.
 """
 
 from __future__ import annotations

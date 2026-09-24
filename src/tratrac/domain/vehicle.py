@@ -18,7 +18,7 @@ class VehicleState:
 
 	``link_id`` and ``lane_id`` default to 0 (the SSAM "unknown" sentinel). The
 	application layer populates them when a road graph is available — see
-	``docs/roadmap/road_topology.md`` for sourcing strategy per MVP. ``lane_id`` is
+	``application/ROAD_GRAPH.md`` for the sourcing strategy. ``lane_id`` is
 	a Byte in the SSAM record, so its range is validated here.
 	"""
 

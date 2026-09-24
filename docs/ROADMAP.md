@@ -1,4 +1,4 @@
-# Roadmap: System Overview & MVP Status
+# Roadmap: System Overview & Core Philosophy
 
 ---
 
@@ -43,45 +43,23 @@ NOT:
 
 ---
 
-## Roadmap: Capability IDs vs Execution Order
+## The Capability Ladder
 
-**The MVP numbers are capability IDs, not a schedule.** They name a *dependency ladder*
-(each capability assumes the ones below it), but the work has deliberately **not** followed
-that order: cheap shortcuts were slotted in, two later-MVP foundations were pulled forward,
-one milestone was skipped, and a whole supporting layer was built outside the numbering. The
-per-MVP files carry a **Status** banner; this is the single reconciliation of plan vs reality.
-
-**The capability ladder (the planned dependency order):**
+**The MVP numbers are capability IDs, not a schedule.** They name a *dependency ladder* (each
+capability assumes the ones below it):
 
 ```
 1 → 1.5 → 1.75 → 1.9 → 2 → 3 → 4 → 5 → 6 → 7
 ```
 
-**Execution status (what's actually been done):**
-
-| MVP | Capability | Status |
-| --- | --- | --- |
-| 1 | Detection + tracking + image-space SSAM `.trj` | ✅ **Shipped** — with the YOLOv8-VisDrone *emergency* detector, not the originally planned RT-DETR |
-| 1.5 | Fine-tune an aerial-robust detector, remove the YOLOv8 emergency adapter | ❌ **Skipped** (leapfrogged by 1.75 + 1.9) — **replanned**: target is now a YOLO-OBB fine-tune, not RT-DETR (see `src/tratrac/infrastructure/detection/DETECTOR_CHOICE.md`) |
-| 1.75 | Metric sizes/speeds from drone GSD | ✅ **Shipped** |
-| 1.9 | ORB ego-motion stabilization | ✅ **Shipped** — always attempted by `tratrac-preprocess estimate`, a no-op when a clip has no camera motion to correct; not a config toggle |
-| 2 | Single-homography **world projection** | 🟡 **Partially shipped** — post-hoc single-homography projection (Approach A) *and* the multi-anchor projector (`PerAnchorTransform`, Group C3) live in `tratrac-postprocess --calibration`; SSAM positions can now be metric world coords for wide-swept, many-anchor scenes too. Deferred: SuperPoint+LightGlue stabilization (ORB still does ego-motion). See `src/tratrac/application/WORLD_PROJECTION.md`. |
-| 3 | Multi-homography + Link ID | 🟡 **Partially shipped** — Link ID (Strategy A hand-drawn polygons, Group C1) and multi-homography plane-assignment projection (`MultiPlaneTransform`, Group C5) have both landed in `tratrac-postprocess` (`--link-zones`/`--plane-zones`); automatic calibration-point proposal (Group C4, `scripts/propose_calibration.py`, `application/AUTO_CALIBRATION.md`) has also landed, scoped to proposal-only — its repo-boundary question with URBAn is resolved (URBAn owns interactive confirm/adjust). Still depends on MVP1.5's OBB detector for the full pipeline diagram in `docs/roadmap/mvp3.md`. |
-| 4 | Segmentation-derived occupancy geometry (target: SAM 3, not SAM2); **dual export begins** | 🟡 **Partially pulled forward** — the dual-export "B-first" architecture is already core; the footprint sidecar storage format + `tratrac-postprocess --footprint` are also done (`application/FOOTPRINT.md`), reusing Group A's OBB dimension slot; only the segmentation stage that actually runs SAM 3 (GPU-blocked) remains, and its scope is narrowed now that MVP1.5's OBB detector already reports orientation (see `docs/roadmap/mvp4.md`) |
-| 5 | Long-term identity persistence (target: DINOv3 ReID + motion-plausibility gating, not FastReID) | 🟡 **Partially shipped** — the merge-decision + apply stages landed (`application/reid_merge.py`, `tratrac-postprocess --reid-merge`); the DINOv3 embed stage needs a GPU + real footage and hasn't (see `docs/roadmap/mvp5.md`) |
-| 6 | Lane graph + Lane ID | 🟡 **Partially shipped** — Lane ID (Strategy A hand-drawn polygons, Group C2) landed in `tratrac-postprocess --lane-zones`, mirroring Link ID. Lane *graph* sourcing (Strategies B/C, `docs/roadmap/road_topology.md`) and lane-change conflict classification (a downstream SSAM-reader concern) are unstarted. |
-| 7 | **Parquet storage** + FiftyOne + Docker | 🟡 **Partially pulled forward** — Parquet is the canonical record; FiftyOne export (`cli_fiftyone.py`, `tratrac-fiftyone`, an optional `fiftyone` extra) has landed and is **verified end-to-end** against real footage — a real 27,319-frame dataset built from `cruce.mp4`'s track record + `.trj` (`docs/roadmap/mvp7.md`). A tag-verified multi-stage `Dockerfile` has also landed but isn't build-tested (no `docker` in the environment it was written in). Async pipeline still deliberately unbuilt: a real `--timing-csv` profile against real footage (CPU) found detection at 87% of per-frame time and decode/loop overhead at only ~1.7% — decode is not a hidden bottleneck on this codebase's loop shape, though the same profile should be re-run once a GPU shifts the balance (Group A1) before designing one |
-
-**Pulled forward, out of ladder order:** Parquet storage (7) and the dual-export "B-first"
-inversion (4) — both landed early because the canonical *track record* needed them now.
-
-**The supporting layer (built outside the MVP numbering):** progress reporting (14), step
-timing (15), `.trj` validation (16), time window (17), timestep precision (18), config file
-(19), post-hoc render (20), exclusion zones (21), Kalman/RTS smoothing (22), plus the
-`docs/BACKLOG.md` backlog. These are cross-cutting capabilities behind stable ports, not
-rungs on the capability ladder.
-
-This section is a **historical reconciliation** — the forward order (2 → 7) is unchanged.
+Execution has never followed this order strictly — cheap shortcuts get slotted in, later-MVP
+foundations get pulled forward when a capability is needed early, and a whole supporting layer
+(progress reporting, step timing, `.trj` validation, time window, timestep precision, config
+file, post-hoc render, exclusion zones, Kalman/RTS smoothing) was built entirely outside the
+numbering. That's expected: the ladder names *what depends on what*, not a commitment to build
+in that order. Which MVP a given capability belongs to, and its current status, is what each
+capability's own design doc and its GitHub Issues describe — see `docs/README.md`'s index and
+the org's [Traffic Analysis Pipeline project board](https://github.com/orgs/CentroEstudiosTransporteUCA/projects/1).
 
 ---
 

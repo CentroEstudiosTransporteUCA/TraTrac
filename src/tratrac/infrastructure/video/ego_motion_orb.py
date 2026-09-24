@@ -26,7 +26,7 @@ operator-authored background zones (``BackgroundZoneMaskSource``, no detector
 needed, used by `tratrac-preprocess` — see "Detector-free ego-motion" in
 src/tratrac/infrastructure/video/EGO_MOTION.md); `tratrac` itself never
 constructs this estimator live, only `tratrac-preprocess` does. SuperPoint+LightGlue
-is the eventual estimator upgrade (``docs/BACKLOG.md`` item 1).
+is the eventual estimator upgrade (Group B3, GitHub Issues).
 """
 
 from __future__ import annotations

@@ -1,13 +1,12 @@
 # Detector Choice: YOLOv8-VisDrone AABB (MVP1 emergency) vs YOLO-OBB (MVP1.5, target)
 
-> **Status — MVP1 ✅ Shipped, MVP1.5 ❌ Open, replanned.** The MVP number is a capability ID, not
-> execution order — see the roadmap reconciliation in `docs/ROADMAP.md`. Detection shipped with
-> the YOLOv8-VisDrone *emergency* axis-aligned-box adapter. **The original MVP1.5 plan (fine-tune
-> RT-DETR) was superseded** after research found RT-DETR doesn't fit this project's nadir-only use
-> case and doesn't support oriented bounding boxes (OBB) — see `docs/TECH_STACK.md`'s Detection
-> section for the full comparison and sources. The replanned MVP1.5, detailed below, fine-tunes a
-> **YOLO-OBB** model instead — same detector *family* as the MVP1 emergency adapter, upgraded to
-> report each vehicle's orientation directly instead of via the downstream EMA-heading hack.
+Detection runs on the YOLOv8-VisDrone *emergency* axis-aligned-box adapter. **The original
+MVP1.5 plan (fine-tune RT-DETR) was superseded** after research found RT-DETR doesn't fit this
+project's nadir-only use case and doesn't support oriented bounding boxes (OBB) — see
+`docs/TECH_STACK.md`'s Detection section for the full comparison and sources. The replanned
+MVP1.5, detailed below, fine-tunes a **YOLO-OBB** model instead — same detector *family* as the
+MVP1 emergency adapter, upgraded to report each vehicle's orientation directly instead of via
+the downstream EMA-heading hack.
 
 ---
 
@@ -43,8 +42,8 @@ COCO-pretrained RT-DETR-R18 misclassified aerial cars as `bird` and `traffic lig
 timebox to fine-tune RT-DETR on aerial data, so a community YOLOv8 checkpoint
 trained on VisDrone (`Mahadih534/YoloV8-VisDrone` on HuggingFace) was wired in as
 a parallel `Detector` adapter, defaulted in the CLI. RT-DETR adapter coexists
-unchanged. **That RT-DETR plan has since been superseded** (see the status banner
-above and `docs/TECH_STACK.md`); MVP1.5's replacement is a YOLO-OBB fine-tune, not
+unchanged. **That RT-DETR plan has since been superseded** (see `docs/TECH_STACK.md`);
+MVP1.5's replacement is a YOLO-OBB fine-tune, not
 a restoration of RT-DETR. The YOLOv8-VisDrone axis-aligned adapter is still
 contained in a single file and one CLI enum value, so its removal in MVP1.5
 remains mechanical once the OBB adapter is proven:
@@ -75,22 +74,10 @@ SSAM .trj Export
 
 ## Output Quality
 
-### Available
-
-- Vehicle IDs
-- Frame-by-frame positions
-- Approximate front/rear points
-- Approximate dimensions
-- Syntactically valid SSAM
-
----
-
-### Missing
-
-- Physically meaningful coordinates
-- Multi-plane geometry
-- Precise occupancy
-- Long-term identity persistence
+Vehicle IDs, frame-by-frame positions, approximate front/rear points and dimensions, and a
+syntactically valid SSAM file. What this stage alone doesn't provide — physically meaningful
+coordinates, multi-plane geometry, precise occupancy, long-term identity persistence — is later
+MVPs' job (MVP2/MVP3/MVP4/MVP5 respectively).
 
 ---
 
@@ -125,7 +112,7 @@ the homography and real metric coordinates.
 
 ## Link / Lane IDs
 
-See `docs/roadmap/road_topology.md` for the full sourcing plan.
+See `application/ROAD_GRAPH.md` for the full sourcing plan.
 
 - **Link ID** — hardcoded `0`. No road network metadata exists at MVP1.
 - **Lane ID** — hardcoded `0`. No lane assignment.
@@ -138,18 +125,12 @@ them — the exporter does not change.
 
 # MVP 1.5 — YOLO-OBB fine-tune, oriented detection replaces the axis-aligned emergency adapter
 
-> **Status — ❌ Skipped (open), replanned.** The MVP number is a capability ID, not execution
-> order — see the roadmap reconciliation in `docs/ROADMAP.md`. Leapfrogged by 1.75 + 1.9; this is
-> the open detection-quality upgrade. **This plan replaces an earlier one that targeted a from-scratch
-> RT-DETR fine-tune** — see "Why this replan happened" below and `docs/TECH_STACK.md`'s Detection
-> section for the full comparison and sources.
-
-## Status
-
-**Not started.** MVP1.75 (metric calibration, `src/tratrac/calibration/GSD_CALIBRATION.md`) was
-shipped first as an independent shortcut, leapfrogging this milestone. MVP1.5
-remains the open detection-quality upgrade. It is numbered before 1.75 because
-that is its place in the *quality* roadmap, not the order it was delivered.
+MVP1.75 (metric calibration, `src/tratrac/calibration/GSD_CALIBRATION.md`) was delivered first
+as an independent shortcut, leapfrogging this milestone — it's numbered before 1.75 because that
+is its place in the *quality* dependency ladder, not the order work happened in. **This plan
+replaces an earlier one that targeted a from-scratch RT-DETR fine-tune** — see "Why this replan
+happened" below and `docs/TECH_STACK.md`'s Detection section for the full comparison and
+sources.
 
 ## Goal
 
@@ -239,7 +220,7 @@ The milestone decomposes into parts of very different character. **They must
 land in this order** — the YOLOv8 scaffolding is the only working detector
 until the OBB adapter is proven, so removing it first would leave no detector.
 
-### Part 0 — Restore the eval tool ✅ Done
+### Part 0 — The eval tool
 
 `scripts/probe_detector.py` is restored and generalized beyond its original
 RT-DETR-only form: `--backend rt_detr` keeps the original HuggingFace RT-DETR
@@ -291,7 +272,7 @@ a complete OBB training CLI/API (`yolo obb train ...` / `YOLO(...).train(...)`);
 > The fine-tuning + eval workflow is not yet designed. Treat its design as a
 > sub-task of this MVP; do not assume a training script exists.
 
-### Part B — Build the YOLO-OBB adapter and class mapping ✅ Done (code); checkpoint still pending
+### Part B — The YOLO-OBB adapter and class mapping (code built; checkpoint still needed)
 
 `infrastructure/detection/yolo_obb.py` wraps `ultralytics`'s OBB task
 (`result.obb`, distinct from `result.boxes`) behind the `Detector` port,
@@ -303,8 +284,8 @@ order isn't guaranteed stable across training runs). Wired into
 `_build_detector` (Group A9); `BoxmotBotSortTracker` takes the matching
 `is_obb=True` when this detector is selected (Group A5).
 
-**Still open:** no fine-tuned checkpoint exists (Part A below, blocked on a
-GPU + the UAV-OBB dataset), so `yolo_obb` is not the default detector and the
+No fine-tuned checkpoint exists yet (Part A below needs a GPU + the UAV-OBB
+dataset), so `yolo_obb` is not the default detector and the
 adapter's class-mapping/angle-convention assumptions are unverified against
 real UAV-OBB-trained output — see "Open questions" below.
 
@@ -335,30 +316,19 @@ set:
 - Docs — update `CLAUDE.md` (repository status, roadmap, dependency notes) and
   this file's "MVP 1" section; check `tratrac.example.toml` for yolov8 references.
 
-## Output Quality
+## What this changes and what it doesn't
 
-### Added
+What it adds: nadir-matched, aerial-robust detection, and per-vehicle orientation from the
+detector itself instead of an EMA heuristic. What it leaves unchanged: the tracking algorithm
+(still BoT-SORT, IoU-only appearance branch — ReID is MVP5), coordinate semantics and metric
+calibration (MVP1.75), SSAM `.trj` structure and the export contract, and the AGPL
+`ultralytics` dependency (see "Why this replan happened" above). What it doesn't provide, by
+design — later MVPs' job: world-space coordinates/stabilisation (MVP2, see
+`application/WORLD_PROJECTION.md`) and long-term identity persistence/ReID (MVP5).
 
-- Nadir-matched, aerial-robust detection.
-- Per-vehicle orientation from the detector itself, not an EMA heuristic.
+## Verification
 
-### Unchanged
-
-- Tracking algorithm (still BoT-SORT, IoU-only appearance branch — ReID is MVP5).
-- Coordinate semantics and metric calibration (MVP1.75).
-- SSAM `.trj` structure and the export contract.
-- The AGPL `ultralytics` dependency stays (see "Why this replan happened" above).
-
-### Still missing (later MVPs)
-
-- World-space coordinates / stabilisation (MVP2, partially shipped — see `application/WORLD_PROJECTION.md`).
-- Long-term identity persistence / ReID (MVP5).
-
-## Acceptance criteria
-
-This MVP is done when:
-
-- `scripts/probe_detector.py` exists again and confirms the fine-tuned
+- `scripts/probe_detector.py` confirms the fine-tuned
   YOLO-OBB checkpoint **measurably outperforms** the YOLOv8-VisDrone axis-aligned
   baseline, corroborated by `scripts/validate_trj.py` end-to-end compliance.
 - YOLO-OBB is the default detector, its adapter maps the fine-tuned model's
