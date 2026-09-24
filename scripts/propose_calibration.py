@@ -25,6 +25,45 @@ metric coordinates — the interactive step this script deliberately does not at
 Standalone (stdlib + cv2 + numpy only, no ``tratrac`` package import) per the ``scripts/``
 convention — this only needs classical image processing, no domain types.
 
+How it works: **Canny edge detection** + a **probabilistic Hough transform**
+(``cv2.HoughLinesP``) over the still frame finds every fairly-straight edge, most of which
+are *not* road markings (shadows, curbs, vehicle bodies, building edges, sidewalk pavers). A
+**brightness + local-contrast filter** narrows that down to segments that actually look like a
+painted marking: bright (``--min-brightness``, road paint is white/yellow) *and* meaningfully
+brighter than the surface sampled a few pixels perpendicular to the line on either side
+(``--min-contrast``/``--contrast-offset``). Brightness alone isn't enough — it also passes
+uniformly light surfaces (sidewalks, concrete plazas, rooftops) with no real photometric edge;
+requiring *local* contrast against the surrounding surface is what distinguishes "a painted
+line on darker asphalt" from "a bright area." Surviving segments' endpoints become the
+candidate correspondences plus the optional annotated overlay.
+
+Validated against real footage: run against a real nadir intersection frame (1920x1080),
+4,286 raw Hough segments -> 976 pass a brightness-only filter (too permissive — catches
+sidewalks, plazas, rooftops) -> **32 pass brightness + local contrast**, visually confirmed
+(overlay review) to correctly land on real crosswalk stripes, a lane divider line, and a road
+border, with imperfect recall (some crosswalk stripes and one far-side crossing missed) and a
+couple of false positives (a vehicle roofline, a shadow edge). This imperfect-but-genuinely-
+informative result matches the cited paper's own "plausible but geometrically imperfect"
+characterization of automatic line-based calibration — exactly why the output is scoped as a
+proposal a human reviews, not a calibration TraTrac would use unattended.
+
+Scope boundaries:
+
+- Parameter tuning is a starting point, not validated across sites. Defaults were checked
+  against one real frame from one intersection; different lighting, marking condition, or
+  camera altitude would likely need different ``--canny-*``/``--min-brightness``/
+  ``--min-contrast`` values. No sweep or cross-site validation was done.
+- No semantic labeling of candidates (which marking is which) — Canny + Hough finds edges, not
+  semantics, and a wrong semantic guess would mislead a reviewer worse than an unlabeled
+  candidate would.
+- No automatic world-coordinate assignment, by design, per the cited evidence above.
+- No integration with ``tratrac-postprocess`` — this is a standalone pre-processing step whose
+  output (after human review/completion) becomes an ordinary ``calibration.json`` for the
+  already-shipped ``--calibration`` flag; no CLI flag was added to consume a "proposal" file
+  directly, since it isn't usable until a human has filled in ``world`` anyway.
+- The interactive confirm/adjust UI is explicitly out of scope per the resolved repo-boundary
+  decision — that's URBAn's job.
+
 Usage:
 	uv run python scripts/propose_calibration.py FRAME.png --out proposal.json
 		[--overlay overlay.png] [--canny-low N] [--canny-high N]
@@ -124,7 +163,7 @@ def main() -> int:
 		"note": "PROPOSAL ONLY — image-side candidates from automatic line detection "
 		"(scripts/propose_calibration.py); world coordinates are not filled in and every "
 		"point needs human confirmation before use. See src/tratrac/application/"
-		"AUTO_CALIBRATION.md.",
+		"scripts/propose_calibration.py's module docstring.",
 		"source_frame": str(args.frame),
 		"correspondences": [
 			{

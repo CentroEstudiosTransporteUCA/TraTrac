@@ -84,7 +84,7 @@ MVPs' job (MVP2/MVP3/MVP4/MVP5 respectively).
 ## Output Format
 
 MVP1 emits binary SSAM `.trj` v1.04
-(see `src/tratrac/infrastructure/export/SSAM_FORMAT.md` for the byte-level spec). Concrete MVP1 conventions:
+(see `infrastructure/export/ssam_trj.py`'s module docstring for the byte-level spec). Concrete MVP1 conventions:
 
 - Endianness `L`, Units Metric, Scale 1.0.
 - DIMENSIONS bounds = (0, 0, image_width, image_height).
@@ -101,7 +101,7 @@ the homography and real metric coordinates.
 
 > **Note (MVP1.75+ / zero-defaults):** the Scale 1.0 pixels-as-metres mode above
 > is no longer a default *anywhere* — the zero-defaults refactor
-> (`src/tratrac/application/CONFIG_DESIGN.md`) removed the `scale=1.0` / `meters_per_pixel=1.0`
+> (`application/config.py`'s module docstring) removed the `scale=1.0` / `meters_per_pixel=1.0`
 > library fallback. The `tratrac` CLI requires explicit calibration
 > (`meters_per_pixel`, or `drone_model` + `altitude_m`/`srt`) and errors out
 > otherwise. To deliberately produce pixel-space output, construct the
@@ -194,7 +194,7 @@ Video
     ↓
 YOLO-OBB (fine-tuned, oriented boxes)   ← was: YOLOv8-VisDrone axis-aligned (emergency)
     ↓
-BoT-SORT (OBB-aware tracking — boxmot supports this natively, see TRACKER_CHOICE.md)
+BoT-SORT (OBB-aware tracking — boxmot supports this natively, see infrastructure/tracking/boxmot_bot_sort.py's module docstring)
     ↓
 Orientation from detected angle (replaces/supplements the EMA heading estimator)
     ↓
@@ -211,7 +211,7 @@ port:
   where the actual payoff is, so it should be designed properly rather than
   bolted on.
 - Tracking: `boxmot` natively supports OBB tracking (confirmed, not assumed —
-  see `TRACKER_CHOICE.md`), so the oriented box can survive into the track
+  see `infrastructure/tracking/boxmot_bot_sort.py`'s module docstring), so the oriented box can survive into the track
   rather than being collapsed to an axis-aligned box first.
 
 ## Work breakdown
@@ -292,7 +292,7 @@ real UAV-OBB-trained output — see "Open questions" below.
 ### Part C — Remove the YOLOv8 emergency scaffolding (mechanical; do last)
 
 "MVP 1" above lists three steps; the code has **more sites** because that
-note predates the zero-defaults config refactor (`src/tratrac/application/CONFIG_DESIGN.md`). Full
+note predates the zero-defaults config refactor (`application/config.py`'s module docstring). Full
 set:
 
 - **Delete** `src/tratrac/infrastructure/detection/yolov8_visdrone.py`.
@@ -305,7 +305,7 @@ set:
   `YOLOV8_VISDRONE`** when unset. Post-removal this must default to the new
   OBB choice — or, better, be reconsidered, since a silent detector default
   sits oddly against the project's zero-defaults stance
-  (`src/tratrac/application/CONFIG_DESIGN.md`). Decide explicitly.
+  (`application/config.py`'s module docstring). Decide explicitly.
 - `application/config.py` — the `DetectorConfig.filename` field exists only for
   the YOLOv8 adapter (`detector.filename`, "yolov8_visdrone only"). Decide
   whether to drop it or repurpose it for the OBB checkpoint.

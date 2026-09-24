@@ -96,7 +96,8 @@ class Transform2D:
 	"""A 2D affine transform, stored as the six coefficients of a 2x3 matrix.
 
 	Maps a point ``(x, y)`` to ``(a·x + b·y + tx, c·x + d·y + ty)``. Coordinate-frame
-	agnostic like the other geometry types. Used (MVP1.9, see ``src/tratrac/infrastructure/video/EGO_MOTION.md``)
+	agnostic like the other geometry types. Used (MVP1.9, see
+	``infrastructure/video/ego_motion_orb.py``'s module docstring)
 	to carry the camera ego-motion estimated per frame: the transform mapping a
 	frame's pixels into a fixed stabilization reference frame. The estimator fits a
 	4-DOF similarity (translation + rotation + uniform scale); the storage is the

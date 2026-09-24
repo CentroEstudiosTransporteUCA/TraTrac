@@ -1,6 +1,6 @@
 # The Unified Transform File (`TransformSink`, `TransformTable`)
 
-> Split out of `src/tratrac/infrastructure/video/EGO_MOTION.md` (MVP1.9) — read that doc
+> Split out of `infrastructure/video/ego_motion_orb.py`'s module docstring (MVP1.9) — read that doc
 > first for the ego-motion estimator this file records the output of.
 
 When stabilization is on, the `.trj` carries positions in the **global** frame, not
@@ -12,7 +12,7 @@ exist only in memory inside `OrbEgoMotionEstimator` during a run.
 
 The fix persists them as a file so the same global→raw inverse can be applied
 afterwards. There is **one consistent global space** (the keyframe chain is
-continuous — see `EGO_MOTION.md`), so the whole clip's coordinate↔pixel map is a
+continuous — see `infrastructure/video/ego_motion_orb.py`'s module docstring), so the whole clip's coordinate↔pixel map is a
 *table*: one row per frame of the 6 similarity coefficients. It is **not** a
 single static transform — the camera pose changes every frame. GSD scale and a
 world-projection homography are rows in this **same** file too — see "One file,
@@ -70,7 +70,7 @@ see `src/tratrac/application/EXCLUSION_ZONES.md`).
 
 Unifying the *representation* did not change *when* each kind gets built:
 ego-motion and scale are both resolved during `tratrac-preprocess estimate`'s
-live pass (ego-motion because masking needs a live frame — see `EGO_MOTION.md`;
+live pass (ego-motion because masking needs a live frame — see `infrastructure/video/ego_motion_orb.py`'s module docstring;
 scale because that's simply where the tool's `[calibration]`-equivalent CLI
 flags live now), and world-projection stays a post-hoc second step
 (`tratrac-preprocess project`, fitting from an operator-authored

@@ -55,7 +55,7 @@ class TrajectoryPipeline:
 		# The run's primary output: raw tracked measurements per frame. The pipeline
 		# owns its lifecycle (as it used to own the exporter's).
 		self._sink = sink
-		# Coordinate stabilization (MVP1.9, src/tratrac/infrastructure/video/EGO_MOTION.md): when present, each
+		# Coordinate stabilization (MVP1.9, see ego_motion_orb.py's module docstring): when present, each
 		# frame's detections are mapped into the keyframe-anchored global frame BEFORE
 		# tracking, so detection/tracking run on the raw, full-resolution frame (no
 		# black-border cropping) while trajectories stay free of drone ego-motion.

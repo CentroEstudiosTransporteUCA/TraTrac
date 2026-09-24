@@ -4,7 +4,7 @@
 Two subcommands, one file, one owner: ``tratrac`` and ``tratrac-postprocess``
 never estimate ego-motion, resolve GSD scale, or fit a world-projection
 homography themselves — they only ever read rows this tool wrote. See
-"Detector-free ego-motion" in src/tratrac/infrastructure/video/EGO_MOTION.md.
+"Detector-free ego-motion" in infrastructure/video/ego_motion_orb.py's module docstring.
 
 ``estimate`` (mandatory before every ``tratrac`` run, even a static camera):
 walks VIDEO once with masked ORB + RANSAC (only if ``--background-zones`` is
@@ -92,7 +92,7 @@ def estimate(
 			dir_okay=False,
 			help="Operator-authored background_zones.json (an external tool draws these on "
 			"the video, same role as calibration.json/zones.json today — see "
-			"src/tratrac/infrastructure/video/EGO_MOTION.md). Omit for a static camera: no "
+			"infrastructure/video/ego_motion_orb.py's module docstring). Omit for a static camera: no "
 			"ego-motion rows are written, only the per-frame scale rows.",
 		),
 	] = None,

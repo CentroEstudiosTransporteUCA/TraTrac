@@ -3,7 +3,7 @@
 An operator-authored (external tool, out of scope for this repo) set of pixel
 polygons marking "use this region's features for ego-motion", so
 `tratrac-preprocess` never needs to run a detector at all. See
-src/tratrac/infrastructure/video/EGO_MOTION.md's "Detector-free ego-motion" section.
+infrastructure/video/ego_motion_orb.py's module docstring's "Detector-free ego-motion" section.
 
 Structurally identical to `domain/exclusion.py`'s `ExclusionZone`/`ExclusionZones`
 (a `reference_frame` + `Polygon`) but kept as its own type since the *intent*

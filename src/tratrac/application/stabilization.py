@@ -1,6 +1,7 @@
 """Coordinate stabilization: map a raw-frame detection into the stabilized frame.
 
-MVP1.9 stabilizes *coordinates*, not pixels (see src/tratrac/infrastructure/video/EGO_MOTION.md). The
+MVP1.9 stabilizes *coordinates*, not pixels (see
+``infrastructure/video/ego_motion_orb.py``'s module docstring). The
 detector and tracker work on the raw, full-resolution frame — so no car is ever
 cropped into a black border — and each detection's box is then transformed into
 the keyframe-anchored global frame before tracking, so the exported trajectory is

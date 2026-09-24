@@ -41,7 +41,7 @@ class EgoMotionEstimator(Protocol):
 	frame (anchored to the first frame). The first call returns the identity.
 	Implementations may match against a keyframe anchor and compose anchor poses
 	internally. The pipeline applies the returned transform to detections (not
-	pixels). See src/tratrac/infrastructure/video/EGO_MOTION.md.
+	pixels). See infrastructure/video/ego_motion_orb.py's module docstring.
 	"""
 
 	def estimate(self, frame: Frame) -> Transform2D: ...
@@ -71,7 +71,8 @@ class DetectionObserver(Protocol):
 	reuse detections the pipeline already computed instead of detecting again. The
 	masked-ORB ego-motion path uses it: the stabilizer keeps the latest batch and,
 	on the next frame, masks those vehicles out of ORB feature extraction so the
-	moving foreground cannot bias the ego-motion fit. See src/tratrac/infrastructure/video/EGO_MOTION.md.
+	moving foreground cannot bias the ego-motion fit. See
+	``infrastructure/video/ego_motion_orb.py``'s module docstring.
 	"""
 
 	def observe(self, detections: list[Detection]) -> None: ...
@@ -105,7 +106,7 @@ class CoordinateTransform(Protocol):
 	frame); one that has nothing to select from (a constant scale, the identity)
 	ignores it. Applied post-hoc in most cases — see
 	``src/tratrac/application/WORLD_PROJECTION.md`` and
-	``src/tratrac/infrastructure/video/EGO_MOTION.md``.
+	``infrastructure/video/ego_motion_orb.py``'s module docstring.
 	"""
 
 	def apply(self, point: Point2D, frame_index: int) -> Point2D: ...
@@ -138,7 +139,7 @@ class TrajectoryExporter(Protocol):
 	This is a pure data port — it carries no pixels. Visualization (drawing
 	trajectories over the footage) is a post-hoc concern handled by the standalone
 	``OverlayVideoExporter`` / ``tratrac-render``, not a pipeline exporter (see
-	src/tratrac/infrastructure/export/VIDEO_EXPORT.md).
+	infrastructure/export/overlay_video.py's module docstring).
 	"""
 
 	def emit_frame(self, timestamp_seconds: float, states: list[VehicleState]) -> None: ...
@@ -205,7 +206,7 @@ class TransformSink(Protocol):
 	One record per processed frame (current frame -> global stabilization frame).
 	Adapters persist them (CSV now) so a downstream tool can invert each to map
 	stabilized coordinates back onto the raw frame. Streaming, like ``TimingSink``;
-	see ``tratrac.domain.stabilization`` and src/tratrac/infrastructure/video/EGO_MOTION.md.
+	see ``tratrac.domain.stabilization`` and infrastructure/video/ego_motion_orb.py's module docstring.
 	"""
 
 	def record(self, frame_transform: FrameTransform) -> None: ...

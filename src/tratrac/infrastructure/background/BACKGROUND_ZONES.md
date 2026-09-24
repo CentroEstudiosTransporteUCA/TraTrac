@@ -92,5 +92,5 @@ one shape reused by casting.
   `tratrac`-side consumer of a `tratrac-preprocess` run's output; `tratrac`
   never constructs `OrbEgoMotionEstimator` itself.
 
-See `src/tratrac/infrastructure/video/EGO_MOTION.md`'s "Detector-free ego-motion"
+See `infrastructure/video/ego_motion_orb.py`'s module docstring's "Detector-free ego-motion"
 section for the full picture (why this exists, what was tried and rejected first).

@@ -1,9 +1,9 @@
 """Typer CLI entry point for TraTrac.
 
 A run is fully described by a persisted ``RunConfig`` (see
-``tratrac.application.config`` and ``src/tratrac/application/CONFIG_DESIGN.md``). There are no
-built-in defaults and **no per-key override flags**: every value comes from the
-``--config`` TOML, and a missing value fails the run listing exactly what is
+``tratrac.application.config``, whose module docstring is the schema/design reference).
+There are no built-in defaults and **no per-key override flags**: every value comes
+from the ``--config`` TOML, and a missing value fails the run listing exactly what is
 absent. The sole flag is ``--force`` (overwrite existing outputs) — overwrite
 policy is *not* a config key, since it never affects the trajectories. A complete
 config replays with just ``--config``.
@@ -16,7 +16,58 @@ must name a ``tratrac-preprocess estimate`` run's transforms file (which also
 exported the keyframe-anchor PNGs an operator draws exclusion zones/calibration
 correspondences on) — a static camera's file simply has no ego-motion rows, so
 its stabilization stage is the identity. See
-src/tratrac/infrastructure/video/EGO_MOTION.md.
+infrastructure/video/ego_motion_orb.py's module docstring.
+
+Validation without running (``--check``)
+=========================================
+
+``tratrac --config run.toml --check [--json]`` validates a config and exits without
+touching the pipeline — the point is to make this module the single source of truth
+for validation, instead of a UI (the URBAn Tauri client) reimplementing range/coherence
+rules in JS/Rust. It lives as a **flag on the single `process` command**, not a new
+subcommand, keeping the config-only CLI design intact. ``--force`` is irrelevant under
+``--check`` (no writes happen) and is ignored.
+
+``--json`` emits a machine-readable report to **stdout**; without it, problems print
+human-readable to stderr. Exit code ``0`` means the config is valid, ``2`` means invalid
+(the same code ``ConfigError`` already uses elsewhere). The JSON shape::
+
+    {
+      "ok": false,
+      "problems": [
+        "detector.conf must be in [0.0, 1.0], got 1.4.",
+        "input.transforms_in: file does not exist: out/highway_run3.transforms.jsonl.",
+        "export.out must be a file path, not a directory: out/."
+      ]
+    }
+
+``problems`` is a flat list of human strings — the same messages ``ConfigError`` and the
+CLI's own guards already produce, no separate message taxonomy. A client shows them
+verbatim and keys its enable/disable state off the exit code (``ok == (problems == [])``).
+
+Three layers run, cheapest first, each gated on the previous parsing successfully:
+
+- **L1 — TOML parse** (``load_toml``). A syntax error is a single fatal problem
+  (``"config: <msg>"``); resolution can't proceed past it.
+- **L2 — ``RunConfig.resolve``** (the bulk, already aggregated). Missing keys, type
+  errors, ranges, and ``input.transforms_in`` existing as a file — always required, no
+  ``enabled`` toggle to gate it, since ``tratrac`` never resolves scale, ego-motion, or
+  a world-projection homography itself. This is exactly what a config-editor UI needs.
+- **L3 — ``static_run_problems(run)``** (only reached if L1+L2 produce a ``run``): the
+  post-resolve filesystem guards — video file exists, output path-types (file vs.
+  directory), path collisions (``export.out`` ≠ ``run.timing_csv``). Cheap, no video
+  decode. Both ``--check`` and a real run consume this same function, so both report
+  every path problem aggregated in one pass rather than one-per-retry.
+
+Deliberately **out of scope**, not silently skipped: anything that opens the video or
+the network — detector checkpoint download/availability, device reachability. (GSD
+scale/ego-motion/homography resolution moved out of ``tratrac`` entirely into
+``tratrac-preprocess estimate``/``project``, which have no ``--check`` mode of their
+own today.) These are run-time concerns, not config-shape concerns; a future
+``--check-deep`` could add them, but v1 stays fast and offline enough to call on every
+form edit. Also out of scope in v1: warnings for legal-but-unusual values (e.g.
+``tracker.det_thresh >= detector.conf``) — errors-only for now, a ``"warnings"`` field
+is a forward-compatible extension point if that's ever needed.
 """
 
 from __future__ import annotations
@@ -107,7 +158,8 @@ def process(
 
 	The run is driven entirely by ``--config``; the only operational flag is
 	``--force`` (overwrite existing outputs without editing the config). Overwrite
-	policy is not part of the config — it never affects the trajectories (src/tratrac/application/CONFIG_DESIGN.md).
+	policy is not part of the config — it never affects the trajectories
+	(``application/config.py``'s module docstring).
 
 	``--check`` short-circuits to validation only: it parses the TOML, resolves the
 	``RunConfig``, and runs the static filesystem guards, then reports every problem
@@ -134,7 +186,8 @@ def process(
 
 	# --- Fail-fast checks that need the filesystem but not the (costly) video open. ---
 	# Aggregated (every problem at once), so a run surfaces all path issues in one go —
-	# the same shape ``--check`` reports and consistent with ConfigError. See src/tratrac/application/CONFIG_DESIGN.md.
+	# the same shape ``--check`` reports and consistent with ConfigError. See
+	# ``application/config.py``'s module docstring.
 	static_problems = static_run_problems(run)
 	if static_problems:
 		_emit_check_report(static_problems, as_json=False)
@@ -154,7 +207,7 @@ def process(
 		end_seconds=run.window.end_seconds,
 		process_fps=run.input.process_fps or None,
 	) as source:
-		# Coordinate stabilization (MVP1.9, src/tratrac/infrastructure/video/EGO_MOTION.md): the
+		# Coordinate stabilization (MVP1.9, see ego_motion_orb.py's module docstring): the
 		# detector and tracker run on the raw frame; the ego-motion transform is applied to
 		# the detections (not the pixels) inside the pipeline. `tratrac` never estimates
 		# ego-motion itself -- `input.transforms_in` (a `tratrac-preprocess estimate` run's
@@ -225,7 +278,7 @@ def static_run_problems(run: RunConfig) -> list[str]:
 			"-- run tratrac-preprocess first."
 		)
 	# Path-type guards the per-key flags used to enforce (dir_okay/file_okay) before they
-	# were removed (src/tratrac/application/CONFIG_DESIGN.md): file outputs must not be
+	# were removed (application/config.py's module docstring): file outputs must not be
 	# directories — caught here cleanly rather than as an opaque writer error later.
 	for label, path in (
 		("export.out", run.export.out),

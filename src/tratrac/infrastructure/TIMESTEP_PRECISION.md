@@ -100,7 +100,7 @@ Timestamps stay on the source video's absolute clock, so this composes with
 
 ## SSAM Coarseness Caveat
 
-`src/tratrac/infrastructure/export/SSAM_FORMAT.md` notes sub-second precision (~1/10 s) is the practical
+`infrastructure/export/ssam_trj.py`'s module docstring notes sub-second precision (~1/10 s) is the practical
 minimum; once-per-second is too coarse for conflict analysis. A coarse interval
 still produces a *syntactically valid* `.trj`, so the CLI **warns** (above 0.5 s)
 rather than erroring — the file parses, but its surrogate-safety metrics (TTC,
@@ -113,6 +113,6 @@ PET) degrade. Validity is structural; usefulness is the operator's call.
 - `infrastructure/export/decimating.py` — `DecimatingTrajectoryExporter` (the
   decorator + grid math).
 - `application/config.py` — validates `export.timestep_precision` (reject < 0;
-  `0` = every frame) as part of `RunConfig.resolve` (see `src/tratrac/application/CONFIG_DESIGN.md`).
+  `0` = every frame) as part of `RunConfig.resolve` (see `application/config.py`'s module docstring).
 - `cli.py` — the `--timestep-precision` flag, the coarse-value warning (> 0.5 s),
   and the wrapping wired inside the timing decorator.

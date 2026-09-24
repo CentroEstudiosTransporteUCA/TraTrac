@@ -15,8 +15,9 @@ Two-part decision per candidate pair (an earlier fragment ending, a later fragme
    ``from_state``/``predict``), and reject the pair if the later fragment's actual start
    position falls outside a configurable number of standard deviations of the extrapolated
    position. An implausible reappearance is rejected regardless of how similar the crops look
-   — this is the "not appearance alone" gate ``TRACKER_CHOICE.md``/``mvp5.md`` describe, mirroring
-   the Songdo deployment's appearance+temporal fusion using infrastructure already in this repo.
+   — this is the "not appearance alone" gate ``infrastructure/tracking/boxmot_bot_sort.py``'s
+   module docstring describes, mirroring the Songdo deployment's appearance+temporal fusion
+   using infrastructure already in this repo.
 2. **Appearance score** — among gated candidates, cosine similarity between embeddings.
 
 Resolution is greedy highest-score-first, 1:1 (each fragment absorbs/is absorbed by at most

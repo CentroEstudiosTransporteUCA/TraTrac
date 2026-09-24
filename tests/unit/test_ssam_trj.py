@@ -1,6 +1,6 @@
 """Byte-level tests for the SSAM .trj v1.04 binary exporter.
 
-The spec we are verifying against lives in src/tratrac/infrastructure/export/SSAM_FORMAT.md.
+The spec we are verifying against lives in infrastructure/export/ssam_trj.py's module docstring.
 """
 
 from __future__ import annotations

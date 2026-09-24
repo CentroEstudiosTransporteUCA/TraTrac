@@ -4,7 +4,7 @@ Post-hoc visualization: draws an SSAM ``.trj``'s bumpers/IDs/trails over its sou
 clip and writes an overlay video. This is the rendering that used to run *inside*
 the live pipeline (``export.video_out``) and in ``tratrac-smooth --video-out`` —
 pulled out into its own step so a run only detects/tracks/exports and never pays the
-per-frame video-encode cost (see src/tratrac/infrastructure/export/VIDEO_EXPORT.md).
+per-frame video-encode cost (see infrastructure/export/overlay_video.py's module docstring).
 
 It reuses the pipeline's ``OverlayVideoExporter`` drawing engine; the only thing
 that changes from the old in-pipeline path is the *source* of the vehicle states:

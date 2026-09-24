@@ -13,7 +13,7 @@ per-anchor path's temporal (`frame_index`) selection; the two are not composed (
 spanning both multiple anchors and multiple planes pools an anchor's correspondences per plane
 regardless of anchor, a known, documented limitation). **Automatic-calibration correspondence
 proposal** (Group C4) is scoped to proposal-only per its resolved repo-boundary question — see
-"Automatic calibration from road geometry" below and `src/tratrac/application/AUTO_CALIBRATION.md`.
+"Automatic calibration from road geometry" below and `scripts/propose_calibration.py`'s module docstring.
 The SuperPoint + LightGlue stabilization upgrade (MVP1.9's ORB still does ego-motion; Group B3,
 GitHub Issues) is separate, tracked there. With projection, multi-anchor, and multi-plane all in
 place, SSAM positions can be metric world coordinates for wide-swept, many-anchor,
@@ -139,7 +139,7 @@ not arbitrary 3D scenes.
 | Geometry | OpenCV |
 | Projection | Homography |
 
-> **Ego-motion compensation already exists as of MVP1.9** (`src/tratrac/infrastructure/video/EGO_MOTION.md`): a
+> **Ego-motion compensation already exists as of MVP1.9** (`infrastructure/video/ego_motion_orb.py`'s module docstring): a
 > keyframe-anchored ORB + RANSAC similarity adapter behind the `EgoMotionEstimator`
 > port, applied to *detection coordinates* (not pixels) before tracking. So MVP2's
 > stabilization line is an *upgrade* (ORB → SuperPoint + LightGlue, see
@@ -192,7 +192,7 @@ SSAM's file format already provides the bridge from abstract grid units
 to physical units via the `DIMENSIONS.Scale` field. MVP2 is the first
 MVP where it is filled in with a calibrated value instead of `1.0`.
 
-The relationship the format defines (see `src/tratrac/infrastructure/export/SSAM_FORMAT.md`):
+The relationship the format defines (see `infrastructure/export/ssam_trj.py`'s module docstring):
 
 ```text
 real_measure = abstract_measure × Scale
@@ -309,7 +309,7 @@ the anchors/transforms `tratrac-preprocess estimate` already produced — before
 perception run, but outside it, not as part of it. `tratrac-postprocess` (pass 2)
 only ever **applies** the already-fitted homography rows it finds in the shared
 transforms file; it never fits anything itself. Rationale, consistent with the
-project's B-first / post-hoc bias (src/tratrac/infrastructure/export/VIDEO_EXPORT.md,
+project's B-first / post-hoc bias (infrastructure/export/overlay_video.py's module docstring,
 src/tratrac/application/SMOOTHING.md, and the `post-hoc-rendering-principle` memory):
 
 - Projection is a pure coordinate map over already-recorded measurements — fitting it
@@ -492,7 +492,7 @@ fully-automatic calibration.
 interactive confirm/adjust living in URBAn — resolves to yes.** `scripts/propose_calibration.py`
 auto-proposes candidate image-side points from road markings (Canny + Hough line detection,
 filtered by brightness *and* local contrast against the surrounding surface — see
-`src/tratrac/application/AUTO_CALIBRATION.md` for the full design, the real-footage validation
+`scripts/propose_calibration.py`'s module docstring for the full design, the real-footage validation
 run, and why brightness alone isn't enough); a human (via URBAn, or by hand) confirms/adjusts
 and supplies `world` coordinates before the result becomes a usable `calibration.json`. The
 single-homography math itself (confirmed against the literature as still the right approach for
@@ -514,7 +514,7 @@ pixel-sized canvas. After projection the post-process step:
   in-bounds), not the pixel grid;
 - keeps `Scale = 1.0`.
 
-This matters because the SSAM exporter flips Y about `MaxY × Scale` (src/tratrac/infrastructure/export/SSAM_FORMAT.md). With the
+This matters because the SSAM exporter flips Y about `MaxY × Scale` (infrastructure/export/ssam_trj.py's module docstring). With the
 pixel height left in place and `Scale = 1.0`, an external SSAM reader would see metric
 coordinates flipped about the pixel height and bounded by a pixel-sized box — internally
 self-consistent (our own `read_trj` round-trips) but wrong for any third-party consumer.

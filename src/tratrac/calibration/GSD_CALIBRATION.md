@@ -145,7 +145,7 @@ file this writes into.
 - `SsamTrjExporter` (in `tratrac-postprocess`, the only `.trj` path) takes a required `scale`
   constructor argument; the transforms file's resolved `meters_per_pixel` supplies it. (The old
   `scale=1.0` default was removed by the zero-defaults refactor — see
-  `src/tratrac/application/CONFIG_DESIGN.md`.)
+  `application/config.py`'s module docstring.)
 - No struct changes; no on-disk format changes.
 
 ### Worked example

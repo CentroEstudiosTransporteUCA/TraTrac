@@ -4,38 +4,99 @@ video -> trajectory pipeline.
 
 Standalone — only the standard library, so it works even when the tratrac
 package is broken (same constraint as scripts/dump_trj.py). The byte-level
-format is specified in src/tratrac/infrastructure/export/SSAM_FORMAT.md.
+format is specified in src/tratrac/infrastructure/export/ssam_trj.py's module
+docstring.
 
 Unlike dump_trj.py (which prints records) this script asks whether the
-trajectories make *physical sense* and reports a compliance table. Three
-families of checks, each measured as "compliant instances / total instances":
+trajectories make *physical sense* and reports a compliance table.
 
-  1. Continuity — a track must not appear or disappear in the frame interior.
-     Every contiguous run of a track has a start and an end; each is compliant
-     only if it happens at the global first/last timestep (already in view /
-     leaves at the end of the clip) or near an image boundary. Internal gaps
-     (a track that vanishes mid-clip and reappears) therefore show up as an
-     interior disappearance + interior appearance and are penalised.
+The load-bearing idea: no ground truth. There are no hand-labelled trajectories to
+compare against, which bounds what "validation" can mean here. Without ground truth
+you can only measure two things: internal consistency (does the file agree with
+itself?) and physical plausibility (does it violate physics?) — you cannot measure
+*accuracy* (is the vehicle really there, is the front really the front). An
+early-stage pipeline passes consistency and plausibility easily, so a high score on
+those alone is not evidence of quality. Continuity is the one exception and therefore
+the most valuable check: "objects do not wink into existence in mid-air" is a physical
+invariant that holds independently of the pipeline's own maths — the closest thing to
+ground-truth-free truth, and the check that actually bites on MVP1 output.
 
-  2. Orientation smoothness — the front/rear axis (heading) must not jump
-     between consecutive observations of a track. Compliant if the wrapped
-     angular change is below the threshold.
+Three families of checks, each measured as "compliant instances / total instances":
 
-  3. Kinematic plausibility — the stored Speed and Acceleration are in
-     DIMENSIONS.Units (m/s, m/s^2 or ft/s, ft/s^2) per the SSAM spec, NOT in
+  1. Continuity (the real quality gate) — a track must not appear or disappear in the
+     frame interior. Every contiguous run of a track has a start and an end; each is
+     compliant only if it happens at the global first/last timestep (already in view /
+     leaves at the end of the clip) or near an image boundary. Internal gaps (a track
+     that vanishes mid-clip and reappears) therefore show up as an interior
+     disappearance + interior appearance and are penalised — deliberate, since gaps
+     are exactly the ID-fragmentation MVP1's IoU-only BoT-SORT (no ReID) produces, and
+     surfacing them is the point; long-term identity persistence is an explicit MVP5
+     concern. Near-boundary uses centroid distance to the nearest edge <= margin +
+     half the vehicle's major axis (the body, not just the point, can reach the edge).
+
+  2. Orientation smoothness — the front/rear axis (heading, recovered as
+     atan2(front - rear)) must not jump between consecutive observations of a track.
+     Compliant if the wrapped angular change is below the threshold. Catches sudden
+     front/rear switches (the ~180 degree flip the MVP1 estimator can produce when a
+     stationary track first moves and the heading snaps from the bbox major-axis to
+     the velocity direction). Caveat on what it *cannot* see: heading is smoothed
+     upstream, so this largely checks that the smoother produced smooth output —
+     smoothness is orthogonal to correctness, a consistently-backwards front/rear
+     scores 100% smooth. It catches discontinuities, not wrongness.
+
+  3. Kinematic plausibility (not consistency) — the stored Speed and Acceleration are
+     in DIMENSIONS.Units (m/s, m/s^2 or ft/s, ft/s^2) per the SSAM spec, NOT in
      pixels and NOT scaled by Scale. Each is checked against a real-world
-     physical ceiling (configurable; unit-aware defaults). Speed must also be
-     finite and non-negative. Caveat: MVP1 writes pixel-displacement into these
-     fields while declaring metric units (src/tratrac/infrastructure/export/SSAM_FORMAT.md), so MVP1
-     output is expected to fail these bounds wholesale — that is the intended
-     signal, not a bug in the validator.
+     physical ceiling (configurable; unit-aware defaults — the metric pair was
+     tightened to urban-intersection footage, 22 m/s / 79 km/h and 15 m/s^2 / ~1.5g,
+     and now differs from the English pair, which keeps the original "reject the
+     impossible" limits of ~70 m/s / ~12 m/s^2; raise --max-speed for fast-road
+     clips). Speed must also be finite and non-negative. Caveat: MVP1 writes
+     pixel-displacement into these fields while declaring metric units
+     (src/tratrac/infrastructure/detection/DETECTOR_CHOICE.md), so MVP1 output is
+     expected to fail these bounds wholesale (speeds of hundreds "m/s",
+     accelerations of thousands "m/s^2") — that is the validator correctly
+     reporting the kinematics aren't physical yet, not a bug in the validator; the
+     numbers only become meaningful once real metric calibration lands.
+
+     Why a *consistency* check was rejected: an earlier version also recomputed
+     speed/accel from the stored positions using the estimator's exact windowed
+     kinematics and compared. It scored ~100% — and that's precisely why it was
+     removed: tautological. The exporter *derives* speed/accel from those positions
+     with that formula, so recomputing f(positions) and checking it equals the
+     stored f(positions) can only catch an export *wiring* bug (byte order, field
+     swap, y-flip/scale error), never a quality problem — garbage positions yield
+     consistent garbage. Plausibility against physical units is the check that
+     actually constrains the values.
 
 Position/heading checks (continuity, orientation) compare in the file's grid
 units (pixels) against the DIMENSIONS bounds. Continuity's "near a boundary"
 test also needs the vehicle's body size, which SSAM stores in DIMENSIONS.Units
 (metres), not pixels — so it converts Length/Width to pixels via Scale. The
 result is physically scale-independent (a car spans the same pixels whether
-Scale is 1.0 for MVP1 pixels-as-metres or a real GSD for MVP1.75+).
+Scale is 1.0 for MVP1 pixels-as-metres or a real GSD for MVP1.75+), but the
+code must read Scale to get there — assuming those fields were already grid
+units was the original bug.
+
+Threshold reasoning: --boundary-margin defaults to 33 grid units/pixels, added to
+half the vehicle's major axis. --max-heading-step defaults to 20 degrees — above this
+a transition counts as a sudden switch; a hard turn at 30 fps is ~1-2 degrees/frame,
+so 20 degrees passes real driving while catching flips.
+
+Output: a stdout table (header row + grouped checks, each "name  compliant / total
+pct%"). --violations-csv PATH (opt-in) writes one row per non-compliant instance:
+frame_index, timestamp_s, vehicle_id, check, detail, centroid/front/rear (image-space
+px, y-down to match the video), length, width, speed, accel — positions converted out
+of SSAM y-up into image space so a row points straight at the frame + spot to inspect,
+sorted by frame then vehicle. On MVP1 the plausibility checks dominate this file by
+volume; filter on the check column for the actionable rows (appearance,
+disappearance, heading_switch). This CSV is consumable by tratrac-render
+--violations to mark each instance in red on the video frame it occurs, in the same
+pass it draws the trajectories (aligned by round(timestamp_s * fps), not the ordinal
+frame_index, so it survives --start/--timestep-precision); --checks narrows the same
+way. --fail-under PCT (opt-in) exits non-zero if any check is below PCT, for use as a
+CI gate. frame_index is the timestep ordinal, which equals the video frame index
+because the pipeline emits exactly one TIMESTEP per decoded frame.
 
 Usage:
 	uv run python scripts/validate_trj.py PATH [options]

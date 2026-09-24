@@ -8,7 +8,7 @@ when nothing narrower applies, never a null/optional field); `function` is the
 type-specific payload. Multi-frame applicability (a constant scale, a
 frame-invariant per-plane homography) is materialized as repeated rows written
 once at build time, not a matching rule resolved at read time — see
-`src/tratrac/infrastructure/video/EGO_MOTION.md`.
+`infrastructure/video/ego_motion_orb.py`'s module docstring.
 
 Two objects per transformation kind, single-responsibility each:
 

@@ -38,7 +38,8 @@ anything else track-lifetime-aware runs — fragments the tracker split across a
 stitched into one continuous track, which the existing per-track smoothing then handles with
 no new code (it already groups purely by ``track_id``).
 
-Rendering is a separate step: ``tratrac-render`` on the ``.trj`` (src/tratrac/infrastructure/export/VIDEO_EXPORT.md).
+Rendering is a separate step: ``tratrac-render`` on the ``.trj`` (see
+``infrastructure/export/overlay_video.py``'s module docstring).
 """
 
 from __future__ import annotations
@@ -215,7 +216,30 @@ def postprocess(
 		bool, typer.Option("--force/--no-force", help="Overwrite existing outputs.")
 	] = False,
 ) -> None:
-	"""Filter (optional) + smooth TRACKS into --out (.trj) and/or --smoothed-record (Parquet)."""
+	"""Filter (optional) + smooth TRACKS into --out (.trj) and/or --smoothed-record (Parquet).
+
+	Detection-orientation work (richer ``TrackSample``), geometry (plane/link/lane
+	assignment, multi-anchor projection), and perception enrichment (ReID-merge,
+	footprint) each add a step here. Fixed order, and why it can't be reshuffled
+	freely::
+
+		read record
+		  -> apply --footprint               [obb_w/obb_h override -- keyed by the pre-merge track_id]
+		  -> apply --reid-merge              [track_id remap -- before anything else track-lifetime-aware]
+		  -> filter --exclusion-zones
+		  -> assign plane / link / lane      [needed before projection knows which H to use]
+		  -> project --calibration           [projector itself is plane/anchor-aware]
+		  -> smooth (Kalman/RTS)
+		  -> export .trj
+
+	``--footprint`` runs ahead of ``--reid-merge`` even though ReID-merge is the
+	track-lifetime-aware step everything else keys off of: a footprint sidecar is
+	itself keyed by the pre-merge ``track_id``, so it has to be applied before the
+	remap for the same reason ``--reid-merge`` has to run before
+	exclusion/link/lane/projection — both are "resolve identity/shape before
+	anything that reasons about a track's full lifetime or position" constraints,
+	footprint's constraint is just one step earlier in the chain.
+	"""
 	if out is None and smoothed_record is None:
 		raise typer.BadParameter("Pass at least one of --out or --smoothed-record.")
 	if out is not None and out.exists() and not force:
@@ -377,10 +401,11 @@ def _apply_reid_merge(
 	"""Remap ``track_id`` on every observation through a resolved ReID merge decision.
 
 	Runs before exclusion filtering / Link-Lane-Plane assignment / world projection (Group D2's
-	composition-root position, see ``POSTPROCESS_ORDER.md``): those stages are all
-	track-lifetime-aware, so occlusion-split fragments must already be one track_id by the time
-	they run, or e.g. exclusion's majority vote would see two short, separately-judged tracks
-	instead of the vehicle's whole life. A track id absent from the mapping is left unchanged
+	composition-root position, see this module's ``postprocess`` function docstring):
+	those stages are all track-lifetime-aware, so occlusion-split fragments must already
+	be one track_id by the time they run, or e.g. exclusion's majority vote would see two
+	short, separately-judged tracks instead of the vehicle's whole life. A track id
+	absent from the mapping is left unchanged
 	(``load_reid_merge`` only returns entries for track ids that were actually merged).
 	"""
 	try:
@@ -511,7 +536,8 @@ def _project_to_world(
 	grid. This matters because the SSAM exporter writes those as the DIMENSIONS bounds and
 	flips Y about ``height x scale``: leaving the pixel dimensions in place would make an
 	external reader see metric coordinates against a pixel-sized canvas, flipped about the
-	wrong axis (src/tratrac/infrastructure/export/SSAM_FORMAT.md + src/tratrac/application/WORLD_PROJECTION.md). The translation discards the operator's
+	wrong axis (``infrastructure/export/ssam_trj.py``'s module docstring +
+	src/tratrac/application/WORLD_PROJECTION.md). The translation discards the operator's
 	absolute world origin, which is arbitrary in Approach A and irrelevant to the
 	translation-invariant conflict analytics. ``pos_noise``/``jerk`` are converted from
 	pixels into world units by a representative local scale near the recording's own

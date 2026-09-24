@@ -12,7 +12,7 @@ story); this doc covers the shared zone/classification infrastructure the three 
 
 ## Why this matters
 
-SSAM's `Link ID` and `Lane ID` fields (see `src/tratrac/infrastructure/export/SSAM_FORMAT.md`,
+SSAM's `Link ID` and `Lane ID` fields (see `infrastructure/export/ssam_trj.py`'s module docstring,
 VEHICLE record) require knowledge of the road network that does not fall out of detection or
 tracking alone. Without correct values, SSAM misclassifies Lane-Change conflicts as Rear-End (or
 vice versa) and aggregates per-link/per-lane analytics into a single bucket. Geometric conflict
@@ -68,7 +68,7 @@ way Link/Lane do.
 Link/Lane classification runs on **image-space** coordinates, at the same stage exclusion
 filtering does — after exclusion drops whole tracks, before the already-fitted projection rows
 (read from `--transforms`) are applied to project coordinates to world metres. This matches the
-composition order documented in `src/tratrac/POSTPROCESS_ORDER.md`:
+composition order documented in `cli_postprocess.py`'s postprocess function docstring:
 
 ```
 read record
@@ -133,5 +133,5 @@ as scenes are pre-configured.
 
 Automatic/assisted *authoring* of Strategy A's polygons themselves (proposing calibration
 correspondences from visible road markings) is a separate, already-shipped concern — see
-`application/AUTO_CALIBRATION.md`. TraTrac ships only the proposal capability; interactive
+`scripts/propose_calibration.py`'s module docstring. TraTrac ships only the proposal capability; interactive
 confirm/adjust lives in URBAn.

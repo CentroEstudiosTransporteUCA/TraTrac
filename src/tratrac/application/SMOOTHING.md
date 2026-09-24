@@ -44,7 +44,7 @@ pass 2 (offline):            record → forward KF + RTS per track → smoothed 
   see "Dual-space export" below. At least one of `--out`/`--smoothed-record` is required;
   `--transforms` is always required (it carries the mandatory scale-or-homography rows —
   a run is never un-calibrated in this sense). To visualize the `.trj`, render with
-  `tratrac-render` (src/tratrac/infrastructure/export/VIDEO_EXPORT.md); to visualize directly
+  `tratrac-render` (infrastructure/export/overlay_video.py's module docstring); to visualize directly
   over raw video frames (e.g. in FiftyOne), use `--smoothed-record` instead.
 
 **Why raw measurements, not filter state:** pass 2 re-runs the forward pass (cheap) so the

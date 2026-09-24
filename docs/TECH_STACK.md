@@ -106,7 +106,7 @@ below. **`boxmot` also natively supports OBB tracking, not just axis-aligned box
 not assumed — so the detection pivot above doesn't require collapsing OBB detections to an
 axis-aligned box before tracking; the orientation angle can survive into the track.
 
-See `src/tratrac/infrastructure/tracking/TRACKER_CHOICE.md` for the full writeup.
+See `infrastructure/tracking/boxmot_bot_sort.py`'s module docstring for the full writeup.
 
 **Sources:**
 - [BoxMOT — tracker list + MOT17 rankings, AABB + OBB support](https://github.com/mikel-brostrom/boxmot)
@@ -270,5 +270,5 @@ Plane assignment, topology/lane-graph, FiftyOne, CVAT, and Docker/CUDA deploymen
 audited in this investigation — the table above carries them forward unchanged from the
 original stack, not because they were confirmed, but because they weren't in scope. FiftyOne
 and Docker/CUDA were separately checked (and landed) as part of Group F's own exploration pass
-— see `src/tratrac/FIFTYONE.md`, which re-confirmed FiftyOne still fits on a 2026 check. CVAT
+— see `cli_fiftyone.py`'s module docstring, which re-confirmed FiftyOne still fits on a 2026 check. CVAT
 remains genuinely unexamined.

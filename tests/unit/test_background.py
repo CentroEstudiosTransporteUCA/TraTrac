@@ -1,7 +1,7 @@
 """Tests for background zones: the domain type and the sidecar-JSON loader.
 
-Pure stdlib — no cv2/model downloads. See src/tratrac/infrastructure/video/EGO_MOTION.md's
-"Detector-free ego-motion" section.
+Pure stdlib — no cv2/model downloads. See infrastructure/video/ego_motion_orb.py's
+module docstring, "Detector-free ego-motion" section.
 """
 
 from __future__ import annotations

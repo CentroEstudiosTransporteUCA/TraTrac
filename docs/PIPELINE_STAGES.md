@@ -41,7 +41,7 @@ after. Two different reasons force this, worth telling apart:
 
 | Stage | Config | Why it's forced live | Detail |
 | --- | --- | --- | --- |
-| Ego-motion stabilization | `input.transforms_in` (whether the file has any similarity rows — no separate enable toggle) | Tracking associates on stabilized coordinates — stabilization has to precede it in the same pass | `src/tratrac/infrastructure/video/EGO_MOTION.md` |
+| Ego-motion stabilization | `input.transforms_in` (whether the file has any similarity rows — no separate enable toggle) | Tracking associates on stabilized coordinates — stabilization has to precede it in the same pass | `infrastructure/video/ego_motion_orb.py`'s module docstring |
 | Decode-time decimation | `input.process_fps` | Frames are skipped *before decode* (`cv2.grab()` with no decode) — a skipped frame's data never exists to defer | `src/tratrac/infrastructure/TIMESTEP_PRECISION.md` |
 
 **Forced by a measurement dependency** — the thing being captured only exists at the moment it happens, nothing to reconstruct:
@@ -61,7 +61,7 @@ reasoning (the transform and the anchor frame's pixels only exist at the instant
 `tratrac-preprocess` walks that frame), just relocated to a different tool's mandatory spine.
 `tratrac-preprocess` itself is now mandatory for every run, even a fully static camera, since
 it's the only place the GSD scale row gets resolved. See
-`src/tratrac/infrastructure/video/EGO_MOTION.md` and
+`infrastructure/video/ego_motion_orb.py`'s module docstring and
 `src/tratrac/infrastructure/transform/TRANSFORM_SINK.md`.
 
 ---
@@ -77,7 +77,7 @@ Nothing here runs unless `tratrac-postprocess` or `tratrac-render` is separately
 | Exclusion zone filtering | Pure point-in-polygon over recorded centroids | `src/tratrac/application/EXCLUSION_ZONES.md` |
 | World projection (single- and multi-homography both land as the same `homography` row kind, fitted by `tratrac-preprocess project`, applied by `tratrac-postprocess`) | A pure coordinate map over already-recorded measurements, needs no pixels | `src/tratrac/application/WORLD_PROJECTION.md` |
 | Export-time (TIMESTEP) decimation | Thins an otherwise-complete `.trj` | `src/tratrac/infrastructure/TIMESTEP_PRECISION.md` |
-| Rendering (+ `--violations`, `--transforms`) | Fully derivable from an already-finished `.trj` and a re-opened video file | `src/tratrac/infrastructure/export/VIDEO_EXPORT.md` |
+| Rendering (+ `--violations`, `--transforms`) | Fully derivable from an already-finished `.trj` and a re-opened video file | `infrastructure/export/overlay_video.py`'s module docstring |
 | Link ID / Lane ID assignment (shipped, `--link-zones`/`--lane-zones`) | Point-in-polygon over recorded centroids, same pattern as exclusion zones; a `.trj` without either flag just carries `0` | `src/tratrac/application/ROAD_GRAPH.md` |
 
 **Placement followed as recommended, for two mostly-built stages:**
@@ -85,14 +85,14 @@ Nothing here runs unless `tratrac-postprocess` or `tratrac-render` is separately
 | Stage | Placement | Why |
 | --- | --- | --- |
 | Segmentation (SAM 3, MVP4) | Post — re-opens the video against recorded box/frame-index data, the same way rendering already does. Shipped: the footprint sidecar storage format and `--footprint` dimension-override consumption in `tratrac-postprocess`. Still blocked: the segmentation stage itself (`cli_segment.py`, actually running SAM 3), which needs a GPU. | Every other stage this shape (world projection, exclusion, rendering) ended up post-hoc once someone checked whether it needed to be live; nothing forced this one to be live either. See `src/tratrac/application/FOOTPRINT.md`. |
-| ReID (DINOv3, MVP5) | Post — an offline track-stitcher: re-open the video, embed each track fragment, merge fragments using appearance + a motion-plausibility gate against the Kalman state. Shipped and validated against real footage: the merge-decision and apply stages (`application/reid_merge.py`, `--reid-merge`). Still blocked: the DINOv3 embedding stage itself (`cli_embed.py`), which needs a GPU. | The alternative (plug into BoT-SORT's live appearance slot) works and is lower-effort, but forecloses re-tunability without re-detection and non-causal matching (using both sides of an occlusion gap, the way RTS smoothing already does for kinematics) — advantages a live slot can't offer; kept as a documented fallback, not the primary route. See `src/tratrac/infrastructure/tracking/TRACKER_CHOICE.md` and `src/tratrac/application/REID_MERGE.md`. |
+| ReID (DINOv3, MVP5) | Post — an offline track-stitcher: re-open the video, embed each track fragment, merge fragments using appearance + a motion-plausibility gate against the Kalman state. Shipped and validated against real footage: the merge-decision and apply stages (`application/reid_merge.py`, `--reid-merge`). Still blocked: the DINOv3 embedding stage itself (`cli_embed.py`), which needs a GPU. | The alternative (plug into BoT-SORT's live appearance slot) works and is lower-effort, but forecloses re-tunability without re-detection and non-causal matching (using both sides of an occlusion gap, the way RTS smoothing already does for kinematics) — advantages a live slot can't offer; kept as a documented fallback, not the primary route. See `infrastructure/tracking/boxmot_bot_sort.py`'s module docstring and `src/tratrac/application/REID_MERGE.md`. |
 
 **Mandatory, but not inside `tratrac` — a distinct case from everything else above:**
 
 | Stage | Why it's here, not in Group 1 | Why it's *not* like the rest of Group 3 | Detail |
 | --- | --- | --- | --- |
 | Smoothing (Kalman/RTS) | Lives entirely in `tratrac-postprocess`, a separately-invoked tool | Unlike exclusion zones, world projection, or rendering, there's no flag to skip it and still get a `.trj` — it's the mechanism that reconstructs kinematics from raw positions | `src/tratrac/application/SMOOTHING.md` |
-| `.trj` export (SSAM serialization) | Same — lives in `tratrac-postprocess` | Always runs immediately after smoothing, on every invocation; no path smooths without exporting or exports without smoothing having already run | `src/tratrac/infrastructure/export/SSAM_FORMAT.md` |
+| `.trj` export (SSAM serialization) | Same — lives in `tratrac-postprocess` | Always runs immediately after smoothing, on every invocation; no path smooths without exporting or exports without smoothing having already run | `infrastructure/export/ssam_trj.py`'s module docstring |
 
 These two are the mandatory second and third stages of a two-stage-mandatory pipeline
 (`tratrac` → `tratrac-postprocess`), not optional add-ons that happen to live in post-processing.

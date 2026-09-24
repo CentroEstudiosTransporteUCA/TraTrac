@@ -7,7 +7,7 @@ Replaces what used to be five separate impls (`IdentityTransform`,
 table's rows by `frame_index` (the primary key), filter to the row(s) whose
 `zone` contains the query point, and delegate to that row's `function`
 (`infrastructure/transform/records.py`'s `TransformFunction` objects, which do
-the actual math). See `src/tratrac/infrastructure/video/EGO_MOTION.md`.
+the actual math). See `infrastructure/video/ego_motion_orb.py`'s module docstring.
 
 A run's full transform composes **two** `TransformTable`s in sequence, never
 one flat table: ego-motion (raw pixel -> global pixel) and scale-or-homography

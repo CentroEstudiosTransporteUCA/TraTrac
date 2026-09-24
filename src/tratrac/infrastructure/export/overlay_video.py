@@ -1,11 +1,40 @@
 """OverlayVideoExporter: renders each frame with its vehicles drawn on top and
 writes the result to a video file.
 
-It is a **standalone** renderer, not a ``TrajectoryExporter`` — rendering is a
-post-hoc step, so this is driven directly by ``tratrac-render`` (which reads a
-``.trj`` back into states via ``read_trj``), not composed into the pipeline. Its
-``emit_frame`` therefore takes the ``Frame`` to draw on, unlike the frameless data
-port. It draws on the **raw** frame. See src/tratrac/infrastructure/export/VIDEO_EXPORT.md.
+Produces an overlay video — each frame with its vehicles drawn on top
+(front/rear bumpers, orientation line, ``vN speed`` label, per-track trails) — after
+a run, via the standalone ``tratrac-render`` tool (``cli_render.py``), which reads the
+run's SSAM ``.trj`` (plus, for an ego-motion or projected run, the transforms file) and
+draws over the source clip. This is a debug/visualization output, not a new analytics
+format: neither the SSAM export (A) nor the extended internal export (B) of the
+dual-export architecture (``src/tratrac/domain/ARCHITECTURE.md``), just a rendering of
+the trajectories. New analytics data still goes into (B), never here.
+
+Why post-hoc: originally the overlay ran inside the per-frame loop — an
+``OverlayVideoExporter`` composed onto the ``.trj`` exporter, so each run copied the
+frame, drew on it, and encoded a video frame on every iteration, paying a large
+per-frame cost for output that's fully derivable from the ``.trj`` afterward. So it was
+pulled out: the run now only detects, tracks, and exports the ``.trj`` (+ optional
+sidecars), no per-frame drawing or encoding; ``tratrac-render`` does the drawing as a
+separate step, reusing this same drawing engine, with only the *driver* changed
+(vehicle states come from reading a ``.trj``, not from live tracking);
+``tratrac-postprocess`` likewise dropped its in-process ``--video-out``. This makes
+rendering a normal downstream step alongside ``validate_trj``/``plot_run``, not a tax
+on every run. The old in-pipeline ``CompositeTrajectoryExporter`` was removed along
+with it: with rendering gone from both the live run and the smoother, nothing composes
+exporters anymore.
+
+It is a **standalone** renderer, not a ``TrajectoryExporter`` — the ``TrajectoryExporter``
+port is ``emit_frame(timestamp_seconds, states)``, a pure data port with no pixels; it
+was briefly widened to carry a ``Frame`` so the overlay could compose into the
+pipeline, but with rendering now post-hoc that parameter was removed and this class is
+no longer a ``TrajectoryExporter``. Its own ``emit_frame(timestamp, states, frame)``
+takes the pixels to draw on, driven directly by ``tratrac-render`` (which reads a
+``.trj`` back into states via ``read_trj`` in ``ssam_trj.py`` — the one place a
+``.trj`` is read back, viz-only, not reopening the export-only invariant; see that
+module's docstring). So the data exporters (``SsamTrjExporter``,
+``DecimatingTrajectoryExporter``, ``TimedExporter``) stay frameless, and this is the
+one class that needs pixels and carries them explicitly.
 
 Coordinates: ``VehicleState`` positions are in world units of the stabilized
 (global) frame (a uniform ``scale`` metres-per-pixel multiple of pixels — no
@@ -13,19 +42,79 @@ homography yet, MVP1.x). To draw on the raw frame we divide by ``scale`` (no SSA
 y-flip; the image is y-down) and then map back onto the raw frame via the
 ego-motion transform supplied by ``transform_source`` (identity when stabilization
 is off). This keeps the overlay on the full, uncropped frame even when the drone
-has drifted far from its first frame. See src/tratrac/infrastructure/video/EGO_MOTION.md.
+has drifted far from its first frame. Trails are stored in stabilized coordinates and
+mapped through the *current* inverse each frame, showing the world path from the
+current camera pose; validator violation marks (``--violations``) ride the same
+transform, landing in the same raw-frame space as the trajectories. See
+``infrastructure/video/ego_motion_orb.py``'s module docstring.
 
-cv2 and PyAV live only behind injected seams (``open_writer``, ``draw``, and the
-``transform_source`` that maps stabilized coordinates back to the raw frame), so
-the adapter's orchestration — frame copy, trail accumulation, coordinate mapping,
+**This "divide by scale" recovery is stale for every ``.trj``, not just a
+homography-projected one.** ``cli_postprocess.postprocess`` always projects every
+observation through the transforms file's ``TransformTable`` before smoothing, and
+always shifts the result to a 0-origin extent (``_normalize_world_recording``) — even a
+plain GSD-scale run's ``.trj`` positions are no longer the source video's own pixel
+coordinates times one constant, they're shifted by an amount this exporter has no way
+to recover (it isn't stored in the ``.trj``, and can't be — see
+``application/SMOOTHING.md``'s "Dual-space export" section for why the shift is only
+ever undone by inverting the *exact* projector object a postprocess run built, which
+``tratrac-render`` never has). ``tratrac-render`` reading ``--smoothed-record`` instead
+of ``--trj`` (always raw image-space pixels, purpose-built for exactly this kind of
+consumer) would fix this for every case, scale or homography alike — not done yet.
+
+cv2 and PyAV live only behind injected seams (``open_writer``, ``draw``, ``annotate``,
+and the ``transform_source`` that maps stabilized coordinates back to the raw frame),
+so the adapter's orchestration — frame copy, per-track trail accumulation
+(``trail_length`` 0 = whole path, N = rolling window of N frames; only
+currently-visible tracks are drawn so dead tracks stop ghosting), coordinate mapping,
 lifecycle — is unit-testable without either.
 
-The default writer encodes with PyAV (libx264) rather than cv2's ``VideoWriter``:
-this project's ``opencv-python`` build has no software H.264 encoder, so
-``cv2.VideoWriter`` falls back to MPEG-4 Part 2 ("mp4v") with no bitrate control,
-producing overlay videos several times the size of the source clip at the same
-resolution/fps. PyAV wraps FFmpeg's libraries directly (no subprocess/pipe) and
-its wheels bundle libx264. See src/tratrac/infrastructure/export/VIDEO_EXPORT.md.
+The default writer encodes with PyAV (libx264, CRF 23, preset ``medium``) rather than
+cv2's ``VideoWriter``: this project's ``opencv-python`` build has no software H.264
+encoder registered (``avc1``/``h264``/``X264`` tags all fail to open), so
+``cv2.VideoWriter`` fell back to MPEG-4 Part 2 ("mp4v") with no bitrate/CRF control —
+measured, overlay videos were routinely 3-5x the size of their source clip at
+identical resolution/fps (864 MB source -> 2.65 GB overlay, mpeg4 at 23 Mbps vs. the
+source's h264 at 7.6 Mbps). PyAV binds FFmpeg's libraries directly (no subprocess/pipe
+to manage) and its wheels bundle libx264, so it isn't subject to the same gap. This
+was also the first adoption of PyAV, which ``docs/TECH_STACK.md`` names as the target
+video I/O library ("NVIDIA NVDEC + PyAV") but which nothing had wired in yet — that gap
+had gone untracked, unlike the RT-DETR->YOLOv8 detector swap
+(``infrastructure/detection/DETECTOR_CHOICE.md``), which documents its override
+explicitly. Only the **encode** side moved to PyAV; ``OpenCvVideoSource`` (decode,
+seeking, ``--process-fps`` frame-skipping) and the drawing primitives
+(``cv2.line``/``circle``/``putText``) stay on cv2 — see Group B4 in GitHub Issues for
+the deferred full-decode TorchCodec+NVDEC migration.
+
+Violations in the same pass: ``tratrac-render --violations CSV`` (a
+``validate_trj.py`` violations CSV, optionally filtered by ``--checks``) marks each
+non-compliant instance in red in the same render pass as the trajectories — one
+encode, "frame + trajectories + violations." ``cli_render.py`` reuses this class's
+``annotate`` seam (a generic post-draw hook ``(canvas, frame_index, to_raw)``):
+it buckets violation rows onto absolute frames by ``round(timestamp_s * fps)`` and
+the hook draws each frame's marks on top of the trajectories, mapped to raw via the
+same ``to_raw``. This replaced the old standalone ``scripts/render_violations.py``,
+which required a second encode over the overlay.
+
+``cli_render.py`` (``tratrac-render``) is the driver: reads the ``.trj`` (``read_trj``),
+the optional transforms file, and the optional violations CSV, buckets states (and
+violation marks) onto absolute video frames by ``round(timestamp * fps)`` (fps from
+the *clip* — the ``.trj`` carries time but not fps), and drives a single instance of
+this class. It opens the clip windowed to the ``.trj``'s covered span (the
+absolute-seconds TIMESTEPs bound ``start_seconds``/``end_seconds``, plus a small tail
+buffer), so a short analysis window on a long clip renders only that span instead of
+re-encoding the whole video; an empty ``.trj`` renders nothing. Invocation:
+``tratrac-render VIDEO --trj RUN.trj --out OVERLAY.mp4 [--transforms
+TRANSFORMS.jsonl] [--trail N] [--force]`` — ``--out`` must not pre-exist without
+``--force``; pass ``--transforms`` (the ``tratrac-preprocess estimate`` run's
+transforms file that fed ``input.transforms_in``) so the global-frame trajectories map
+back onto the raw video, omitting it only for a non-stabilized (no similarity rows)
+run.
+
+Interaction with decimation: ``tratrac-render`` draws states where the ``.trj`` has
+them. If the run used ``export.timestep_precision`` (or ``input.process_fps``), the
+``.trj`` only carries states on the emitted timesteps, so the overlay shows
+bumpers/trails only on those frames and bare frames in between. For a smooth,
+full-cadence overlay, render from a ``.trj`` produced with ``timestep_precision = 0``.
 """
 
 from __future__ import annotations
@@ -252,8 +341,8 @@ def _pyav_open_writer(path: Path, metadata: VideoMetadata) -> FrameWriter:
 	"""Open a libx264 writer matching the source's size and fps.
 
 	CRF 23 / preset "medium" is libx264's own quality-oriented default operating
-	point, empirically close to typical drone-footage delivery bitrates (see
-	src/tratrac/infrastructure/export/VIDEO_EXPORT.md) rather than a size or bitrate target of its own.
+	point, empirically close to typical drone-footage delivery bitrates (see this
+	module's own docstring above) rather than a size or bitrate target of its own.
 	"""
 	import av
 

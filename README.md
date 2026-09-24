@@ -104,7 +104,7 @@ README stays intentionally brief so it doesn't drift out of sync with those.
 - **Every MVP emits valid SSAM from MVP1.** MVPs differ in trajectory *quality*, not whether trajectories exist — since the export inversion this takes two steps (`tratrac` → record, `tratrac-postprocess` → `.trj`) instead of one, always preceded by `tratrac-preprocess` resolving the transforms file both steps read.
 
 See `src/tratrac/domain/ARCHITECTURE.md` for the full rationale behind these invariants. The
-SSAM `.trj` byte-level spec is in `src/tratrac/infrastructure/export/SSAM_FORMAT.md`, derived
+SSAM `.trj` byte-level spec is in `infrastructure/export/ssam_trj.py`'s module docstring, derived
 from the two PDFs alongside it. Where SSAM's `Link ID` and `Lane ID` come from is
 in `src/tratrac/application/ROAD_GRAPH.md`.
 

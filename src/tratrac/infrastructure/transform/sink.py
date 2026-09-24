@@ -6,7 +6,7 @@ file (`infrastructure/transform/records.py`). This module is the I/O seam:
 passes; `read_transform_table`/`read_ego_motion` read them back into a
 `TransformTable` or a plain per-frame `Transform2D` lookup, filtered to
 whichever kind(s) a caller needs. See
-`src/tratrac/infrastructure/video/EGO_MOTION.md`.
+`infrastructure/video/ego_motion_orb.py`'s module docstring.
 """
 
 from __future__ import annotations
@@ -78,7 +78,7 @@ class PrecomputedEgoMotionEstimator:
 	estimating live -- the `tratrac` side of `ego_motion.transforms_in`: a
 	`tratrac-preprocess` run's output, consumed so `tratrac` never estimates
 	ego-motion itself (see "Detector-free ego-motion",
-	src/tratrac/infrastructure/video/EGO_MOTION.md).
+	infrastructure/video/ego_motion_orb.py's module docstring).
 
 	``estimate`` is an exact per-frame lookup, no feature matching. An entirely
 	empty ego-motion stage (a static-camera run) returns the identity for every

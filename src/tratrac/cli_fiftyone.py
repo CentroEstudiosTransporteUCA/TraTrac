@@ -6,7 +6,15 @@ raw track record (``infrastructure/tracks/parquet.py``) and/or a smoothed record
 both can be inspected/compared in the FiftyOne App. A reader, not a pipeline stage: nothing
 here runs detection or tracking; it reads what ``tratrac``/``tratrac-postprocess`` already
 wrote, the same "post-hoc tool over existing outputs" shape as ``scripts/plot_run.py`` and
-``scripts/validate_trj.py``. See ``FIFTYONE.md`` for the full design.
+``scripts/validate_trj.py``.
+
+What it builds: one FiftyOne video **sample** per source clip; frame-level detections from
+``--record`` and/or ``--smoothed-record`` — passing both adds two label fields per frame
+(``record_detections``/``smoothed_detections``) so raw and smoothed trajectories can be
+compared directly in the FiftyOne App; each vehicle's FiftyOne ``Detection.index`` carries its
+track/vehicle id (FiftyOne's own field for video-tracking visualization). Track-level fields
+(link/lane id, ReID merge provenance) as label attributes, beyond the per-frame detections
+above, are not yet added.
 
 **Not the SSAM ``.trj``, deliberately.** An earlier version of this module read ``--trj``
 directly and normalized its coordinates as if they were always raw video pixels. That's true

@@ -24,7 +24,7 @@ vehicle split into more than one `track_id` across an occlusion — back into on
 3. **Resolution** — greedy highest-score-first, 1:1 (each fragment absorbs/is absorbed by at
    most one other), with chains collapsing to their earliest fragment's id.
 
-This is the "not appearance alone" design `TRACKER_CHOICE.md`/`mvp5.md` call for: nadir drone
+This is the "not appearance alone" design `infrastructure/tracking/boxmot_bot_sort.py`'s module docstring/`mvp5.md` call for: nadir drone
 footage discards most of the visual cues vehicle-ReID normally relies on, so a real deployment
 facing the same problem (Songdo, South Korea) had to fuse appearance with a temporal/motion
 model to make ReID work at all. Rather than build a separate travel-time model, this reuses

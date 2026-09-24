@@ -10,12 +10,61 @@ package**. Each parameter must be supplied by a TOML config file or a CLI flag;
 if neither supplies it, ``RunConfig.resolve`` fails listing exactly what is
 missing. This trades typing convenience for scientific reproducibility — a
 ``.trj`` is reconstructable from the config that produced it, which names its
-own input and output. See ``src/tratrac/application/CONFIG_DESIGN.md`` for the
-design rationale (why zero defaults, why no per-key CLI flags).
+own input and output. A silent default (e.g. an unstated ``conf=0.25`` or
+``device=cpu``) is exactly the kind of hidden variable that makes a result hard
+to reproduce or defend, so none survive — this extends the same calibration
+philosophy MVP1.75 already applies to metric output
+(``src/tratrac/calibration/GSD_CALIBRATION.md``: refuse to run uncalibrated
+rather than emit physically meaningless values) to *every* parameter.
 
-Layering: this module is pure (no I/O, no CLI framework). The TOML file is read
-by ``infrastructure/config/toml.py``; the CLI assembles overrides, validates the
-resolved video on disk, and translates ``ConfigError`` into a process exit.
+Layering: this module is pure (no I/O, no CLI framework). ``RunConfig`` and its
+section dataclasses (``InputConfig``, ``DetectorConfig``, …), the ``_Resolver``
+(merge + type-check + collect problems), ``ConfigError``, and the validators
+(device format, timecode parse, window ordering) all live here — including
+``DetectorChoice``, the single source of truth for detector names. There is no
+``CalibrationConfig``/``EgoMotionConfig`` here: GSD-scale resolution
+(``calibration/gsd.py``, ``srt_parser.py``, ``drone_specs.py``) lives entirely in
+``cli_preprocess.py``'s ``estimate`` subcommand now. ``infrastructure/config/toml.py``
+is the one seam where the dynamically-typed TOML document enters (``load_toml``,
+stdlib ``tomllib``, no new dependency) — this module does the type-checking.
+``cli.py`` loads the TOML, calls ``RunConfig.resolve`` with an empty override
+map, validates the resolved video on disk, then builds the adapters from the
+typed config; it reads ``--force`` directly (not through resolution) and
+translates ``ConfigError`` into exit code 2. See ``src/tratrac/cli.py``'s
+module docstring for the ``--check`` validation-without-running mode.
+
+Resolution model: precedence per key is config-file value, then error — the
+resolver still accepts an ``overrides`` mapping and applies it with highest
+precedence (``None`` means "not supplied," falls through to the file value),
+but the CLI now feeds it an empty map; the mechanism is retained so a future
+flag or a programmatic caller could override a key without reworking
+resolution (see "Design history" below for why the CLI itself doesn't use it
+today). ``RunConfig.resolve`` collects *all* problems and raises a single
+``ConfigError``, so one run surfaces every missing/invalid key instead of
+one-per-attempt.
+
+Design history — why the override flags were removed: the first revision
+mirrored every config key as a ``--flag`` (so ``--conf 0.4`` could tweak one
+value without editing the TOML) and allowed a positional ``VIDEO`` argument to
+override ``input.video``. Both were removed: the per-key flags duplicated the
+config surface (every key needed a flag, a wiring line, and help text — two
+ways to set one value), and they weakened the reproducibility argument the
+config exists to make, since a run set partly by flags is no longer fully
+captured by its file. Collapsing to config-only makes the file the single,
+complete, replayable spec. ``--force`` survived as the one genuinely ad-hoc
+operational toggle, then was taken out of the config too (``run.force``
+removed): overwrite policy never affects the trajectories, so it doesn't
+belong in the reproducible run spec at all.
+
+No library pixel fallback: removing defaults is package-wide, not CLI-only.
+The adapter constructors (``SsamTrjExporter``, ``RtDetrDetector``,
+``YoloV8VisDroneDetector``, ``BoxmotBotSortTracker``) carry no defaults either
+— the old ``scale=1.0``/``meters_per_pixel=1.0`` "pixels-as-metres" library
+escape hatch is gone. Callers (CLI and tests) pass every value explicitly;
+tests that want MVP1 pixel behaviour pass ``scale=1.0``/``meters_per_pixel=1.0``
+themselves. ``detector.filename`` is required even for ``rt_detr`` (which
+ignores it) for the same reason — conditional-requiredness per adapter wasn't
+worth the special case.
 
 Usage::
 
@@ -26,7 +75,8 @@ Usage::
 There are no per-key override flags and no positional ``VIDEO`` argument —
 ``--config`` is the only way values reach the run. ``--force``/``--no-force``
 (overwrite control) and ``--check``/``--json`` (validate-only) are the only
-other CLI flags, and neither is a config key. See ``src/tratrac/CHECK_COMMAND.md``.
+other CLI flags, and neither is a config key. See ``src/tratrac/cli.py``'s
+module docstring for the full ``--check`` validation contract.
 
 This config covers ``tratrac`` only — the perception pass. GSD calibration,
 ego-motion stabilization, and world-projection homography are not config keys
@@ -100,7 +150,7 @@ three are gone, not renamed, removed:
   ``input.transforms_in`` just names. There is no ``enabled`` toggle to gate
   on here — whether stabilization applies is a property of that file's
   *content* (whether it has similarity rows), not a flag. See
-  ``src/tratrac/infrastructure/video/EGO_MOTION.md`` and
+  ``infrastructure/video/ego_motion_orb.py``'s module docstring and
   ``src/tratrac/calibration/GSD_CALIBRATION.md``.
 - World-projection homography is fitted by the same tool's ``project``
   subcommand into that same transforms file. ``tratrac`` never fits or
@@ -213,7 +263,7 @@ class InputConfig:
 	# itself -- it only ever reads the ego-motion stage's rows out of this file, using
 	# the identity when there are none (a static-camera run still needs the file for
 	# its per-frame scale rows, which `tratrac-postprocess` reads later). See
-	# src/tratrac/infrastructure/video/EGO_MOTION.md.
+	# infrastructure/video/ego_motion_orb.py's module docstring.
 	transforms_in: Path
 
 
@@ -259,7 +309,7 @@ class WindowConfig:
 class RunOptionsConfig:
 	# ``force`` is intentionally absent: overwrite policy is pure I/O, never affects the
 	# trajectories, so it is not part of the reproducible run spec — it lives only on the
-	# ``--force`` CLI flag (src/tratrac/application/CONFIG_DESIGN.md), not in the config.
+	# ``--force`` CLI flag (application/config.py's module docstring), not in the config.
 	timing_csv: Path | None  # None = profiling off
 
 
