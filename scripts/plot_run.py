@@ -18,19 +18,24 @@ For the scene behind the trajectory and birth/death panels:
   - ``--video FILE`` (or a folder, prefix-matched) draws one still frame — fine for a
     static camera.
   - ``--scout-dir DIR`` draws a **mosaic of the whole swept area**: the scout's
-    ``frame_*.png`` anchors warped by the run's ``<stem>_transforms.csv`` into the .trj's
+    ``frame_*.png`` anchors warped by ``--transforms``' ego-motion rows into the .trj's
     global frame, with transparent gaps where no frame covered. Use this for moving-drone
-    runs whose trajectories span more than one frame.
+    runs whose trajectories span more than one frame. ``--transforms`` points at the
+    `tratrac-preprocess estimate` run's JSON-Lines output that fed ``input.transforms_in``
+    for this outputs folder -- one shared file for every ``.trj`` this invocation processes,
+    the same way ``--video``/``--scout-dir`` are already shared, not a per-stem sidecar
+    (transforms files aren't derivable from a ``.trj``'s path or name -- see
+    ``infrastructure/transform/records.py``).
 
 Usage:
     uv run python scripts/plot_run.py OUTPUTS_DIR [--out DIR] [--accel-bound 8.0]
-        [--video CLIP_OR_FOLDER] [--scout-dir SCOUT_OR_PARENT]
+        [--video CLIP_OR_FOLDER] [--scout-dir SCOUT_OR_PARENT] [--transforms TRANSFORMS.jsonl]
 """
 
 from __future__ import annotations
 
 import argparse
-import csv
+import json
 import struct
 import sys
 from collections import defaultdict
@@ -133,17 +138,31 @@ class Background:
 
 
 def _read_transforms(path: Path) -> dict[int, Pose]:
-	"""Per-frame ego-motion poses (frame -> a,b,c,d,tx,ty) from a run's transform CSV."""
+	"""Per-frame ego-motion poses (frame -> a,b,c,d,tx,ty) from a transforms.jsonl file.
+
+	One JSON object per line, tagged by ``"type"`` (``infrastructure/transform/records.py``);
+	only ``"ego_motion"`` rows carry a similarity pose. Scale/homography/identity rows (and
+	any row this script doesn't recognize yet) are silently skipped -- a mosaic only needs
+	ego-motion, and a forward-compatible reader shouldn't choke on a row kind it has no use
+	for.
+	"""
 	out: dict[int, Pose] = {}
-	with path.open(newline="") as handle:
-		for row in csv.DictReader(handle):
-			out[int(row["frame"])] = (
-				float(row["a"]),
-				float(row["b"]),
-				float(row["c"]),
-				float(row["d"]),
-				float(row["tx"]),
-				float(row["ty"]),
+	with path.open() as handle:
+		for line in handle:
+			line = line.strip()
+			if not line:
+				continue
+			row = json.loads(line)
+			if row.get("type") != "ego_motion":
+				continue
+			fn = row["function"]
+			out[int(row["frame_index"])] = (
+				float(fn["a"]),
+				float(fn["b"]),
+				float(fn["c"]),
+				float(fn["d"]),
+				float(fn["tx"]),
+				float(fn["ty"]),
 			)
 	return out
 
@@ -262,8 +281,8 @@ def background_for(
 ) -> Background | None:
 	"""Build the scene background: a scout-anchor mosaic if available, else a single frame.
 
-	The mosaic needs scout anchor PNGs (``--scout-dir``) plus the run's own transform CSV
-	(``<stem>_transforms.csv``); together they place the swept area in the .trj's frame.
+	The mosaic needs scout anchor PNGs (``--scout-dir``) plus the run's transforms file
+	(``--transforms``); together they place the swept area in the .trj's frame.
 	"""
 	scout_dir = _scout_dir_for(stem, scout_arg)
 	if scout_dir is not None and transforms_path is not None and transforms_path.exists():
@@ -483,8 +502,16 @@ def main() -> int:
 		"--scout-dir",
 		type=Path,
 		default=None,
-		help="Scout dir (or parent of per-clip dirs) of frame_*.png anchors; warped by the "
-		"run's <stem>_transforms.csv into a swept-area mosaic background.",
+		help="Scout dir (or parent of per-clip dirs) of frame_*.png anchors; warped by "
+		"--transforms' ego-motion rows into a swept-area mosaic background.",
+	)
+	parser.add_argument(
+		"--transforms",
+		type=Path,
+		default=None,
+		help="The tratrac-preprocess estimate run's transforms.jsonl (its --out) that fed "
+		"input.transforms_in for this outputs folder. Only meaningful together with "
+		"--scout-dir; one shared file for every .trj this invocation processes.",
 	)
 	args = parser.parse_args()
 
@@ -504,11 +531,9 @@ def main() -> int:
 			continue
 		smooth = read_trj(smooth_path) if smooth_path.exists() else None
 		scores = read_track_scores(tracks_path) if tracks_path.exists() else None
-		transforms_path = trj_path.with_name(f"{stem}_transforms.csv")
-		transforms = transforms_path if transforms_path.exists() else None
 		base_dir = args.out if args.out is not None else trj_path.parent
 		folder = base_dir / stem
-		background = background_for(stem, args.video, args.scout_dir, transforms, base.bounds[3])
+		background = background_for(stem, args.video, args.scout_dir, args.transforms, base.bounds[3])
 		count = generate(base, smooth, scores, stem, folder, args.accel_bound, background)
 		scene = "" if background is None else (" (+mosaic)" if not background.clip else " (+scene)")
 		notes = (" (+smooth)" if smooth else "") + scene
