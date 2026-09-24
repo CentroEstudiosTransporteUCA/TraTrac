@@ -10,11 +10,147 @@ package**. Each parameter must be supplied by a TOML config file or a CLI flag;
 if neither supplies it, ``RunConfig.resolve`` fails listing exactly what is
 missing. This trades typing convenience for scientific reproducibility — a
 ``.trj`` is reconstructable from the config that produced it, which names its
-own input and output. See ``src/tratrac/application/CONFIG_DESIGN.md``.
+own input and output. See ``src/tratrac/application/CONFIG_DESIGN.md`` for the
+design rationale (why zero defaults, why no per-key CLI flags).
 
 Layering: this module is pure (no I/O, no CLI framework). The TOML file is read
 by ``infrastructure/config/toml.py``; the CLI assembles overrides, validates the
 resolved video on disk, and translates ``ConfigError`` into a process exit.
+
+Usage::
+
+    uv run tratrac --config run.toml            # the only way to run it
+    uv run tratrac --config run.toml --check    # validate without running
+    uv run tratrac --config run.toml --force    # overwrite existing outputs
+
+There are no per-key override flags and no positional ``VIDEO`` argument —
+``--config`` is the only way values reach the run. ``--force``/``--no-force``
+(overwrite control) and ``--check``/``--json`` (validate-only) are the only
+other CLI flags, and neither is a config key. See ``src/tratrac/CHECK_COMMAND.md``.
+
+This config covers ``tratrac`` only — the perception pass. GSD calibration,
+ego-motion stabilization, and world-projection homography are not config keys
+here at all: they're resolved upstream by ``tratrac-preprocess`` and handed to
+``tratrac`` as one path, ``input.transforms_in`` (see "What isn't here" below).
+
+Two rules govern the whole file:
+
+1. Every key must be **present**. Absence is an error — there is no key whose
+   omission means "use a sensible default."
+2. "Disabled" is an explicit value, never a missing key: ``process_fps = 0.0``
+   (every frame), ``timing_csv = ""`` (profiling off), ``start = "" / end = ""``
+   (the clip's natural bounds).
+
+Sections (TOML table -> dataclass -> required keys)::
+
+    [input]                                InputConfig
+      video          path, must exist
+      process_fps    number >= 0.0; 0.0 = every frame (decode-time decimation,
+                     see infrastructure/TIMESTEP_PRECISION.md)
+      transforms_in  path to a `tratrac-preprocess estimate` run's transforms
+                     file; always required, checked to exist before the video
+                     opens — a static-camera run still needs it for its scale
+                     rows
+
+    [detector]                             DetectorConfig
+      name           "yolov8_visdrone" (current default) | "rt_detr" (dormant)
+                     | "yolo_obb" (not yet the default) — see
+                     infrastructure/detection/DETECTOR_CHOICE.md
+      checkpoint     HuggingFace repo id, e.g. "Mahadih534/YoloV8-VisDrone"
+      conf           number in [0.0, 1.0] — detection confidence threshold
+      filename       weights file inside the repo; consumed only by
+                     yolov8_visdrone but required for every detector (the
+                     zero-defaults rule has no per-adapter exception)
+
+    [runtime]                              RuntimeConfig
+      device         "cpu" | "mps" | "cuda" | "cuda:N"
+
+    [tracker]                              TrackerConfig
+      det_thresh     number in [0.0, 1.0] — BoT-SORT detection threshold,
+                     conventionally kept below detector.conf
+
+    [export]                               ExportConfig
+      out            output **track record** path (Parquet) — tratrac's only
+                     output. Not a .trj: run tratrac-postprocess on this file
+                     to get one.
+
+    [window]                               WindowConfig
+      start          "" (clip start) | a timecode: SS(.ms) / MM:SS(.ms) /
+                     HH:MM:SS(.ms), e.g. "12.5", "1:30", "00:01:30.250"
+      end            "" (clip end) | a timecode; must be > 0 and after start
+
+    [run]                                  RunOptionsConfig
+      timing_csv     "" (profiling off) | a CSV path for per-frame step
+                     timings (see infrastructure/timing/STEP_TIMING.md); must
+                     differ from export.out
+
+``force`` is deliberately **not** a config key anywhere — overwrite policy is
+pure I/O that never affects the trajectories, so it's excluded from the
+reproducible run spec on purpose; it lives only on the CLI's ``--force`` flag.
+
+What isn't here (and why): earlier revisions of this config had
+``[calibration]`` (GSD scale), ``[ego_motion]`` (ORB stabilization toggle +
+tuning), and ``[orientation]`` (a live heading-smoothing window) sections. All
+three are gone, not renamed, removed:
+
+- GSD calibration and ego-motion are resolved once, upstream, by
+  ``tratrac-preprocess estimate`` (its own CLI flags — ``--meters-per-pixel``
+  or ``--drone-model``/``--altitude-m``/``--srt`` for scale, ORB tuning knobs
+  only there too). The result lands in one shared transforms file, which
+  ``input.transforms_in`` just names. There is no ``enabled`` toggle to gate
+  on here — whether stabilization applies is a property of that file's
+  *content* (whether it has similarity rows), not a flag. See
+  ``src/tratrac/infrastructure/video/EGO_MOTION.md`` and
+  ``src/tratrac/calibration/GSD_CALIBRATION.md``.
+- World-projection homography is fitted by the same tool's ``project``
+  subcommand into that same transforms file. ``tratrac`` never fits or
+  applies one — that's ``tratrac-postprocess``'s job, via its own
+  ``--transforms`` flag. See ``src/tratrac/application/WORLD_PROJECTION.md``.
+- Orientation is no longer computed live. ``tratrac`` writes only raw tracked
+  positions; heading, speed, and acceleration are reconstructed entirely
+  offline by ``tratrac-postprocess``'s Kalman/RTS smoother, tuned via its own
+  ``--pos-noise``/``--jerk`` flags, not a config section. See
+  ``src/tratrac/application/SMOOTHING.md``.
+
+Complete example (see ``tratrac.example.toml`` at the repo root for a
+copyable, fully-commented version)::
+
+    [input]
+    video         = "clips/highway_run3.mp4"
+    process_fps   = 0.0
+    transforms_in = "out/highway_run3_transforms.jsonl"
+
+    [detector]
+    name       = "yolov8_visdrone"
+    checkpoint = "Mahadih534/YoloV8-VisDrone"
+    conf       = 0.25
+    filename   = "visDrone.pt"
+
+    [runtime]
+    device = "cpu"
+
+    [tracker]
+    det_thresh = 0.1
+
+    [export]
+    out = "out/highway_run3.parquet"
+
+    [window]
+    start = ""
+    end   = ""
+
+    [run]
+    timing_csv = ""
+
+A run with missing or invalid keys exits with code 2 and lists everything
+wrong in one message::
+
+    ERROR: invalid run configuration; supply each value via the --config TOML
+    or its flag:
+      - input.video is missing.
+      - input.transforms_in does not exist or is not a file -- run tratrac-preprocess first.
+      - detector.conf must be in [0.0, 1.0], got 1.5.
+      - runtime.device 'gpu' is invalid; expected cpu, mps, or cuda[:N] (e.g. cuda:0).
 """
 
 from __future__ import annotations

@@ -34,7 +34,6 @@ Neither lives in a repo file.
 | --- | --- |
 | [`../README.md`](../README.md) | Install, usage, CLI options — the user-facing entry point. |
 | [`../CLAUDE.md`](../CLAUDE.md) | Conventions for working in this repo with an AI coding agent. |
-| [`../CONFIG.md`](../CONFIG.md) | How to write a `run.toml` — user-facing config guide. |
 | [`../DEPLOYMENT.md`](../DEPLOYMENT.md) | Docker multi-stage build for deployment | `../Dockerfile` |
 
 ## Design docs next to code (`src/tratrac/`)

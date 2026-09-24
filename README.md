@@ -59,9 +59,9 @@ uv run tratrac-render my_run.mp4 --trj my_run.trj --transforms my_run_transforms
 Validate a config without running anything: `uv run tratrac --config my_run.toml --check`.
 Overwrite existing outputs: add `--force` to any of the tools that take it.
 
-See [`CONFIG.md`](CONFIG.md) for `tratrac`'s config schema, `tratrac.example.toml` for a
-documented template, and `CLAUDE.md`'s Commands table for every flag on every tool
-(exclusion zones, world projection, smoother tuning, violation overlays, ...).
+See `src/tratrac/application/config.py`'s module docstring for `tratrac`'s config schema,
+`tratrac.example.toml` for a documented template, and `CLAUDE.md`'s Commands table for every
+flag on every tool (exclusion zones, world projection, smoother tuning, violation overlays, ...).
 
 The first run downloads the chosen detector's checkpoint into the HuggingFace cache
 (YOLOv8-VisDrone ≈ 20 MB; RT-DETR-R18 ≈ 80 MB).

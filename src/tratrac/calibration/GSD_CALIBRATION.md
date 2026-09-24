@@ -125,7 +125,7 @@ uv run tratrac-preprocess estimate VIDEO --out transforms.jsonl --drone-model ma
 uv run tratrac-preprocess estimate VIDEO --out transforms.jsonl --meters-per-pixel 0.05
 ```
 
-See `CONFIG.md`'s "What isn't here anymore" section for why this moved out of `tratrac`'s TOML
+See `application/config.py`'s module docstring, "What isn't here" section, for why this moved out of `tratrac`'s TOML
 config, and `src/tratrac/infrastructure/transform/TRANSFORM_SINK.md` for the shared transforms
 file this writes into.
 
