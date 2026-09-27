@@ -18,20 +18,51 @@ philosophy MVP1.75 already applies to metric output
 rather than emit physically meaningless values) to *every* parameter.
 
 Layering: this module is pure (no I/O, no CLI framework). ``RunConfig`` and its
-section dataclasses (``InputConfig``, ``DetectorConfig``, …), the ``_Resolver``
-(merge + type-check + collect problems), ``ConfigError``, and the validators
-(device format, timecode parse, window ordering) all live here — including
-``DetectorChoice``, the single source of truth for detector names. There is no
-``CalibrationConfig``/``EgoMotionConfig`` here: GSD-scale resolution
-(``calibration/gsd.py``, ``srt_parser.py``, ``drone_specs.py``) lives entirely in
-``cli_preprocess.py``'s ``estimate`` subcommand now. ``infrastructure/config/toml.py``
-is the one seam where the dynamically-typed TOML document enters (``load_toml``,
-stdlib ``tomllib``, no new dependency) — this module does the type-checking.
-``cli.py`` loads the TOML, calls ``RunConfig.resolve`` with an empty override
-map, validates the resolved video on disk, then builds the adapters from the
-typed config; it reads ``--force`` directly (not through resolution) and
-translates ``ConfigError`` into exit code 2. See ``src/tratrac/cli.py``'s
-module docstring for the ``--check`` validation-without-running mode.
+section dataclasses (``InputConfig``, ``DetectorConfig``, …) are the public,
+plain-dataclass shape every caller (``cli.py``, tests, …) has always used —
+that shape does not change. Underneath, ``RunConfig.resolve`` merges the TOML
+table and CLI overrides into one nested dict (``_merge``) and validates it in
+one pass through a tree of internal ``pydantic`` models (``_ConfigModel`` and
+its per-section models) that mirror the dataclasses field-for-field.
+``pydantic.ValidationError`` already aggregates every problem across every
+field in one exception — exactly the "list every missing/invalid key at once"
+contract ``ConfigError`` has always made, so adopting it doesn't change that
+contract, only what implements it. ``_translate_errors`` turns pydantic's
+error list back into this module's own long-standing message wording, so
+nothing downstream (including every existing test) needed to change. Custom
+business rules (range checks, the device regex, timecode parsing, window
+ordering) are pydantic validators, not hand-rolled ``if`` chains, but read the
+same either way. There is no ``CalibrationConfig``/``EgoMotionConfig`` here:
+GSD-scale resolution (``calibration/gsd.py``, ``srt_parser.py``,
+``drone_specs.py``) lives entirely in ``cli_preprocess.py``'s ``estimate``
+subcommand now. ``infrastructure/config/toml.py`` is the one seam where the
+dynamically-typed TOML document enters (``load_toml``, stdlib ``tomllib``) —
+this module does the validating. ``cli.py`` loads the TOML, calls
+``RunConfig.resolve`` with an empty override map, validates the resolved video
+on disk, then builds the adapters from the typed config; it reads ``--force``
+directly (not through resolution) and translates ``ConfigError`` into exit
+code 2. See ``src/tratrac/cli.py``'s module docstring for the ``--check``
+validation-without-running mode.
+
+Why pydantic, and why not sooner: this was an open question (see the "Build
+vs. buy" GitHub Discussion) motivated by two things — pydantic's own
+aggregated ``ValidationError`` fitting this module's philosophy more natively
+than the hand-rolled resolver it replaced, and schema-drift prevention (a
+docstring like this one, or a UI, hand-describing the schema can silently
+drift from the code the moment a field changes — this module's own docs did,
+twice, before both got folded into this docstring). It wasn't done from the
+start because the exact shape of "zero hardcoded defaults, aggregate every
+error" was worked out *on this project*, iteratively (see "Design history"
+below) — building it by hand first meant not also fighting a library's own
+conventions while still discovering what the design needed to be. It wasn't
+done immediately once pydantic looked like a fit either, because this is the
+single most load-bearing config surface in the CLI: the migration waited for
+CI to exist (see ``.github/workflows/ci.yml``) as the safety net a
+behavior-preserving swap like this one deserves. ``_ConfigModel`` also now
+exposes ``model_json_schema()`` — a machine-readable schema a future doc
+generator or URBAn's config-editor UI (see URBAn's ``docs/config_editor_spec.md``)
+can read the field list from directly, instead of a second hand-maintained
+copy that can drift the same way this docstring's tables already did.
 
 Resolution model: precedence per key is config-file value, then error — the
 resolver still accepts an ``overrides`` mapping and applies it with highest
@@ -210,7 +241,9 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
+
+import pydantic
 
 
 class DetectorChoice(StrEnum):
@@ -334,194 +367,123 @@ class RunConfig:
 		"""Merge a TOML table and CLI overrides into a validated ``RunConfig``.
 
 		Precedence per key: CLI override (non-``None``) > config file > error.
-		Collects every problem and raises a single ``ConfigError`` if any remain.
+		Collects every problem (via ``_ConfigModel``, see below) and raises a single
+		``ConfigError`` if any remain.
 		"""
-		resolver = _Resolver(file_values, cli_overrides)
-
-		video = resolver.required_path("input.video")
-		process_fps = resolver.required_float("input.process_fps")
-		if resolver.present("input.process_fps") and process_fps < 0.0:
-			resolver.problems.append("input.process_fps must be >= 0 (0 = every frame).")
-		transforms_in = resolver.required_path("input.transforms_in")
-
-		detector_name = _resolve_detector_name(resolver)
-		checkpoint = resolver.required_str("detector.checkpoint")
-		conf = resolver.required_float("detector.conf")
-		_check_range(conf, 0.0, 1.0, "detector.conf", resolver)
-		filename = resolver.required_str("detector.filename")
-
-		device = resolver.required_str("runtime.device")
-		_validate_device(device, resolver)
-
-		det_thresh = resolver.required_float("tracker.det_thresh")
-		_check_range(det_thresh, 0.0, 1.0, "tracker.det_thresh", resolver)
-
-		out = resolver.required_path("export.out")
-
-		window = WindowConfig(
-			start_seconds=_resolve_window_bound(resolver, "window.start"),
-			end_seconds=_resolve_window_bound(resolver, "window.end"),
-		)
-		_validate_window(window, resolver)
-
-		timing_csv = resolver.toggleable_path("run.timing_csv")
-
-		if resolver.problems:
-			raise ConfigError(resolver.problems)
+		merged = _merge(file_values, cli_overrides)
+		try:
+			model = _ConfigModel.model_validate(merged)
+		except pydantic.ValidationError as exc:
+			raise ConfigError(_translate_errors(exc)) from None
 
 		return cls(
-			input=InputConfig(video=video, process_fps=process_fps, transforms_in=transforms_in),
-			detector=DetectorConfig(
-				name=detector_name, checkpoint=checkpoint, conf=conf, filename=filename
+			input=InputConfig(
+				video=model.input.video,
+				process_fps=model.input.process_fps,
+				transforms_in=model.input.transforms_in,
 			),
-			runtime=RuntimeConfig(device=device),
-			tracker=TrackerConfig(det_thresh=det_thresh),
-			export=ExportConfig(out=out),
-			window=window,
-			options=RunOptionsConfig(timing_csv=timing_csv),
+			detector=DetectorConfig(
+				name=model.detector.name,
+				checkpoint=model.detector.checkpoint,
+				conf=model.detector.conf,
+				filename=model.detector.filename,
+			),
+			runtime=RuntimeConfig(device=model.runtime.device),
+			tracker=TrackerConfig(det_thresh=model.tracker.det_thresh),
+			export=ExportConfig(out=model.export.out),
+			window=WindowConfig(
+				start_seconds=model.window.start_seconds, end_seconds=model.window.end_seconds
+			),
+			options=RunOptionsConfig(timing_csv=model.run.timing_csv),
 		)
 
 
-_MISSING = object()
+_SECTIONS = ("input", "detector", "runtime", "tracker", "export", "window", "run")
 
 
-class _Resolver:
-	"""Pulls values from CLI overrides then the TOML table, collecting problems.
+def _merge(file_values: Mapping[str, Any], cli_overrides: Mapping[str, Any]) -> dict[str, Any]:
+	"""Fold ``cli_overrides`` (a flat dotted-key map, ``None`` = "not supplied") over
+	``file_values`` (the nested TOML table) into one nested dict ready for
+	``_ConfigModel.model_validate``. A CLI override always wins when not ``None``;
+	a key absent from both is simply missing from the result, which ``_ConfigModel``
+	(every field required, no defaults) then reports as such.
 
-	``cli_overrides`` is a flat dotted-key map (e.g. ``"detector.conf"``) whose
-	``None`` values mean "not passed on the command line". ``file_values`` is the
-	nested TOML table. Missing keys and type errors accumulate in ``problems`` so
-	resolution reports them together rather than one per run.
+	Every section key is always present (``{}`` if the file omitted it entirely) so a
+	wholly-missing section still validates *into* its own model -- reporting each of
+	its individual leaf fields as missing (``"runtime.device is missing."``) instead of
+	the whole section collapsing into one top-level ``"runtime is missing."``.
 	"""
-
-	def __init__(self, file_values: Mapping[str, Any], cli_overrides: Mapping[str, Any]) -> None:
-		# TOML values are dynamically typed; Any is confined to this resolution seam.
-		self._file = file_values
-		self._cli = cli_overrides
-		self.problems: list[str] = []
-
-	def _raw(self, dotted: str) -> Any:
-		"""CLI override (if not ``None``), else the file value, else ``_MISSING``."""
-		cli_value = self._cli.get(dotted)
-		if cli_value is not None:
-			return cli_value
+	merged: dict[str, dict[str, Any]] = {section: {} for section in _SECTIONS}
+	for section, table in file_values.items():
+		if isinstance(table, Mapping) and section in merged:
+			merged[section].update(table)
+	for dotted, value in cli_overrides.items():
+		if value is None:
+			continue
 		section, _, key = dotted.partition(".")
-		table = self._file.get(section)
-		if isinstance(table, Mapping) and key in table:
-			return table[key]
-		return _MISSING
+		merged.setdefault(section, {})[key] = value
+	return merged
 
-	def present(self, dotted: str) -> bool:
-		"""Whether a value was supplied at all (so range checks don't pile a second
-		problem on top of an already-recorded "missing")."""
-		return self._raw(dotted) is not _MISSING
 
-	def required_str(self, dotted: str) -> str:
-		raw = self._raw(dotted)
-		if raw is _MISSING:
-			self.problems.append(f"{dotted} is missing.")
-			return ""
-		if not isinstance(raw, str):
-			self.problems.append(f"{dotted} must be a string, got {type(raw).__name__}.")
-			return ""
-		return raw
+class _StrictModel(pydantic.BaseModel):
+	"""Shared config for every section model: no defaults, no unlisted keys."""
 
-	def required_float(self, dotted: str) -> float:
-		raw = self._raw(dotted)
-		if raw is _MISSING:
-			self.problems.append(f"{dotted} is missing.")
-			return 0.0
-		if isinstance(raw, bool) or not isinstance(raw, int | float):
-			self.problems.append(f"{dotted} must be a number, got {type(raw).__name__}.")
-			return 0.0
-		return float(raw)
+	model_config = pydantic.ConfigDict(extra="forbid")
 
-	def required_path(self, dotted: str) -> Path:
-		raw = self._raw(dotted)
-		if raw is _MISSING:
-			self.problems.append(f"{dotted} is missing.")
-			return Path()
-		if isinstance(raw, Path):
-			return raw
-		if isinstance(raw, str):
-			if not raw:
-				self.problems.append(f"{dotted} must not be empty.")
-				return Path()
-			return Path(raw)
-		self.problems.append(f"{dotted} must be a path string, got {type(raw).__name__}.")
-		return Path()
 
-	def toggleable_path(self, dotted: str) -> Path | None:
-		"""A required key whose empty value (``""``) means "disabled" -> ``None``."""
-		raw = self._raw(dotted)
-		if raw is _MISSING:
-			self.problems.append(f'{dotted} is missing (use "" to disable).')
-			return None
-		if raw == "" or raw is None:
-			return None
-		if isinstance(raw, Path):
-			return raw
-		if isinstance(raw, str):
-			return Path(raw)
-		self.problems.append(f'{dotted} must be a path string or "".')
+def _require_str(v: Any) -> str:
+	if not isinstance(v, str):
+		raise ValueError(f"must be a string, got {type(v).__name__}.")
+	return v
+
+
+def _require_number(v: Any) -> float:
+	# isinstance(True, int) is True in Python -- a TOML boolean must not silently
+	# become 1.0/0.0 for a numeric field.
+	if isinstance(v, bool) or not isinstance(v, int | float):
+		raise ValueError(f"must be a number, got {type(v).__name__}.")
+	return float(v)
+
+
+def _require_path(v: Any) -> Path:
+	if isinstance(v, Path):
+		return v
+	if isinstance(v, str):
+		if not v:
+			raise ValueError("must not be empty.")
+		return Path(v)
+	raise ValueError(f"must be a path string, got {type(v).__name__}.")
+
+
+def _toggleable_path(v: Any) -> Path | None:
+	"""``""``/``None`` -> disabled; else a path string. See ``RunOptionsConfig``."""
+	if v == "" or v is None:
 		return None
+	if isinstance(v, Path):
+		return v
+	if isinstance(v, str):
+		return Path(v)
+	raise ValueError('must be a path string or "".')
 
+
+_Str = pydantic.BeforeValidator(_require_str)
+_Number = pydantic.BeforeValidator(_require_number)
+_PathField = pydantic.BeforeValidator(_require_path)
 
 _DEVICE_RE = re.compile(r"cpu|mps|cuda(:\d+)?")
 
 
-def _validate_device(device: str, resolver: _Resolver) -> None:
-	"""Reject device strings torch won't accept. Heuristic: cpu / mps / cuda[:N]."""
-	if device and _DEVICE_RE.fullmatch(device) is None:
-		resolver.problems.append(
-			f"runtime.device {device!r} is invalid; expected cpu, mps, or cuda[:N] (e.g. cuda:0)."
-		)
-
-
-def _check_range(value: float, low: float, high: float, name: str, resolver: _Resolver) -> None:
-	if not low <= value <= high:
-		resolver.problems.append(f"{name} must be in [{low}, {high}], got {value}.")
-
-
-def _resolve_detector_name(resolver: _Resolver) -> DetectorChoice:
-	name = resolver.required_str("detector.name")
-	try:
-		return DetectorChoice(name)
-	except ValueError:
-		if name:  # empty already reported as missing by required_str
-			valid = ", ".join(choice.value for choice in DetectorChoice)
-			resolver.problems.append(f"detector.name {name!r} is unknown; valid: {valid}.")
-		return DetectorChoice.YOLOV8_VISDRONE
-
-
-def _resolve_window_bound(resolver: _Resolver, dotted: str) -> float | None:
-	"""Resolve a window bound. A required key; ``""`` means the clip's bound."""
-	raw = resolver.required_str(dotted)
-	if raw == "":
-		return None
-	try:
-		return _parse_timecode(raw)
-	except ValueError as exc:
-		resolver.problems.append(f"{dotted}: {exc}")
-		return None
-
-
-def _validate_window(window: WindowConfig, resolver: _Resolver) -> None:
-	if window.end_seconds is not None and window.end_seconds <= 0.0:
-		resolver.problems.append("window.end must be greater than zero.")
-	if (
-		window.start_seconds is not None
-		and window.end_seconds is not None
-		and window.end_seconds <= window.start_seconds
-	):
-		resolver.problems.append("window.end must be after window.start.")
+def _validated_device(v: str) -> str:
+	# Empty already reported as a wrong/missing value upstream -- don't pile a second
+	# problem on top of it (mirrors every other "only check format when present" rule
+	# in this module).
+	if v and _DEVICE_RE.fullmatch(v) is None:
+		raise ValueError(f"{v!r} is invalid; expected cpu, mps, or cuda[:N] (e.g. cuda:0).")
+	return v
 
 
 def _parse_timecode(value: str) -> float:
-	"""Parse ``SS(.ms)``, ``MM:SS(.ms)``, or ``HH:MM:SS(.ms)`` into seconds.
-
-	Raises ``ValueError`` on malformed input; the caller turns it into a problem.
-	"""
+	"""Parse ``SS(.ms)``, ``MM:SS(.ms)``, or ``HH:MM:SS(.ms)`` into seconds."""
 	parts = value.strip().split(":")
 	if len(parts) > 3:
 		raise ValueError(f"timecode has too many ':'-separated parts: {value!r}.")
@@ -536,3 +498,150 @@ def _parse_timecode(value: str) -> float:
 	if seconds < 0 or minutes < 0 or hours < 0:
 		raise ValueError(f"timecode components must be non-negative: {value!r}.")
 	return hours * 3600.0 + minutes * 60.0 + seconds
+
+
+def _window_bound(v: Any) -> float | None:
+	"""A required key; ``""`` means the clip's own bound."""
+	text = _require_str(v)
+	return None if text == "" else _parse_timecode(text)
+
+
+class _InputModel(_StrictModel):
+	video: Annotated[Path, _PathField]
+	process_fps: Annotated[float, _Number, pydantic.Field(ge=0.0)]
+	transforms_in: Annotated[Path, _PathField]
+
+
+def _validated_detector_name(v: Any) -> DetectorChoice:
+	name = _require_str(v)
+	try:
+		return DetectorChoice(name)
+	except ValueError:
+		# Matches the pre-pydantic resolver: an empty string is accepted silently here
+		# (required_str never flagged emptiness), not reported as "unknown".
+		if not name:
+			return DetectorChoice.YOLOV8_VISDRONE
+		valid = ", ".join(choice.value for choice in DetectorChoice)
+		raise ValueError(f"{name!r} is unknown; valid: {valid}.") from None
+
+
+class _DetectorModel(_StrictModel):
+	name: Annotated[DetectorChoice, pydantic.BeforeValidator(_validated_detector_name)]
+	checkpoint: Annotated[str, _Str]
+	conf: Annotated[float, _Number, pydantic.Field(ge=0.0, le=1.0)]
+	filename: Annotated[str, _Str]
+
+
+class _RuntimeModel(_StrictModel):
+	device: Annotated[str, _Str, pydantic.AfterValidator(_validated_device)]
+
+
+class _TrackerModel(_StrictModel):
+	det_thresh: Annotated[float, _Number, pydantic.Field(ge=0.0, le=1.0)]
+
+
+class _ExportModel(_StrictModel):
+	out: Annotated[Path, _PathField]
+
+
+class _WindowModel(_StrictModel):
+	start_seconds: Annotated[float | None, pydantic.BeforeValidator(_window_bound)]
+	end_seconds: Annotated[float | None, pydantic.BeforeValidator(_window_bound)]
+
+	@pydantic.model_validator(mode="before")
+	@classmethod
+	def _rename_toml_keys(cls, data: Any) -> Any:
+		# The TOML table spells these `start`/`end`; the domain object spells them
+		# `start_seconds`/`end_seconds`. Rename here so the rest of the model (and the
+		# error `loc`, which must read back as `window.start`/`window.end`) stays keyed
+		# by the public TOML names -- see `_translate_errors`. Only carry a key over if
+		# it was actually present: `.get(..., default=None)` would turn a genuinely
+		# absent key into a present-but-None one, losing pydantic's own "missing" report
+		# in favor of a wrong "must be a string, got NoneType" one.
+		if not isinstance(data, Mapping):
+			return data
+		renamed: dict[str, Any] = {}
+		if "start" in data:
+			renamed["start_seconds"] = data["start"]
+		if "end" in data:
+			renamed["end_seconds"] = data["end"]
+		return renamed
+
+	@pydantic.model_validator(mode="after")
+	def _check_order(self) -> _WindowModel:
+		if self.end_seconds is not None and self.end_seconds <= 0.0:
+			raise ValueError("window.end must be greater than zero.")
+		if (
+			self.start_seconds is not None
+			and self.end_seconds is not None
+			and self.end_seconds <= self.start_seconds
+		):
+			raise ValueError("window.end must be after window.start.")
+		return self
+
+
+class _RunOptionsModel(_StrictModel):
+	timing_csv: Annotated[Path | None, pydantic.BeforeValidator(_toggleable_path)]
+
+
+class _ConfigModel(_StrictModel):
+	"""The whole merged TOML table, validated in one pass so every problem across
+	every section is collected together (``pydantic.ValidationError.errors()``),
+	the same aggregate-everything contract ``ConfigError`` has always made.
+	"""
+
+	input: _InputModel
+	detector: _DetectorModel
+	runtime: _RuntimeModel
+	tracker: _TrackerModel
+	export: _ExportModel
+	window: _WindowModel
+	run: _RunOptionsModel
+
+
+# error `type` codes pydantic reports for a field with no default and no value supplied --
+# translated to this module's long-standing "{dotted}.{key} is missing." phrasing.
+_MISSING_TYPES = frozenset({"missing"})
+
+
+def _translate_errors(exc: pydantic.ValidationError) -> list[str]:
+	"""Turn a ``ValidationError`` into this module's flat ``"section.key: message"``
+	problem strings -- the wire format ``ConfigError``/every caller/every test has
+	always used, so swapping the validator underneath doesn't ripple outward.
+	"""
+	problems: list[str] = []
+	for error in exc.errors():
+		loc = list(error["loc"])
+		# _WindowModel's before-validator remaps start_seconds/end_seconds back to the
+		# TOML names before pydantic ever sees them, but a *missing* `window` table
+		# itself (loc == ("window",)) never reaches that remap -- normalize here too.
+		if loc[:2] == ["window", "start_seconds"]:
+			loc[1] = "start"
+		elif loc[:2] == ["window", "end_seconds"]:
+			loc[1] = "end"
+		dotted = ".".join(str(part) for part in loc)
+		if error["type"] in _MISSING_TYPES:
+			if dotted == "run.timing_csv":
+				problems.append(f'{dotted} is missing (use "" to disable).')
+			else:
+				problems.append(f"{dotted} is missing.")
+			continue
+		if error["type"] == "greater_than_equal" and dotted == "input.process_fps":
+			problems.append("input.process_fps must be >= 0 (0 = every frame).")
+			continue
+		if error["type"] in ("greater_than_equal", "less_than_equal") and dotted in (
+			"detector.conf",
+			"tracker.det_thresh",
+		):
+			problems.append(f"{dotted} must be in [0.0, 1.0], got {error['input']!r}.")
+			continue
+		msg = error["msg"]
+		if msg.startswith("Value error, "):
+			msg = msg[len("Value error, ") :]
+		if dotted == "runtime.device":
+			problems.append(f"runtime.device {msg}")
+		elif dotted == "detector.name":
+			problems.append(f"detector.name {msg}")
+		else:
+			problems.append(f"{dotted} {msg}")
+	return problems
