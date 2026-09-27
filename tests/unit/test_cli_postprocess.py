@@ -451,7 +451,14 @@ class TestPostprocessSmoothedRecord:
 		record = tmp_path / "tracks.parquet"
 		transforms_path = _write_record(record, scale=1.0)
 
-		result = CliRunner().invoke(app, [str(record), "--transforms", str(transforms_path)])
+		# COLUMNS forces Rich's error panel to render unwrapped -- CliRunner's default width
+		# detection in a non-interactive CI environment can otherwise hard-wrap this message
+		# across lines, breaking a plain substring check.
+		result = CliRunner().invoke(
+			app,
+			[str(record), "--transforms", str(transforms_path)],
+			env={"COLUMNS": "200"},
+		)
 		assert result.exit_code != 0
 		assert "smoothed-record" in result.output
 
@@ -584,6 +591,8 @@ class TestPostprocessSmoothedRecord:
 			plane_zones=planes,
 		)
 
+		# COLUMNS forces Rich's error panel to render unwrapped -- see the comment on
+		# test_requires_out_or_smoothed_record above.
 		result = CliRunner().invoke(
 			app,
 			[
@@ -593,6 +602,7 @@ class TestPostprocessSmoothedRecord:
 				"--smoothed-record",
 				str(smoothed),
 			],
+			env={"COLUMNS": "200"},
 		)
 		assert result.exit_code != 0
 		assert "smoothed-record" in result.output
