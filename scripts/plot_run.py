@@ -533,7 +533,9 @@ def main() -> int:
 		scores = read_track_scores(tracks_path) if tracks_path.exists() else None
 		base_dir = args.out if args.out is not None else trj_path.parent
 		folder = base_dir / stem
-		background = background_for(stem, args.video, args.scout_dir, args.transforms, base.bounds[3])
+		background = background_for(
+			stem, args.video, args.scout_dir, args.transforms, base.bounds[3]
+		)
 		count = generate(base, smooth, scores, stem, folder, args.accel_bound, background)
 		scene = "" if background is None else (" (+mosaic)" if not background.clip else " (+scene)")
 		notes = (" (+smooth)" if smooth else "") + scene

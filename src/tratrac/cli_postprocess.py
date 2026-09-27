@@ -224,13 +224,13 @@ def postprocess(
 	freely::
 
 		read record
-		  -> apply --footprint               [obb_w/obb_h override -- keyed by the pre-merge track_id]
-		  -> apply --reid-merge              [track_id remap -- before anything else track-lifetime-aware]
-		  -> filter --exclusion-zones
-		  -> assign plane / link / lane      [needed before projection knows which H to use]
-		  -> project --calibration           [projector itself is plane/anchor-aware]
-		  -> smooth (Kalman/RTS)
-		  -> export .trj
+		-> apply --footprint               [obb_w/obb_h override -- keyed by the pre-merge track_id]
+		-> apply --reid-merge              [track_id remap -- before anything else track-lifetime-aware]
+		-> filter --exclusion-zones
+		-> assign plane / link / lane      [needed before projection knows which H to use]
+		-> project --calibration           [projector itself is plane/anchor-aware]
+		-> smooth (Kalman/RTS)
+		-> export .trj
 
 	``--footprint`` runs ahead of ``--reid-merge`` even though ReID-merge is the
 	track-lifetime-aware step everything else keys off of: a footprint sidecar is
