@@ -15,6 +15,7 @@ already-fitted transforms file.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +47,23 @@ _HALF_SCALE_CALIBRATION = {
 		{"reference_frame": 0, "image": [0, 100], "world": [0.0, 50.0]},
 	]
 }
+
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _plain(output: str) -> str:
+	"""Strip Rich's ANSI styling from a CLI error message before substring-checking it.
+
+	Typer/Rich renders ``--flag-name`` tokens in error panels as several separately
+	styled spans (e.g. ``-`` / ``-smoothed`` / ``-record``), each wrapped in its own
+	escape codes -- so a literal ``"--smoothed-record" in result.output`` check can
+	fail even though the text is genuinely there, purely because Rich decided to
+	color/style it (which it does unprompted whenever ``CI``/``GITHUB_ACTIONS`` env
+	vars are set, regardless of whether stdout is actually a TTY). Strip styling
+	before asserting so these checks depend on content, not on incidental rendering.
+	"""
+	return _ANSI_RE.sub("", output)
 
 
 def _tracked(x: float, y: float, *, track_id: int = 1) -> TrackedDetection:
@@ -451,16 +469,9 @@ class TestPostprocessSmoothedRecord:
 		record = tmp_path / "tracks.parquet"
 		transforms_path = _write_record(record, scale=1.0)
 
-		# COLUMNS forces Rich's error panel to render unwrapped -- CliRunner's default width
-		# detection in a non-interactive CI environment can otherwise hard-wrap this message
-		# across lines, breaking a plain substring check.
-		result = CliRunner().invoke(
-			app,
-			[str(record), "--transforms", str(transforms_path)],
-			env={"COLUMNS": "200"},
-		)
+		result = CliRunner().invoke(app, [str(record), "--transforms", str(transforms_path)])
 		assert result.exit_code != 0
-		assert "smoothed-record" in result.output
+		assert "smoothed-record" in _plain(result.output)
 
 	def test_smoothed_record_alone_needs_no_out(self, tmp_path: Path) -> None:
 		record = tmp_path / "tracks.parquet"
@@ -591,8 +602,6 @@ class TestPostprocessSmoothedRecord:
 			plane_zones=planes,
 		)
 
-		# COLUMNS forces Rich's error panel to render unwrapped -- see the comment on
-		# test_requires_out_or_smoothed_record above.
 		result = CliRunner().invoke(
 			app,
 			[
@@ -602,10 +611,9 @@ class TestPostprocessSmoothedRecord:
 				"--smoothed-record",
 				str(smoothed),
 			],
-			env={"COLUMNS": "200"},
 		)
 		assert result.exit_code != 0
-		assert "smoothed-record" in result.output
+		assert "smoothed-record" in _plain(result.output)
 
 
 class TestPostprocessReidMerge:
